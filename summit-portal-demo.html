@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Summit Sensory Gym — Customer Portal Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Archivo:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --ink: #16201c; --paper: #f6f4ee; --card: #ffffff; --line: #e3ddd0;
+  --moss: #2f5d50; --moss-dk: #1f4339; --moss-lt: #e7efe9;
+  --sun: #e0944a; --sun-lt: #fbeede;
+  --sky: #3a6ea5; --sky-lt: #e6eef6;
+  --rose: #b5485d; --rose-lt: #f7e6ea;
+  --mut: #6f7a73; --ok: #3a7d54; --ok-lt: #e3f0e7;
+  --shadow: 0 1px 2px rgba(20,32,28,.05), 0 8px 28px rgba(20,32,28,.07);
+  --r: 14px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; }
+body { font-family: 'Archivo', sans-serif; background: var(--paper); color: var(--ink); -webkit-font-smoothing: antialiased; line-height: 1.45; }
+h1,h2,h3,h4 { font-family: 'Fraunces', serif; letter-spacing: -0.01em; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+a { color: inherit; text-decoration: none; }
+input, select, textarea { font-family: inherit; }
+
+/* ── Layout ── */
+#shell { display: flex; flex-direction: column; min-height: 100vh; }
+.top { height: 52px; display: flex; align-items: center; gap: 14px; padding: 0 20px; background: #fff; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 30; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.logo { width: 30px; height: 30px; border-radius: 8px; background: var(--moss); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 13px; font-weight: 700; flex: none; }
+.scope { font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 7px; letter-spacing: .03em; background: var(--sky-lt); color: var(--sky); }
+.lay { display: grid; grid-template-columns: 230px 1fr; flex: 1; min-height: calc(100vh - 52px); }
+.side { background: #fff; border-right: 1px solid var(--line); overflow-y: auto; }
+.nav { padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+.nav button { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 9px; font-size: 13.5px; font-weight: 500; color: var(--ink); cursor: pointer; border: none; background: none; text-align: left; width: 100%; transition: background .12s; }
+.nav button:hover { background: var(--paper); }
+.nav button.on { background: var(--moss-lt); color: var(--moss-dk); font-weight: 600; }
+.ni { font-size: 15px; flex: none; }
+.lab { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--mut); padding: 14px 10px 4px; }
+.badge { display: inline-flex; align-items: center; justify-content: center; background: var(--sun); color: #fff; font-size: 10.5px; font-weight: 700; min-width: 18px; height: 18px; border-radius: 999px; padding: 0 4px; margin-left: auto; }
+.main { overflow-y: auto; padding: 28px 32px; min-width: 0; }
+.ph { margin-bottom: 20px; }
+.ph h2 { font-size: 22px; }
+.ph p { color: var(--mut); font-size: 14px; margin-top: 4px; }
+
+/* Progress */
+.prog { height: 9px; background: #eee9de; border-radius: 999px; overflow: hidden; }
+.prog i { display: block; height: 100%; background: linear-gradient(90deg, var(--moss), var(--ok)); border-radius: 999px; transition: width .5s; }
+
+/* Buttons */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600; font-size: 14.5px; padding: 11px 18px; border-radius: 10px; transition: .15s; cursor: pointer; border: none; font-family: inherit; }
+.btn-moss { background: var(--moss); color: #fff; }
+.btn-moss:hover { background: var(--moss-dk); }
+.btn-ghost { background: transparent; border: 1px solid var(--line); color: var(--ink); }
+.btn-ghost:hover { border-color: var(--moss); }
+.btn-sm { padding: 7px 12px; font-size: 13px; border-radius: 8px; }
+
+/* Cards */
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 20px; box-shadow: var(--shadow); }
+.card.pad0 { padding: 0; overflow: hidden; }
+.ch { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.ch h3 { font-size: 16px; font-weight: 600; }
+
+/* Fields */
+.field { margin-bottom: 16px; }
+.field label { display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 5px; color: var(--ink); }
+.field .hint { font-size: 12px; color: var(--mut); margin-top: 4px; }
+input[type=text], input[type=email], input[type=tel], textarea, select {
+  font-family: inherit; font-size: 13.5px; padding: 9px 12px; border: 1px solid var(--line);
+  border-radius: 9px; background: #fff; color: var(--ink); width: 100%; transition: border-color .15s;
+}
+input:focus, textarea:focus { outline: none; border-color: var(--moss); box-shadow: 0 0 0 3px rgba(47,93,80,.1); }
+textarea { resize: vertical; min-height: 80px; }
+.row { display: flex; gap: 12px; }
+.row > * { flex: 1; }
+.grid { display: grid; gap: 16px; }
+.g2 { grid-template-columns: repeat(2, 1fr); }
+
+/* Read fields */
+.rf { margin-bottom: 14px; }
+.rf .rl { font-size: 12px; font-weight: 600; color: var(--mut); margin-bottom: 3px; }
+.rf .rv { font-size: 14px; }
+
+/* Alerts */
+.alert { padding: 12px 16px; border-radius: 10px; font-size: 13.5px; margin-bottom: 16px; display: flex; gap: 10px; align-items: flex-start; }
+.alert.warn { background: var(--sun-lt); border: 1px solid #f0c490; color: #7a4a1a; }
+.alert.info { background: var(--sky-lt); border: 1px solid #b0c8e8; color: #1e4a7a; }
+.alert.success { background: var(--ok-lt); border: 1px solid #a0d4b4; color: #1f5c38; }
+
+/* Toggle */
+.sw { display: inline-flex; align-items: center; gap: 9px; font-size: 13.5px; cursor: pointer; margin-bottom: 16px; }
+.toggle { width: 38px; height: 22px; border-radius: 999px; background: #d8d2c4; position: relative; transition: .15s; flex: none; cursor: pointer; }
+.toggle::after { content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #fff; top: 3px; left: 3px; transition: .15s; }
+.toggle.on { background: var(--moss); }
+.toggle.on::after { left: 19px; }
+
+/* Chips */
+.chip { display: inline-flex; align-items: center; padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; font-weight: 500; cursor: pointer; transition: .13s; background: #fff; margin-right: 8px; margin-bottom: 8px; }
+.chip:hover { border-color: var(--moss); }
+.chip.on { background: var(--moss); color: #fff; border-color: var(--moss); }
+
+/* Timeline */
+.tl { position: relative; padding-left: 8px; }
+.step { display: flex; gap: 15px; padding-bottom: 24px; position: relative; }
+.step:last-child { padding-bottom: 0; }
+.step::before { content: ""; position: absolute; left: 11px; top: 24px; bottom: 0; width: 2px; background: var(--line); }
+.step.done::before, .step.cur::before { background: var(--moss); }
+.step:last-child::before { display: none; }
+.sd { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--line); background: #fff; flex: none; z-index: 1; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--mut); }
+.step.done .sd { background: var(--moss); border-color: var(--moss); color: #fff; }
+.step.cur .sd { border-color: var(--moss); color: var(--moss); box-shadow: 0 0 0 4px var(--moss-lt); }
+.sb .t { font-weight: 600; font-size: 14.5px; }
+.sb .d { font-size: 12.5px; color: var(--mut); }
+.step.cur .sb .t { color: var(--moss-dk); }
+
+/* Files */
+.file { display: flex; align-items: center; gap: 13px; padding: 13px 4px; border-bottom: 1px solid var(--line); }
+.file:last-child { border-bottom: none; }
+.f-ic { width: 38px; height: 38px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 17px; flex: none; }
+.f-b { flex: 1; min-width: 0; }
+.f-b .t { font-weight: 600; font-size: 14px; }
+.f-b .d { font-size: 12px; color: var(--mut); }
+
+/* Chat */
+.chat { display: flex; flex-direction: column; height: 440px; }
+.chat-h { padding: 13px 18px; border-bottom: 1px solid var(--line); font-weight: 600; font-size: 14px; }
+.chat-b { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 11px; background: #fcfbf7; }
+.bub { max-width: 76%; padding: 9px 13px; border-radius: 13px; font-size: 13.5px; line-height: 1.4; }
+.bub.them { background: #fff; border: 1px solid var(--line); align-self: flex-start; border-bottom-left-radius: 4px; }
+.bub.me { background: var(--moss); color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
+.bub .ts { font-size: 10.5px; opacity: .6; margin-top: 3px; }
+.bub .who { font-size: 11px; opacity: .7; margin-bottom: 3px; font-weight: 600; }
+.chat-i { display: flex; gap: 9px; padding: 12px; border-top: 1px solid var(--line); background: #fff; }
+.chat-i input { flex: 1; }
+
+/* Empty */
+.empty { text-align: center; padding: 40px 20px; color: var(--mut); }
+.empty .ei { font-size: 36px; margin-bottom: 10px; }
+.empty h3 { font-size: 16px; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+.empty p { font-size: 13.5px; }
+
+/* Toast */
+.toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--ink); color: #fff; padding: 11px 18px; border-radius: 11px; font-size: 13.5px; font-weight: 500; box-shadow: var(--shadow); opacity: 0; transition: .25s; z-index: 80; pointer-events: none; }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Ack box */
+.ack-box { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; font-size: 13.5px; line-height: 1.65; max-height: 280px; overflow-y: auto; }
+.ack-box p { margin-bottom: 12px; }
+.ack-box p:last-child { margin-bottom: 0; }
+
+/* Tab nav row */
+.tab-nav { display: flex; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+
+/* Demo banner */
+.demo-bar { background: var(--sun); color: #fff; text-align: center; font-size: 12.5px; font-weight: 600; padding: 6px; letter-spacing: .02em; }
+
+/* Pane display */
+.pane { display: none; }
+.pane.active { display: block; }
+
+/* Checklist item */
+.cl-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.cl-item:last-child { border-bottom: none; }
+</style>
+</head>
+<body>
+
+<div class="demo-bar">⚡ DEMO MODE — Sample data, no live connections</div>
+
+<div id="shell">
+  <div class="top">
+    <div class="brand">
+      <div class="logo">S</div>
+      <b style="font-size:15px">Summit Sensory Gym</b>
+    </div>
+    <span class="scope">Customer</span>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:12.5px;color:var(--mut)">Ridgeline Therapy Center</span>
+      <button class="btn btn-ghost btn-sm" onclick="alert('Sign out clicked')">Sign out</button>
+    </div>
+  </div>
+
+  <div class="lay">
+    <!-- SIDEBAR -->
+    <nav class="side">
+      <div class="nav">
+        <!-- Progress -->
+        <div style="padding:12px 12px 4px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;font-weight:700;color:var(--mut);letter-spacing:.05em;text-transform:uppercase;margin-bottom:6px">
+            <span>Account Setup</span>
+            <span id="setup-count" style="color:var(--sun)">0/6</span>
+          </div>
+          <div class="prog"><i id="setup-bar" style="width:0%"></i></div>
+        </div>
+
+        <button onclick="showTab('contact')" id="nav-contact" class="on">
+          <span class="ni" id="ni-contact">👤</span>
+          <span style="flex:1;text-align:left">Contact Information</span>
+          <span id="done-contact" style="display:none;font-size:11px;color:var(--ok);font-weight:700">Done</span>
+        </button>
+        <button onclick="showTab('billing')" id="nav-billing">
+          <span class="ni" id="ni-billing">💳</span>
+          <span style="flex:1;text-align:left">Billing Information</span>
+          <span id="done-billing" style="display:none;font-size:11px;color:var(--ok);font-weight:700">Done</span>
+        </button>
+        <button onclick="showTab('delivery')" id="nav-delivery">
+          <span class="ni" id="ni-delivery">🚚</span>
+          <span style="flex:1;text-align:left">Delivery Details</span>
+          <span id="done-delivery" style="display:none;font-size:11px;color:var(--ok);font-weight:700">Done</span>
+        </button>
+        <button onclick="showTab('site')" id="nav-site">
+          <span class="ni" id="ni-site">🏗️</span>
+          <span style="flex:1;text-align:left">Site Readiness</span>
+          <span id="done-site" style="display:none;font-size:11px;color:var(--ok);font-weight:700">Done</span>
+        </button>
+        <button onclick="showTab('color')" id="nav-color">
+          <span class="ni" id="ni-color">🎨</span>
+          <span style="flex:1;text-align:left">Color & Product Selections</span>
+          <span id="done-color" style="display:none;font-size:11px;color:var(--ok);font-weight:700">Done</span>
+        </button>
+        <button onclick="showTab('documents')" id="nav-documents">
+          <span class="ni" id="ni-documents">📋</span>
+          <span style="flex:1;text-align:left">Required Documents</span>
+          <span id="done-documents" style="display:none;font-size:11px;color:var(--ok);font-weight:700">Done</span>
+        </button>
+        <button onclick="showTab('summary')" id="nav-summary">
+          <span class="ni" id="ni-summary">✅</span>
+          <span style="flex:1;text-align:left">Order Summary</span>
+        </button>
+
+        <div class="lab">My Order</div>
+
+        <button onclick="showTab('status')" id="nav-status">
+          <span class="ni">📦</span>Order Status &amp; Tracking
+        </button>
+        <button onclick="showTab('files')" id="nav-files">
+          <span class="ni">📄</span>Files
+        </button>
+        <button onclick="showTab('messages')" id="nav-messages">
+          <span class="ni">💬</span>Messages<span class="badge">1</span>
+        </button>
+        <button onclick="showTab('invoice')" id="nav-invoice">
+          <span class="ni">💰</span>Invoice
+        </button>
+      </div>
+    </nav>
+
+    <!-- MAIN -->
+    <main class="main">
+
+      <!-- ── TAB: Contact ── -->
+      <div class="pane active" id="pane-contact">
+        <div class="ph"><h2>Contact Information</h2><p>Please confirm the primary contact details we have on file for your order.</p></div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="ch"><h3>Primary Contact</h3></div>
+          <div class="grid g2">
+            <div class="rf"><div class="rl">Name</div><div class="rv">Sarah Mitchell</div></div>
+            <div class="rf"><div class="rl">Email</div><div class="rv">smitchell@ridgelinetherapy.com</div></div>
+            <div class="rf"><div class="rl">Phone</div><div class="rv">(303) 555-0182</div></div>
+            <div class="rf"><div class="rl">Organization</div><div class="rv">Ridgeline Therapy Center</div></div>
+          </div>
+          <div class="alert info" style="margin-top:16px;margin-bottom:0">
+            <span>ℹ️</span>
+            <span>If any of this information is incorrect, please message us through the <strong>Messages</strong> tab and we'll update it for you.</span>
+          </div>
+        </div>
+        <div class="tab-nav">
+          <button class="btn btn-moss" onclick="markDone('contact');showTab('billing')">Confirm & Continue →</button>
+        </div>
+      </div>
+
+      <!-- ── TAB: Billing ── -->
+      <div class="pane" id="pane-billing">
+        <div class="ph"><h2>Billing Information</h2><p>Confirm your billing address and the contact responsible for payment.</p></div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="ch"><h3>Bill-To Address</h3></div>
+          <label class="sw">
+            <div class="toggle on" id="billing-same-toggle" onclick="toggleBillingSame()"></div>
+            <span id="billing-same-label">Same as delivery address</span>
+          </label>
+          <div id="billing-address-fields" style="display:none">
+            <div class="field"><label>Street Address</label><input type="text" placeholder="123 Main St" /></div>
+            <div class="row">
+              <div class="field"><label>City</label><input type="text" /></div>
+              <div class="field" style="max-width:80px"><label>State</label><input type="text" maxlength="2" placeholder="CO" /></div>
+              <div class="field" style="max-width:120px"><label>Zip</label><input type="text" maxlength="10" /></div>
+            </div>
+          </div>
+          <div id="billing-same-display" style="padding:10px 14px;background:var(--paper);border-radius:8px;font-size:13.5px;color:var(--mut)">
+            4820 Tennyson St, Denver, CO 80212
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="ch"><h3>Billing Point of Contact</h3></div>
+          <label class="sw">
+            <div class="toggle on" id="poc-same-toggle" onclick="togglePocSame()"></div>
+            <span>Same as primary contact (Sarah Mitchell)</span>
+          </label>
+          <div id="billing-poc-fields" style="display:none">
+            <div class="field"><label>Billing Contact Name</label><input type="text" placeholder="Full name" /></div>
+            <div class="row">
+              <div class="field"><label>Phone</label><input type="tel" /></div>
+              <div class="field"><label>Email</label><input type="email" /></div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-nav">
+          <button class="btn btn-ghost" onclick="showTab('contact')">← Back</button>
+          <button class="btn btn-moss" onclick="markDone('billing');showTab('delivery')">Save & Continue →</button>
+        </div>
+      </div>
+
+      <!-- ── TAB: Delivery ── -->
+      <div class="pane" id="pane-delivery">
+        <div class="ph"><h2>Delivery Details</h2><p>Confirm how and where your order will be delivered.</p></div>
+
+        <div class="card" style="margin-bottom:16px">
+          <div class="ch"><h3>Delivery Point of Contact</h3></div>
+          <p style="font-size:13px;color:var(--mut);margin-bottom:16px">The person who will be on-site to receive the delivery.</p>
+          <div class="row">
+            <div class="field"><label>Full Name</label><input type="text" value="Sarah Mitchell" /></div>
+            <div class="field"><label>Phone</label><input type="tel" value="(303) 555-0182" /></div>
+          </div>
+          <div class="field"><label>Email</label><input type="email" value="smitchell@ridgelinetherapy.com" /></div>
+          <div class="field"><label>Special Delivery Instructions</label><textarea placeholder="Gate codes, dock hours, parking instructions, etc."></textarea></div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px">
+          <div class="ch"><h3>Delivery Logistics</h3></div>
+          <div class="alert warn" style="margin-bottom:16px">
+            <span>⚠️</span>
+            <span>Changes to the fields below require confirmation from the Summit team before taking effect. We'll follow up within 1 business day.</span>
+          </div>
+          <div class="field"><label>Delivery Address</label><input type="text" value="4820 Tennyson St, Denver, CO 80212" /><div class="hint">Update if your delivery location has changed from what's on file.</div></div>
+          <div class="field">
+            <label>Liftgate Required?</label>
+            <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
+              <button class="chip on" onclick="selectChip(this,'liftgate')">Yes</button>
+              <button class="chip" onclick="selectChip(this,'liftgate')">No</button>
+              <button class="chip" onclick="selectChip(this,'liftgate')">Unsure</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>Loading Dock Available?</label>
+            <div style="display:flex;gap:8px;margin-top:4px">
+              <button class="chip" onclick="selectChip(this,'dock')">Yes</button>
+              <button class="chip on" onclick="selectChip(this,'dock')">No</button>
+            </div>
+          </div>
+          <div class="field"><label>Preferred Delivery Window</label><input type="text" placeholder="e.g. March 10–21, weekdays only" /></div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px">
+          <div class="ch"><h3>🚚 Freight Delivery Acknowledgment</h3></div>
+          <div class="ack-box">
+            <p>Your order will be shipped via motor freight due to the size and weight of the equipment. Please read the following carefully and share this information with anyone who will be present at the time of delivery.</p>
+            <p><strong>How your order will arrive</strong><br>Your equipment will be delivered on a pallet (skid) by a freight carrier. The driver is authorized to assist with unloading but cannot be expected to unload the shipment independently, transport items long distances, or bring equipment to a specific room within your facility. Please ensure adequate personnel are on-site and ready to assist at the time of delivery.</p>
+            <p><strong>Upon arrival</strong><br>All equipment must be brought indoors immediately after delivery. Do not leave pallets or boxes outside or in an unprotected area.</p>
+            <p><strong>Inspecting your delivery — important</strong><br>Before signing the driver's bill of lading, carefully inspect all items for visible damage. If damage is found, you must note it on the bill of lading at the time of delivery — this is required to file a freight damage claim. Summit Sensory Gym cannot process damage claims for items signed as received in good condition.</p>
+            <p><strong>Scheduling and missed appointments</strong><br>The freight carrier will contact you to schedule a delivery window. If no one is available during the agreed-upon window, a redelivery fee will apply.</p>
+            <p><strong>Storage fees</strong><br>If delivery cannot be completed, the freight carrier will hold your shipment for up to 2 business days at no charge. Storage fees beyond that window are the responsibility of the receiving party.</p>
+          </div>
+          <label style="display:flex;align-items:flex-start;gap:12px;font-size:13.5px;cursor:pointer;margin-bottom:16px">
+            <input type="checkbox" id="ack-check" style="width:auto;margin-top:3px" />
+            <span>I have read and understand the freight delivery requirements above, and I will share this information with all personnel involved in receiving this shipment.</span>
+          </label>
+          <div class="field"><label>Your Full Name (acknowledgment signature)</label><input type="text" id="ack-name" placeholder="Type your full name" /></div>
+        </div>
+
+        <div class="tab-nav">
+          <button class="btn btn-ghost" onclick="showTab('billing')">← Back</button>
+          <button class="btn btn-moss" onclick="saveDelivery()">Save & Continue →</button>
+        </div>
+      </div>
+
+      <!-- ── TAB: Site ── -->
+      <div class="pane" id="pane-site">
+        <div class="ph"><h2>Site Readiness</h2><p>Complete any site readiness requirements before your order can ship.</p></div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="ch"><h3>Site Checklist</h3></div>
+          <p style="color:var(--mut);font-size:13.5px;margin-bottom:20px">Before your equipment ships, please confirm your site meets the following requirements:</p>
+          <div class="cl-item"><span style="color:var(--moss);font-weight:700;flex:none">✓</span><span>Installation room dimensions have been confirmed with Summit Sensory Gym</span></div>
+          <div class="cl-item"><span style="color:var(--moss);font-weight:700;flex:none">✓</span><span>Flooring installation is complete or will be complete before delivery</span></div>
+          <div class="cl-item"><span style="color:var(--moss);font-weight:700;flex:none">✓</span><span>Clear pathway from entry to installation room (minimum 36" wide)</span></div>
+          <div class="cl-item"><span style="color:var(--moss);font-weight:700;flex:none">✓</span><span>Electrical and anchor point requirements have been reviewed</span></div>
+          <div class="cl-item"><span style="color:var(--moss);font-weight:700;flex:none">✓</span><span>Site contact will be available on the scheduled delivery date</span></div>
+          <div class="alert info" style="margin-top:16px;margin-bottom:0">
+            <span>ℹ️</span>
+            <span>If any of the above items need attention, please contact us before proceeding. Your order will not ship until site readiness is confirmed.</span>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="ch"><h3>Confirm Site Readiness</h3></div>
+          <p style="color:var(--mut);font-size:13.5px;margin-bottom:16px">By clicking confirm, you're letting us know that the items above are or will be in place before your delivery date.</p>
+          <button class="btn btn-moss" onclick="markDone('site');showTab('color')">Confirm Site Readiness & Continue →</button>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="showTab('delivery')">← Back</button>
+      </div>
+
+      <!-- ── TAB: Color ── -->
+      <div class="pane" id="pane-color">
+        <div class="ph"><h2>Color & Product Selections</h2><p>Complete your color selection form to finalize your equipment configuration.</p></div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="ch"><h3>Summit Adventure Series — Color Selection</h3></div>
+          <p style="color:var(--mut);font-size:13.5px;margin-bottom:20px">Select your equipment colors and finish options. Your selections will be reviewed by our team before manufacturing begins.</p>
+          <a href="https://form.jotform.com/243436740186156" target="_blank" class="btn btn-moss" style="display:inline-flex;margin-bottom:16px">Open Color Selection Form →</a>
+          <div class="alert info" style="margin-bottom:0">
+            <span>ℹ️</span>
+            <span>After submitting the form, click "Mark as Complete" below. Our team will confirm your selections and follow up if any clarification is needed.</span>
+          </div>
+        </div>
+        <div class="tab-nav">
+          <button class="btn btn-ghost" onclick="showTab('site')">← Back</button>
+          <button class="btn btn-moss" onclick="markDone('color');showTab('documents')">Mark as Complete & Continue →</button>
+        </div>
+      </div>
+
+      <!-- ── TAB: Documents ── -->
+      <div class="pane" id="pane-documents">
+        <div class="ph"><h2>Required Documents</h2><p>Complete the required forms below before your order can be processed.</p></div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="ch"><h3>Pickup & Delivery Form</h3></div>
+          <p style="color:var(--mut);font-size:13.5px;margin-bottom:20px">This form must be completed before your order can ship. It confirms your pickup and delivery preferences and captures any special handling requirements.</p>
+          <a href="https://form.jotform.com/243444705854057" target="_blank" class="btn btn-moss" style="display:inline-flex;margin-bottom:0">Complete Form →</a>
+        </div>
+        <div class="tab-nav">
+          <button class="btn btn-ghost" onclick="showTab('color')">← Back</button>
+          <button class="btn btn-moss" onclick="markDone('documents');showTab('summary')">Mark as Complete & Continue →</button>
+        </div>
+      </div>
+
+      <!-- ── TAB: Summary ── -->
+      <div class="pane" id="pane-summary">
+        <div class="ph"><h2>Order Summary</h2><p id="summary-subtitle">Review your progress and complete any remaining steps.</p></div>
+        <div id="summary-alert" class="alert warn" style="margin-bottom:20px">
+          <span>⚠️</span>
+          <span>Some steps are still incomplete. Please complete all sections before your order can proceed to manufacturing.</span>
+        </div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="ch"><h3>Setup Checklist</h3></div>
+          <div id="summary-checklist"></div>
+        </div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="ch"><h3>Order Details</h3></div>
+          <div class="rf"><div class="rl">Order</div><div class="rv">RTC-2025-0042 — Ridgeline Therapy Center</div></div>
+          <div class="rf"><div class="rl">Product</div><div class="rv">Summit Adventure Series</div></div>
+          <div class="rf"><div class="rl">Status</div><div class="rv">In Manufacturing</div></div>
+          <div class="rf"><div class="rl">Projected Ship Date</div><div class="rv">March 14, 2025</div></div>
+          <div class="rf"><div class="rl">Delivery Address</div><div class="rv">4820 Tennyson St, Denver, CO 80212</div></div>
+        </div>
+        <div style="display:flex;gap:12px">
+          <button class="btn btn-ghost" onclick="showTab('status')">View Order Status →</button>
+          <button class="btn btn-ghost" onclick="showTab('messages')">Message Our Team →</button>
+        </div>
+      </div>
+
+      <!-- ── TAB: Status ── -->
+      <div class="pane" id="pane-status">
+        <div class="ph"><h2>Order Status & Tracking</h2><p>Your order's progress from manufacturing to delivery.</p></div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="ch"><h3>Manufacturing Timeline</h3></div>
+          <div class="tl">
+            <div class="step done">
+              <div class="sd">✓</div>
+              <div class="sb"><div class="t">📋 Order Placed</div></div>
+            </div>
+            <div class="step done">
+              <div class="sd">✓</div>
+              <div class="sb"><div class="t">💰 Deposit Received</div></div>
+            </div>
+            <div class="step cur">
+              <div class="sd">●</div>
+              <div class="sb"><div class="t">🔧 In Manufacturing</div><div class="d" style="color:var(--moss)">Current stage</div></div>
+            </div>
+            <div class="step">
+              <div class="sd">4</div>
+              <div class="sb"><div class="t">📦 Ready to Ship</div></div>
+            </div>
+            <div class="step">
+              <div class="sd">5</div>
+              <div class="sb"><div class="t">🚚 Shipped</div></div>
+            </div>
+            <div class="step">
+              <div class="sd">6</div>
+              <div class="sb"><div class="t">✅ Delivered</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="ch"><h3>🚚 FedEx Tracking</h3></div>
+          <div class="alert info" style="margin-bottom:0">
+            <span>ℹ️</span>
+            <span>Tracking information will appear here once your order has shipped. Estimated ship date: <strong>March 14, 2025</strong>.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── TAB: Files ── -->
+      <div class="pane" id="pane-files">
+        <div class="ph"><h2>Files</h2><p>Documents and files shared by the Summit Sensory Gym team.</p></div>
+        <div class="card">
+          <div class="file">
+            <div class="f-ic" style="background:var(--rose-lt);color:var(--rose)">📕</div>
+            <div class="f-b"><div class="t">Installation Guide — Summit Adventure Series.pdf</div><div class="d">PDF · 2.4 MB · Shared Jan 15, 2025</div></div>
+            <button class="btn btn-ghost btn-sm">Download</button>
+          </div>
+          <div class="file">
+            <div class="f-ic" style="background:var(--sky-lt);color:var(--sky)">📝</div>
+            <div class="f-b"><div class="t">Room Dimensions Checklist.docx</div><div class="d">DOCX · 84 KB · Shared Jan 10, 2025</div></div>
+            <button class="btn btn-ghost btn-sm">Download</button>
+          </div>
+          <div class="file">
+            <div class="f-ic" style="background:var(--sun-lt);color:var(--sun)">📄</div>
+            <div class="f-b"><div class="t">Order Confirmation — RTC-2025-0042.pdf</div><div class="d">PDF · 156 KB · Shared Dec 28, 2024</div></div>
+            <button class="btn btn-ghost btn-sm">Download</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── TAB: Messages ── -->
+      <div class="pane" id="pane-messages">
+        <div class="ph"><h2>Messages</h2><p>Direct communication with the Summit Sensory Gym team.</p></div>
+        <div class="card pad0">
+          <div class="chat">
+            <div class="chat-h">Order: RTC-2025-0042 — Ridgeline Therapy Center</div>
+            <div class="chat-b" id="chat-messages">
+              <div class="bub them">
+                <div class="who">Summit Sensory Gym</div>
+                Hi Sarah — your order is in manufacturing and on track for the March 14th ship date. We'll send a tracking number as soon as it leaves our facility. Let us know if you have any questions!
+                <div class="ts">Jan 20, 2025 · 10:14 AM</div>
+              </div>
+              <div class="bub me">
+                Thank you! Quick question — do we need to have the anchor bolts in place before delivery, or can your installation team handle that?
+                <div class="ts">Jan 20, 2025 · 2:31 PM</div>
+              </div>
+              <div class="bub them">
+                <div class="who">Summit Sensory Gym</div>
+                Great question! The anchor bolts should ideally be pre-installed per the spec sheet we sent over. If you'd like us to review your floor plan before delivery, just send it over and we'll confirm placement.
+                <div class="ts">Jan 21, 2025 · 9:02 AM</div>
+              </div>
+            </div>
+            <div class="chat-i">
+              <input type="text" id="chat-input" placeholder="Type a message…" onkeydown="if(event.key==='Enter')sendMessage()" />
+              <button class="btn btn-moss btn-sm" onclick="sendMessage()">Send</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── TAB: Invoice ── -->
+      <div class="pane" id="pane-invoice">
+        <div class="ph"><h2>Invoice</h2><p>Access your order invoice.</p></div>
+        <div class="card">
+          <div class="ch"><h3>Your Invoice</h3></div>
+          <p style="color:var(--mut);font-size:13.5px;margin-bottom:20px">Your invoice is available to view or download. If you have questions about your invoice, please contact us at orders@summitsensorygym.com.</p>
+          <a href="#" onclick="alert('In the live portal this opens your invoice link.')" class="btn btn-moss" style="display:inline-flex">📄 View Invoice →</a>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────
+const completions = {};
+const setupTabs = ['contact','billing','delivery','site','color','documents'];
+
+function markDone(tab) {
+  completions[tab] = true;
+  document.getElementById('done-' + tab).style.display = 'inline';
+  document.getElementById('ni-' + tab).textContent = '✓';
+  updateProgress();
+  showToast('✓ ' + tabLabel(tab) + ' saved.');
+}
+
+function tabLabel(id) {
+  return { contact:'Contact information', billing:'Billing information', delivery:'Delivery details', site:'Site readiness', color:'Color selections', documents:'Required documents' }[id] || id;
+}
+
+function updateProgress() {
+  const done = setupTabs.filter(t => completions[t]).length;
+  const pct = Math.round((done / setupTabs.length) * 100);
+  document.getElementById('setup-bar').style.width = pct + '%';
+  const el = document.getElementById('setup-count');
+  el.textContent = done + '/' + setupTabs.length;
+  el.style.color = done === setupTabs.length ? 'var(--ok)' : 'var(--sun)';
+  updateSummary();
+}
+
+function updateSummary() {
+  const done = setupTabs.filter(t => completions[t]).length;
+  const all = done === setupTabs.length;
+  const alert = document.getElementById('summary-alert');
+  const sub = document.getElementById('summary-subtitle');
+  if (all) {
+    alert.className = 'alert success';
+    alert.innerHTML = '<span>🎉</span><strong>Account setup complete! Your information has been received by the Summit Sensory Gym team.</strong>';
+    sub.textContent = "Your account setup is complete. Here's a summary of everything submitted.";
+  }
+  const cl = document.getElementById('summary-checklist');
+  if (!cl) return;
+  cl.innerHTML = setupTabs.map(tab => {
+    const isDone = completions[tab];
+    return `<div style="display:flex;align-items:center;gap:14px;padding:12px 4px;border-bottom:1px solid var(--line)">
+      <div style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:${isDone?'var(--ok)':'var(--sun-lt)'};color:${isDone?'#fff':'var(--sun)'};font-size:13px;flex:none">${isDone?'✓':'!'}</div>
+      <div style="flex:1">
+        <div style="font-weight:600;font-size:14px">${tabLabel(tab).charAt(0).toUpperCase()+tabLabel(tab).slice(1)}</div>
+        <div style="font-size:12.5px;color:var(--mut)">${isDone?'Complete':'Action required'}</div>
+      </div>
+      ${!isDone ? `<button class="btn btn-moss btn-sm" onclick="showTab('${tab}')">Complete →</button>` : ''}
+    </div>`;
+  }).join('');
+}
+
+// ── Tab switching ─────────────────────────────────────────────────
+const allTabs = ['contact','billing','delivery','site','color','documents','summary','status','files','messages','invoice'];
+
+function showTab(id) {
+  allTabs.forEach(t => {
+    document.getElementById('pane-' + t).classList.remove('active');
+    const btn = document.getElementById('nav-' + t);
+    if (btn) btn.classList.remove('on');
+  });
+  document.getElementById('pane-' + id).classList.add('active');
+  const btn = document.getElementById('nav-' + id);
+  if (btn) btn.classList.add('on');
+  if (id === 'summary') updateSummary();
+  window.scrollTo(0,0);
+}
+
+// ── Toggles ───────────────────────────────────────────────────────
+function toggleBillingSame() {
+  const t = document.getElementById('billing-same-toggle');
+  const fields = document.getElementById('billing-address-fields');
+  const display = document.getElementById('billing-same-display');
+  if (t.classList.contains('on')) {
+    t.classList.remove('on');
+    fields.style.display = 'block';
+    display.style.display = 'none';
+  } else {
+    t.classList.add('on');
+    fields.style.display = 'none';
+    display.style.display = 'block';
+  }
+}
+
+function togglePocSame() {
+  const t = document.getElementById('poc-same-toggle');
+  const fields = document.getElementById('billing-poc-fields');
+  if (t.classList.contains('on')) { t.classList.remove('on'); fields.style.display = 'block'; }
+  else { t.classList.add('on'); fields.style.display = 'none'; }
+}
+
+// ── Chips (single-select groups) ─────────────────────────────────
+function selectChip(el, group) {
+  el.closest('.field').querySelectorAll('.chip').forEach(c => c.classList.remove('on'));
+  el.classList.add('on');
+}
+
+// ── Delivery save ─────────────────────────────────────────────────
+function saveDelivery() {
+  const checked = document.getElementById('ack-check').checked;
+  const name = document.getElementById('ack-name').value.trim();
+  if (!checked || !name) {
+    showToast('Please read and sign the freight acknowledgment to continue.');
+    return;
+  }
+  markDone('delivery');
+  showTab('site');
+}
+
+// ── Chat ──────────────────────────────────────────────────────────
+function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  const box = document.getElementById('chat-messages');
+  const el = document.createElement('div');
+  el.className = 'bub me';
+  el.innerHTML = text + '<div class="ts">Just now</div>';
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+  input.value = '';
+  showToast('Message sent.');
+  setTimeout(() => {
+    const reply = document.createElement('div');
+    reply.className = 'bub them';
+    reply.innerHTML = '<div class="who">Summit Sensory Gym</div>Thanks for reaching out — we\'ll get back to you shortly.<div class="ts">Just now</div>';
+    box.appendChild(reply);
+    box.scrollTop = box.scrollHeight;
+  }, 1500);
+}
+
+// ── Toast ─────────────────────────────────────────────────────────
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+// ── Init ──────────────────────────────────────────────────────────
+updateSummary();
+</script>
+</body>
+</html>

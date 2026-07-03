@@ -558,7 +558,8 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
   const [errors, setErrors] = useState({});
   // Edit mode: start in read-only if data is already populated
   const [editingPoc, setEditingPoc] = useState(!(order.pocName || order.phone));
-  const [editingLogistics, setEditingLogistics] = useState(false);
+  // Logistics: show form fields if not yet completed, read-only after first submission
+  const [editingLogistics, setEditingLogistics] = useState(!completions.delivery);
 
   const today = new Date().toISOString().split('T')[0];
 
@@ -1674,10 +1675,16 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
     finally { setSending(false); }
   }
 
-  // Filter out internal tagged updates
-  const visibleMessages = messages.filter(m =>
-    !m.body?.startsWith('[PORTAL:') && !m.body?.startsWith('[BILLING]')
-  );
+  function isStaff(email) {
+    return email?.includes('summitsensory') || email?.includes('summitsensorygym');
+  }
+
+  // Only show messages sent through the portal (tagged [PORTAL])
+  const portalMessages = messages.filter(m => m.body?.startsWith('[PORTAL]'));
+
+  function stripTag(body) {
+    return (body || '').replace(/^\[PORTAL\]\n?/, '');
+  }
 
   return (
     <>
@@ -1686,18 +1693,39 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
         <div className="chat">
           <div className="chat-h">Order: {order.name}</div>
           <div className="chat-b">
-            {visibleMessages.length === 0 && (
+            {portalMessages.length === 0 && (
               <div className="empty" style={{ padding: '30px 0' }}>
-                <div className="ei">💬</div><h3>No messages yet</h3><p>Send a message to the Summit team below.</p>
+                <div className="ei">💬</div>
+                <h3>No messages yet</h3>
+                <p>Send a message below and our team will respond here.</p>
               </div>
             )}
-            {visibleMessages.map(msg => (
-              <div key={msg.id} className={`bub ${msg.creator?.email?.includes('summitsensorygym') ? 'them' : 'me'}`}>
-                {msg.creator && <div style={{ fontSize: 11, opacity: .7, marginBottom: 3 }}>{msg.creator.name}</div>}
-                <div dangerouslySetInnerHTML={{ __html: msg.body }} />
-                <div className="ts">{new Date(msg.created_at).toLocaleString()}</div>
-              </div>
-            ))}
+            {portalMessages.map(msg => {
+              const staff = isStaff(msg.creator?.email);
+              return (
+                <React.Fragment key={msg.id}>
+                  <div className={`bub ${staff ? 'them' : 'me'}`}>
+                    {staff && msg.creator && (
+                      <div style={{ fontSize: 11, opacity: .7, marginBottom: 3 }}>{msg.creator.name}</div>
+                    )}
+                    <div dangerouslySetInnerHTML={{ __html: stripTag(msg.body) }} />
+                    <div className="ts">{new Date(msg.created_at).toLocaleString()}</div>
+                  </div>
+                  {(msg.replies || []).map(reply => {
+                    const replyStaff = isStaff(reply.creator?.email);
+                    return (
+                      <div key={reply.id} className={`bub ${replyStaff ? 'them' : 'me'}`}>
+                        {replyStaff && reply.creator && (
+                          <div style={{ fontSize: 11, opacity: .7, marginBottom: 3 }}>{reply.creator.name}</div>
+                        )}
+                        <div dangerouslySetInnerHTML={{ __html: reply.body }} />
+                        <div className="ts">{new Date(reply.created_at).toLocaleString()}</div>
+                      </div>
+                    );
+                  })}
+                </React.Fragment>
+              );
+            })}
           </div>
           <form className="chat-i" onSubmit={send}>
             <input type="text" placeholder="Type a message…" value={body} onChange={e => setBody(e.target.value)} disabled={sending} />

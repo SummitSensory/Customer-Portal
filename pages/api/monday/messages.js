@@ -49,7 +49,8 @@ export default async function handler(req, res) {
     if (!body?.trim()) return res.status(400).json({ error: 'Message body required.' });
 
     try {
-      const message = await postOrderMessage(orderId, body.trim());
+      // Tag all portal messages so they can be isolated from internal Monday.com updates
+      const message = await postOrderMessage(orderId, `[PORTAL]\n${body.trim()}`);
 
       // Notify team when customer sends a message
       if (identity.role === 'customer') {

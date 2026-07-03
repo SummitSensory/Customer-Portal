@@ -5,7 +5,7 @@
  *   MY ORDER       — ongoing access to dashboard, status, files, messages, etc.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import Script from 'next/script';
@@ -901,7 +901,7 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
   const embedUrl = formId ? `https://form.jotform.com/${formId}?orderId=${encodeURIComponent(order.id)}&orderName=${encodeURIComponent(order.name)}` : null;
 
   // Listen for Jotform's postMessage on submission
-  React.useEffect(() => {
+  useEffect(() => {
     if (!embedUrl) return;
     function onMessage(e) {
       if (typeof e.data === 'string' && e.data.includes('formSubmitted')) setFormSubmitted(true);
@@ -1735,7 +1735,7 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
             {portalMessages.map(msg => {
               const staff = isStaff(msg.creator?.email);
               return (
-                <React.Fragment key={msg.id}>
+                <Fragment key={msg.id}>
                   <div className={`bub ${staff ? 'them' : 'me'}`}>
                     {staff && msg.creator && (
                       <div style={{ fontSize: 11, opacity: .7, marginBottom: 3 }}>{msg.creator.name}</div>
@@ -1755,7 +1755,7 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
                       </div>
                     );
                   })}
-                </React.Fragment>
+                </Fragment>
               );
             })}
           </div>

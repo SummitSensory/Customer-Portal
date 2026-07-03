@@ -383,7 +383,7 @@ export default function Landing() {
 
           {/* ── RIGHT: Brand panel ── */}
           <div style={{
-            background: 'linear-gradient(155deg, #0F1D52 0%, #1B2D6B 45%, #162459 100%)',
+            background: 'linear-gradient(155deg, #BABBBE 0%, #C2C3C7 45%, #B6B7BB 100%)',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -421,7 +421,7 @@ export default function Landing() {
                 fontFamily: "'Fraunces', serif",
                 fontSize: 28,
                 fontWeight: 700,
-                color: '#fff',
+                color: '#1B2D6B',
                 lineHeight: 1.2,
                 marginBottom: 14,
                 letterSpacing: '-0.01em',
@@ -432,7 +432,7 @@ export default function Landing() {
               {/* Subtext */}
               <p style={{
                 fontSize: 13.5,
-                color: 'rgba(255,255,255,.68)',
+                color: '#4a4a55',
                 lineHeight: 1.65,
                 marginBottom: 32,
               }}>
@@ -440,7 +440,7 @@ export default function Landing() {
               </p>
 
               {/* Feature list */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
                 {[
                   { icon: '📦', text: 'Real-time order & shipping status' },
                   { icon: '📋', text: 'Complete setup forms and color selections' },
@@ -451,14 +451,14 @@ export default function Landing() {
                     display: 'flex',
                     alignItems: 'center',
                     gap: 12,
-                    background: 'rgba(255,255,255,.08)',
+                    background: 'rgba(255,255,255,.6)',
                     borderRadius: 11,
                     padding: '11px 16px',
                     width: '100%',
                     textAlign: 'left',
                   }}>
                     <span style={{ fontSize: 18, flexShrink: 0 }}>{f.icon}</span>
-                    <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,.88)', fontWeight: 500 }}>{f.text}</span>
+                    <span style={{ fontSize: 13.5, color: '#2a2a35', fontWeight: 500 }}>{f.text}</span>
                   </div>
                 ))}
               </div>

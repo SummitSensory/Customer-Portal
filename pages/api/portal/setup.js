@@ -49,6 +49,25 @@ export default async function handler(req, res) {
         await postTaggedUpdate(order.id, 'PORTAL: Contact Confirmed',
           `Customer confirmed contact information on ${new Date().toLocaleDateString()}.`
         );
+        await notifyTeamContactChange(order.name, session.email, ['Contact Information Confirmed']).catch(console.error);
+        return res.status(200).json({ ok: true });
+      }
+
+      // ── Tab 1b: Contact — editable update ────────────────────────────────
+      case 'contact_update': {
+        const { name, phone, email: newEmail } = data;
+        const lines = [
+          `Customer requested contact information update on ${new Date().toLocaleDateString()}.`,
+          name     ? `Name: ${name}`   : null,
+          phone    ? `Phone: ${phone}` : null,
+          newEmail ? `Email: ${newEmail}` : null,
+        ].filter(Boolean);
+        await postTaggedUpdate(order.id, 'PORTAL: Contact Update Requested', lines.join('\n'));
+        await notifyTeamContactChange(
+          order.name,
+          session.email,
+          [name && 'Name', phone && 'Phone', newEmail && 'Email'].filter(Boolean)
+        ).catch(console.error);
         return res.status(200).json({ ok: true });
       }
 
@@ -56,14 +75,19 @@ export default async function handler(req, res) {
       case 'billing': {
         const {
           billingSameAsDelivery,
-          billingAddress, billingCity, billingState, billingZip,
+          billingAddress, billingAddressSuite, billingCity, billingState, billingZip, billingCountry,
           billingContactSameAsPrimary,
           billingName, billingPhone, billingEmail,
         } = data;
 
-        const addressText = billingSameAsDelivery
-          ? `Same as delivery address`
-          : `${billingAddress}, ${billingCity}, ${billingState} ${billingZip}`;
+        let addressText = billingSameAsDelivery ? `Same as delivery address` : billingAddress;
+        if (!billingSameAsDelivery) {
+          if (billingAddressSuite) addressText += `, ${billingAddressSuite}`;
+          addressText += `, ${billingCity}`;
+          if (billingState) addressText += `, ${billingState}`;
+          if (billingZip) addressText += ` ${billingZip}`;
+          if (billingCountry) addressText += `, ${billingCountry}`;
+        }
 
         const contactText = billingContactSameAsPrimary
           ? `Same as primary contact`
@@ -72,45 +96,43 @@ export default async function handler(req, res) {
         await postTaggedUpdate(order.id, 'PORTAL: Billing Information',
           `Billing Address: ${addressText}\nBilling Contact: ${contactText}\nSubmitted: ${new Date().toLocaleDateString()}`
         );
+        await notifyTeamContactChange(order.name, session.email, ['Billing Information']).catch(console.error);
         return res.status(200).json({ ok: true });
       }
 
       // ── Tab 3: Delivery ─────────────────────────────────────────────────
       case 'delivery': {
         const {
-          // Freely editable
-          pocName, pocPhone, pocEmail, specialInstructions,
-          // Restricted — require Summit confirmation
-          deliveryAddress, liftgate, loadingDock, deliveryWindow,
+          pocName, pocPhone, phoneCanText, pocEmail, specialInstructions,
+          commMethods, mobilePhone,
+          deliveryAddress, deliveryWindow,
           changedRestricted,
         } = data;
 
-        // Save delivery address if provided and writable
+        // Save delivery address if provided and changed
         if (deliveryAddress) {
           await updateOrderColumn(order.id, COLS.address, deliveryAddress);
         }
 
         // Log the full delivery submission as a tagged update
+        const phoneNote = phoneCanText ? ' (can text)' : '';
+        const commNote = Array.isArray(commMethods) ? commMethods.join(', ') : (commMethods || 'Email');
         const lines = [
-          `Delivery POC: ${pocName || '—'} | ${pocPhone || '—'} | ${pocEmail || '—'}`,
+          `Delivery POC: ${pocName || '—'} | ${pocPhone || '—'}${phoneNote} | ${pocEmail || '—'}`,
+          `Preferred Communication: ${commNote}${mobilePhone ? ` — Mobile: ${mobilePhone}` : ''}`,
           `Special Instructions: ${specialInstructions || 'None'}`,
           deliveryAddress ? `Delivery Address: ${deliveryAddress}` : null,
-          liftgate !== undefined ? `Liftgate Required: ${liftgate ? 'Yes' : 'No'}` : null,
-          loadingDock !== undefined ? `Loading Dock Available: ${loadingDock ? 'Yes' : 'No'}` : null,
           deliveryWindow ? `Preferred Delivery Window: ${deliveryWindow}` : null,
           `Submitted: ${new Date().toLocaleDateString()}`,
         ].filter(Boolean);
 
         await postTaggedUpdate(order.id, 'PORTAL: Delivery Details', lines.join('\n'));
 
-        // Alert team if restricted fields changed
-        if (changedRestricted?.length > 0) {
-          await notifyTeamContactChange(
-            order.name,
-            session.email,
-            changedRestricted
-          ).catch(console.error);
-        }
+        // Notify team of delivery submission (always) + flag restricted changes
+        const notifyFields = changedRestricted?.length > 0
+          ? changedRestricted
+          : ['Delivery Details'];
+        await notifyTeamContactChange(order.name, session.email, notifyFields).catch(console.error);
 
         return res.status(200).json({ ok: true, requiresConfirmation: changedRestricted?.length > 0 });
       }

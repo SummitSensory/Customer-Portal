@@ -41,8 +41,8 @@ async function mondayQuery(query, variables = {}) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': process.env.MONDAY_API_TOKEN,
-      'API-Version': '2024-01',
+      'Authorization': `Bearer ${process.env.MONDAY_API_TOKEN}`,
+      'API-Version': '2024-04',
     },
     body: JSON.stringify({ query, variables }),
   });

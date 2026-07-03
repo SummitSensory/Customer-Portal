@@ -10,6 +10,7 @@ A full-stack Next.js web application with:
 ---
 
 
+
 ## Step 1 — Install dependencies
 
 You'll need Node.js 18+ installed on your computer or CI/CD environment.

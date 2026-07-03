@@ -183,9 +183,81 @@ function DashboardTab({ orders, needsAttention, readyToShip, onNav }) {
 
 // ── Orders ────────────────────────────────────────────────────────────────────
 
+// Columns that are always visible and not toggleable
+const FIXED_COLS = ['_name', '_actions'];
+
+// Default columns shown on first visit
+const DEFAULT_COL_IDS = ['_name', 'email__1', 'color_mkvw7b8', 'status__1', 'lookup_mm1kcbb5', '_balance', '_actions'];
+
+function getCellValue(order, colId) {
+  // Special virtual columns
+  if (colId === '_name') return { type: 'name', value: order.name };
+  if (colId === '_balance') return { type: 'balance', value: order.balance };
+  if (colId === '_actions') return { type: 'actions' };
+  // Known parsed fields
+  const knownMap = {
+    'email__1':           order.customerEmail,
+    'color_mkvw7b8':      order.productType,
+    'status__1':          order.status,
+    'lookup_mm1kcbb5':    order.trackingNumber,
+    'date_mkvvpex1':      order.shipDate,
+    'long_text_mkpkdtj4': order.address,
+    'text_mm4wfamc':      order.invoiceLink,
+    'lookup_mkwaee43':    order.phone,
+    'lookup_mkwb5bty':    order.pocName,
+    'lookup_mkwazctw':    order.pocEmail,
+    'lookup_mkvx85hs':    order.firstName,
+    'lookup_mm0anh5a':    order.deliveryInstructions,
+  };
+  if (colId in knownMap) return { type: 'text', value: knownMap[colId] };
+  // Fall back to raw Monday.com column data
+  return { type: 'text', value: order.rawColumns?.[colId]?.text || '' };
+}
+
 function OrdersTab({ orders, onRefresh, showToast }) {
-  const [editing, setEditing] = useState({}); // { [orderId]: { status, trackingNumber } }
+  const [editing, setEditing] = useState({});
   const [saving, setSaving] = useState(null);
+  const [showPicker, setShowPicker] = useState(false);
+  const [availableCols, setAvailableCols] = useState([]);
+  const [selectedColIds, setSelectedColIds] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('summit_admin_columns');
+        return saved ? JSON.parse(saved) : DEFAULT_COL_IDS;
+      } catch { return DEFAULT_COL_IDS; }
+    }
+    return DEFAULT_COL_IDS;
+  });
+
+  // Fetch available columns from Monday.com when picker opens
+  useEffect(() => {
+    if (!showPicker || availableCols.length > 0) return;
+    fetch('/api/monday/columns')
+      .then(r => r.json())
+      .then(d => {
+        // Prepend virtual columns
+        const virtual = [
+          { id: '_name', title: 'Order Name', type: 'name' },
+          { id: '_balance', title: 'Balance Due', type: 'balance' },
+          { id: '_actions', title: 'Actions', type: 'actions' },
+        ];
+        setAvailableCols([...virtual, ...(d.columns || [])]);
+      })
+      .catch(() => {});
+  }, [showPicker, availableCols.length]);
+
+  function toggleCol(colId) {
+    if (FIXED_COLS.includes(colId)) return;
+    setSelectedColIds(prev =>
+      prev.includes(colId) ? prev.filter(id => id !== colId) : [...prev, colId]
+    );
+  }
+
+  function saveColumns() {
+    localStorage.setItem('summit_admin_columns', JSON.stringify(selectedColIds));
+    setShowPicker(false);
+    showToast('Column preferences saved.');
+  }
 
   const STATUS_OPTIONS = [
     'Order Placed', 'Deposit Received', 'In Manufacturing',
@@ -236,97 +308,195 @@ function OrdersTab({ orders, onRefresh, showToast }) {
     }
   }
 
+  // Build the ordered list of columns to display
+  const displayCols = availableCols.length > 0
+    ? selectedColIds.map(id => availableCols.find(c => c.id === id)).filter(Boolean)
+    : selectedColIds.map(id => ({ id, title: id === '_name' ? 'Order' : id === '_balance' ? 'Balance' : id === '_actions' ? '' : id }));
+
   return (
     <>
-      <div className="ph"><h2>Orders</h2><p>All active orders. Edit status and tracking numbers inline.</p></div>
-      <div className="card pad0">
-        <table>
-          <thead>
-            <tr>
-              <th>Order</th>
-              <th>Customer</th>
-              <th>Product</th>
-              <th>Status</th>
-              <th>Tracking #</th>
-              <th>Balance</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {orders.map(order => {
-              const ed = editing[order.id];
-              return (
-                <tr key={order.id}>
-                  <td style={{ fontWeight: 600 }}>{order.name}</td>
-                  <td style={{ color: 'var(--mut)', fontSize: 13 }}>{order.customerEmail || '—'}</td>
-                  <td style={{ fontSize: 13 }}>{order.productType || '—'}</td>
-                  <td>
-                    {ed ? (
-                      <select
-                        value={ed.status}
-                        onChange={e => setEditing(prev => ({ ...prev, [order.id]: { ...prev[order.id], status: e.target.value } }))}
-                        style={{ width: 160 }}
-                      >
-                        {STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}
-                      </select>
-                    ) : (
-                      <StatusPill status={order.status} />
-                    )}
-                  </td>
-                  <td>
-                    {ed ? (
+      <div className="ph" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <div>
+          <h2>Orders</h2>
+          <p>All active orders. Edit status and tracking numbers inline.</p>
+        </div>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => setShowPicker(true)}
+          style={{ marginTop: 4, whiteSpace: 'nowrap' }}
+        >
+          ⚙️ Customize Columns
+        </button>
+      </div>
+
+      {/* Column picker drawer */}
+      {showPicker && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 50,
+          display: 'flex', alignItems: 'stretch', justifyContent: 'flex-end',
+        }}>
+          {/* Backdrop */}
+          <div
+            onClick={() => setShowPicker(false)}
+            style={{ flex: 1, background: 'rgba(0,0,0,.3)' }}
+          />
+          {/* Drawer */}
+          <div style={{
+            width: 340, background: '#fff', display: 'flex', flexDirection: 'column',
+            boxShadow: '-4px 0 24px rgba(0,0,0,.12)',
+          }}>
+            <div style={{ padding: '20px 20px 14px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>Customize Columns</div>
+                <div style={{ fontSize: 12, color: 'var(--mut)', marginTop: 2 }}>Choose which columns appear in the orders table.</div>
+              </div>
+              <button onClick={() => setShowPicker(false)} style={{ color: 'var(--mut)', fontSize: 18, lineHeight: 1 }}>×</button>
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', padding: '12px 0' }}>
+              {availableCols.length === 0 ? (
+                <div style={{ padding: '20px', textAlign: 'center', color: 'var(--mut)' }}>
+                  <div className="spin" style={{ margin: '0 auto 10px' }} />
+                  Loading columns…
+                </div>
+              ) : (
+                availableCols.map(col => {
+                  const isFixed = FIXED_COLS.includes(col.id);
+                  const isChecked = selectedColIds.includes(col.id);
+                  return (
+                    <label
+                      key={col.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 12,
+                        padding: '10px 20px', cursor: isFixed ? 'default' : 'pointer',
+                        background: isChecked ? 'var(--moss-lt)' : 'transparent',
+                        opacity: isFixed ? 0.5 : 1,
+                      }}
+                    >
                       <input
-                        type="text"
-                        value={ed.trackingNumber}
-                        placeholder="FedEx tracking #"
-                        onChange={e => setEditing(prev => ({ ...prev, [order.id]: { ...prev[order.id], trackingNumber: e.target.value } }))}
-                        style={{ width: 160 }}
+                        type="checkbox"
+                        checked={isChecked}
+                        disabled={isFixed}
+                        onChange={() => toggleCol(col.id)}
+                        style={{ width: 16, height: 16, accentColor: 'var(--moss)' }}
                       />
-                    ) : (
-                      <span style={{ fontSize: 13, color: order.trackingNumber ? 'var(--ink)' : 'var(--mut)' }}>
-                        {order.trackingNumber || '—'}
-                      </span>
-                    )}
-                  </td>
-                  <td style={{ fontWeight: 600, color: order.balance > 0 ? 'var(--rose)' : 'var(--ok)' }}>
-                    {order.balance > 0 ? `$${order.balance.toFixed(2)}` : 'Paid'}
-                  </td>
-                  <td>
-                    {ed ? (
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button
-                          className="btn btn-moss btn-sm"
-                          onClick={() => saveOrder(order.id)}
-                          disabled={saving === order.id}
-                        >
-                          {saving === order.id ? '…' : 'Save'}
-                        </button>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => setEditing(prev => { const n = { ...prev }; delete n[order.id]; return n; })}
-                        >
-                          Cancel
-                        </button>
+                      <div>
+                        <div style={{ fontSize: 13.5, fontWeight: 600 }}>{col.title}</div>
+                        <div style={{ fontSize: 11.5, color: 'var(--mut)', textTransform: 'capitalize' }}>{col.type}</div>
                       </div>
-                    ) : (
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button className="btn btn-ghost btn-sm" onClick={() => startEdit(order)}>Edit</button>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          title="Send portal invitation email to customer"
-                          onClick={() => sendInvite(order)}
-                          style={{ whiteSpace: 'nowrap' }}
-                        >
-                          ✉️ Invite
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+
+            <div style={{ padding: '14px 20px', borderTop: '1px solid var(--line)', display: 'flex', gap: 8 }}>
+              <button className="btn btn-moss" style={{ flex: 1 }} onClick={saveColumns}>Save</button>
+              <button className="btn btn-ghost" onClick={() => setShowPicker(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="card pad0">
+        <div style={{ overflowX: 'auto' }}>
+          <table>
+            <thead>
+              <tr>
+                {displayCols.map(col => (
+                  <th key={col.id}>{col.id === '_actions' ? '' : col.title}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map(order => {
+                const ed = editing[order.id];
+                return (
+                  <tr key={order.id}>
+                    {displayCols.map(col => {
+                      const cell = getCellValue(order, col.id);
+
+                      if (cell.type === 'name') return (
+                        <td key={col.id} style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{order.name}</td>
+                      );
+
+                      if (cell.type === 'balance') return (
+                        <td key={col.id} style={{ fontWeight: 600, whiteSpace: 'nowrap', color: order.balance > 0 ? 'var(--rose)' : 'var(--ok)' }}>
+                          {order.balance > 0 ? `$${order.balance.toFixed(2)}` : 'Paid'}
+                        </td>
+                      );
+
+                      if (cell.type === 'actions') return (
+                        <td key={col.id}>
+                          {ed ? (
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button className="btn btn-moss btn-sm" onClick={() => saveOrder(order.id)} disabled={saving === order.id}>
+                                {saving === order.id ? '…' : 'Save'}
+                              </button>
+                              <button className="btn btn-ghost btn-sm" onClick={() => setEditing(prev => { const n = { ...prev }; delete n[order.id]; return n; })}>
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button className="btn btn-ghost btn-sm" onClick={() => startEdit(order)}>Edit</button>
+                              <button className="btn btn-ghost btn-sm" title="Send portal invitation" onClick={() => sendInvite(order)} style={{ whiteSpace: 'nowrap' }}>
+                                ✉️ Invite
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      );
+
+                      // Status column — editable when in edit mode
+                      if (col.id === 'status__1') return (
+                        <td key={col.id}>
+                          {ed ? (
+                            <select
+                              value={ed.status}
+                              onChange={e => setEditing(prev => ({ ...prev, [order.id]: { ...prev[order.id], status: e.target.value } }))}
+                              style={{ width: 160 }}
+                            >
+                              {STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}
+                            </select>
+                          ) : (
+                            <StatusPill status={order.status} />
+                          )}
+                        </td>
+                      );
+
+                      // Tracking number — editable when in edit mode
+                      if (col.id === 'lookup_mm1kcbb5') return (
+                        <td key={col.id}>
+                          {ed ? (
+                            <input
+                              type="text"
+                              value={ed.trackingNumber}
+                              placeholder="FedEx tracking #"
+                              onChange={e => setEditing(prev => ({ ...prev, [order.id]: { ...prev[order.id], trackingNumber: e.target.value } }))}
+                              style={{ width: 160 }}
+                            />
+                          ) : (
+                            <span style={{ fontSize: 13, color: order.trackingNumber ? 'var(--ink)' : 'var(--mut)' }}>
+                              {order.trackingNumber || '—'}
+                            </span>
+                          )}
+                        </td>
+                      );
+
+                      // Generic text cell
+                      return (
+                        <td key={col.id} style={{ fontSize: 13, color: cell.value ? 'var(--ink)' : 'var(--mut)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {cell.value || '—'}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
         {orders.length === 0 && (
           <div className="empty"><div className="ei">📦</div><h3>No orders</h3><p>Orders from Monday.com will appear here.</p></div>
         )}

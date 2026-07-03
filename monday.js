@@ -48,7 +48,8 @@ async function mondayQuery(query, variables = {}) {
   });
 
   if (!res.ok) {
-    throw new Error(`Monday.com API error: ${res.status} ${res.statusText}`);
+    const body = await res.text().catch(() => '');
+    throw new Error(`Monday.com API error: ${res.status} ${res.statusText} — ${body}`);
   }
 
   const json = await res.json();
@@ -88,30 +89,11 @@ export async function getBoardColumns(boardId = process.env.MONDAY_BOARD_ID) {
 
 /** Fetch ALL orders for a customer email — supports repeat customers */
 export async function getOrdersByEmail(email) {
-  const data = await mondayQuery(`
-    query($boardId: [ID!], $columnId: String!, $value: [String]) {
-      boards(ids: $boardId) {
-        items_page(
-          limit: 50
-          query_params: {
-            rules: [{ column_id: $columnId, compare_value: $value }]
-          }
-        ) {
-          items {
-            id name created_at
-            column_values { id text value }
-          }
-        }
-      }
-    }
-  `, {
-    boardId: [process.env.MONDAY_BOARD_ID],
-    columnId: COLS.customerEmail,
-    value: [email],
-  });
-
-  const items = data.boards?.[0]?.items_page?.items || [];
-  return items.map(parseOrderItem);
+  // Fetch all orders and filter by email in-memory.
+  // More reliable than Monday.com column-filter queries across API versions.
+  const all = await getAllOrders(500);
+  const normalized = email.toLowerCase().trim();
+  return all.filter(o => o.customerEmail?.toLowerCase().trim() === normalized);
 }
 
 /** Fetch a single order by customer email (returns most recent match) */

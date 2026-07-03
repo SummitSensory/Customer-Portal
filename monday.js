@@ -89,27 +89,28 @@ export async function getBoardColumns(boardId = process.env.MONDAY_BOARD_ID) {
 /** Fetch ALL orders for a customer email — supports repeat customers */
 export async function getOrdersByEmail(email) {
   const data = await mondayQuery(`
-    query($boardId: ID!, $columnId: String!, $value: String!) {
-      items_page_by_column_values(
-        limit: 50
-        board_id: $boardId
-        columns: [{ column_id: $columnId, column_values: [$value] }]
-      ) {
-        items {
-          id name created_at
-          column_values {
-            id text value
+    query($boardId: [ID!], $columnId: String!, $value: [String]) {
+      boards(ids: $boardId) {
+        items_page(
+          limit: 50
+          query_params: {
+            rules: [{ column_id: $columnId, compare_value: $value }]
+          }
+        ) {
+          items {
+            id name created_at
+            column_values { id text value }
           }
         }
       }
     }
   `, {
-    boardId: process.env.MONDAY_BOARD_ID,
+    boardId: [process.env.MONDAY_BOARD_ID],
     columnId: COLS.customerEmail,
-    value: email,
+    value: [email],
   });
 
-  const items = data.items_page_by_column_values?.items || [];
+  const items = data.boards?.[0]?.items_page?.items || [];
   return items.map(parseOrderItem);
 }
 

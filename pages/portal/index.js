@@ -537,7 +537,7 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
 
 function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBack }) {
   // Lock logistics editing once order has shipped
-  const shippedIdx = order.stages?.findIndex(s => s.key === 'shipped') ?? 4;
+  const shippedIdx = order.stages?.findIndex(s => s.key === 'shipped') ?? 3;
   const isShipped = order.stageIndex >= shippedIdx;
 
   const [pocName, setPocName] = useState(order.pocName || '');
@@ -556,6 +556,9 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
   const [saving, setSaving] = useState(false);
   const [showRestrictionNote, setShowRestrictionNote] = useState(false);
   const [errors, setErrors] = useState({});
+  // Edit mode: start in read-only if data is already populated
+  const [editingPoc, setEditingPoc] = useState(!(order.pocName || order.phone));
+  const [editingLogistics, setEditingLogistics] = useState(false);
 
   const today = new Date().toISOString().split('T')[0];
 
@@ -598,6 +601,9 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
     const errs = validate();
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
+      // Open the relevant section so errors are visible
+      if (errs.pocName || errs.pocPhone || errs.pocEmail) setEditingPoc(true);
+      if (errs.windowStart || errs.windowEnd) setEditingLogistics(true);
       showToast('Please complete all required fields.');
       return;
     }
@@ -652,13 +658,13 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
           <div>
             <strong>Your order has already shipped.</strong>
             <p style={{ margin: '6px 0 0', fontSize: 13.5 }}>
-              Delivery details can no longer be changed through the portal. If you need to make a change, <strong>contact the Summit Sensory Gym team immediately.</strong>
+              Delivery details can no longer be changed through the portal. If you need to make a change, please contact the Summit Sensory Gym team immediately.
             </p>
           </div>
         </div>
         <div style={{ marginTop: 20 }}>
-          <a href="mailto:orders@summitsensory.com" className="btn btn-moss" style={{ display: 'inline-flex' }}>
-            Contact Summit Team →
+          <a href="tel:+17204575500" className="btn btn-moss" style={{ display: 'inline-flex' }}>
+            📞 Call (720) 457-5500 →
           </a>
         </div>
       </div>
@@ -674,33 +680,55 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
 
         {/* Primary Delivery POC */}
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="ch"><h3>Primary Delivery Point of Contact</h3></div>
-          <p style={{ fontSize: 13, color: 'var(--mut)', marginBottom: 16 }}>The person who will be on-site to receive the delivery.</p>
-          <div className="row">
-            <div className="field">
-              <label><span style={{ color: 'var(--rose)' }}>*</span> Full Name</label>
-              <input type="text" value={pocName} onChange={e => { setPocName(e.target.value); setErrors(v => ({...v, pocName: ''})); }} style={{ borderColor: errors.pocName ? 'var(--rose)' : '' }} />
-              {errors.pocName && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.pocName}</div>}
-            </div>
-            <div className="field">
-              <label><span style={{ color: 'var(--rose)' }}>*</span> Direct Phone</label>
-              <input type="tel" value={pocPhone} onChange={e => { setPocPhone(e.target.value); setErrors(v => ({...v, pocPhone: ''})); }} placeholder="+1 303 555 0100" style={{ borderColor: errors.pocPhone ? 'var(--rose)' : '' }} />
-              {errors.pocPhone && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.pocPhone}</div>}
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 13, cursor: 'pointer', fontWeight: 400 }}>
-                <input type="checkbox" checked={phoneCanText} onChange={e => setPhoneCanText(e.target.checked)} style={{ width: 'auto' }} />
-                This number can receive text messages
-              </label>
-            </div>
+          <div className="ch" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <h3>Primary Delivery Point of Contact</h3>
+            {!editingPoc && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingPoc(true)}>Edit</button>
+            )}
           </div>
-          <div className="field">
-            <label><span style={{ color: 'var(--rose)' }}>*</span> Email</label>
-            <input type="email" value={pocEmail} onChange={e => { setPocEmail(e.target.value); setErrors(v => ({...v, pocEmail: ''})); }} style={{ borderColor: errors.pocEmail ? 'var(--rose)' : '' }} />
-            {errors.pocEmail && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.pocEmail}</div>}
-          </div>
-          <div className="field">
-            <label>Special Delivery Instructions <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(optional)</span></label>
-            <textarea value={specialInstructions} onChange={e => setSpecialInstructions(e.target.value)} placeholder="Gate codes, dock hours, parking instructions, etc." />
-          </div>
+          {editingPoc ? (
+            <>
+              <p style={{ fontSize: 13, color: 'var(--mut)', marginBottom: 16 }}>The person who will be on-site to receive the delivery.</p>
+              <div className="row">
+                <div className="field">
+                  <label><span style={{ color: 'var(--rose)' }}>*</span> Full Name</label>
+                  <input type="text" value={pocName} onChange={e => { setPocName(e.target.value); setErrors(v => ({...v, pocName: ''})); }} style={{ borderColor: errors.pocName ? 'var(--rose)' : '' }} />
+                  {errors.pocName && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.pocName}</div>}
+                </div>
+                <div className="field">
+                  <label><span style={{ color: 'var(--rose)' }}>*</span> Direct Phone</label>
+                  <input type="tel" value={pocPhone} onChange={e => { setPocPhone(e.target.value); setErrors(v => ({...v, pocPhone: ''})); }} placeholder="+1 303 555 0100" style={{ borderColor: errors.pocPhone ? 'var(--rose)' : '' }} />
+                  {errors.pocPhone && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.pocPhone}</div>}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 13, cursor: 'pointer', fontWeight: 400 }}>
+                    <input type="checkbox" checked={phoneCanText} onChange={e => setPhoneCanText(e.target.checked)} style={{ width: 'auto' }} />
+                    This number can receive text messages
+                  </label>
+                </div>
+              </div>
+              <div className="field">
+                <label><span style={{ color: 'var(--rose)' }}>*</span> Email</label>
+                <input type="email" value={pocEmail} onChange={e => { setPocEmail(e.target.value); setErrors(v => ({...v, pocEmail: ''})); }} style={{ borderColor: errors.pocEmail ? 'var(--rose)' : '' }} />
+                {errors.pocEmail && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.pocEmail}</div>}
+              </div>
+              <div className="field">
+                <label>Special Delivery Instructions <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(optional)</span></label>
+                <textarea value={specialInstructions} onChange={e => setSpecialInstructions(e.target.value)} placeholder="Gate codes, dock hours, parking instructions, etc." />
+              </div>
+              <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingPoc(false)}>Done</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p style={{ fontSize: 13, color: 'var(--mut)', marginBottom: 16 }}>The person who will be on-site to receive the delivery.</p>
+              <div className="grid g2" style={{ marginBottom: pocEmail || specialInstructions ? 12 : 0 }}>
+                <ReadField label="Full Name" value={pocName || '—'} />
+                <ReadField label="Direct Phone" value={pocPhone ? `${pocPhone}${phoneCanText ? ' (can text)' : ''}` : '—'} />
+              </div>
+              {pocEmail && <ReadField label="Email" value={pocEmail} />}
+              {specialInstructions && <ReadField label="Special Delivery Instructions" value={specialInstructions} />}
+            </>
+          )}
         </div>
 
         {/* Communication preferences — multi-select */}
@@ -729,57 +757,79 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
 
         {/* Delivery Logistics */}
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="ch"><h3>Delivery Logistics</h3></div>
-          <div className="alert warn" style={{ marginBottom: 16 }}>
-            <span>⚠️</span>
-            <span>Changes to delivery logistics may increase your overall freight costs and could delay your delivery depending on various factors. Changes also require confirmation from the Summit team before taking effect — we'll follow up within 1 business day.</span>
-          </div>
-          <div className="field">
-            <label>Delivery Address <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(update if changed)</span></label>
-            <input type="text" value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)} />
-          </div>
-          <div className="field">
-            <label><span style={{ color: 'var(--rose)' }}>*</span> Preferred Delivery Window <strong>(weekdays only)</strong></label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, marginBottom: 14, fontSize: 13.5, cursor: 'pointer', fontWeight: 500 }}>
-              <input
-                type="checkbox"
-                checked={windowAsap}
-                onChange={e => {
-                  setWindowAsap(e.target.checked);
-                  if (e.target.checked) {
-                    setWindowStart('');
-                    setWindowEnd('');
-                    setErrors(v => ({...v, windowStart: '', windowEnd: ''}));
-                  }
-                }}
-                style={{ width: 'auto' }}
-              />
-              Deliver as early as possible
-            </label>
-            {!windowAsap && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div>
-                  <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 5 }}>
-                    <span style={{ color: 'var(--rose)' }}>*</span> Earliest acceptable date
-                  </label>
-                  <input type="date" value={windowStart} min={today}
-                    onChange={e => { setWindowStart(e.target.value); setErrors(v => ({...v, windowStart: ''})); }}
-                    style={{ borderColor: errors.windowStart ? 'var(--rose)' : '', maxWidth: 220 }} />
-                  {errors.windowStart && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.windowStart}</div>}
-                </div>
-                <div>
-                  <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 5 }}>
-                    <span style={{ color: 'var(--rose)' }}>*</span> Latest acceptable date
-                  </label>
-                  <input type="date" value={windowEnd} min={windowStart || today}
-                    onChange={e => { setWindowEnd(e.target.value); setErrors(v => ({...v, windowEnd: ''})); }}
-                    style={{ borderColor: errors.windowEnd ? 'var(--rose)' : '', maxWidth: 220 }} />
-                  {errors.windowEnd && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.windowEnd}</div>}
-                </div>
-                <div className="hint">Deliveries are made Monday–Friday. Weekend dates will not be accepted.</div>
-              </div>
+          <div className="ch" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <h3>Delivery Logistics</h3>
+            {!editingLogistics && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingLogistics(true)}>Edit</button>
             )}
           </div>
+          {editingLogistics ? (
+            <>
+              <div className="alert warn" style={{ marginBottom: 16 }}>
+                <span>⚠️</span>
+                <span>Changes to delivery logistics may increase your overall freight costs and could delay your delivery depending on various factors. Changes also require confirmation from the Summit team before taking effect — we'll follow up within 1 business day.</span>
+              </div>
+              <div className="field">
+                <label>Delivery Address <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(update if changed)</span></label>
+                <input type="text" value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)} />
+              </div>
+              <div className="field">
+                <label><span style={{ color: 'var(--rose)' }}>*</span> Preferred Delivery Window <strong>(weekdays only)</strong></label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, marginBottom: 14, fontSize: 13.5, cursor: 'pointer', fontWeight: 500 }}>
+                  <input
+                    type="checkbox"
+                    checked={windowAsap}
+                    onChange={e => {
+                      setWindowAsap(e.target.checked);
+                      if (e.target.checked) {
+                        setWindowStart('');
+                        setWindowEnd('');
+                        setErrors(v => ({...v, windowStart: '', windowEnd: ''}));
+                      }
+                    }}
+                    style={{ width: 'auto' }}
+                  />
+                  Deliver as early as possible
+                </label>
+                {!windowAsap && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <div>
+                      <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 5 }}>
+                        <span style={{ color: 'var(--rose)' }}>*</span> Earliest Acceptable Date
+                      </label>
+                      <input type="date" value={windowStart} min={today}
+                        onChange={e => { setWindowStart(e.target.value); setErrors(v => ({...v, windowStart: ''})); }}
+                        style={{ borderColor: errors.windowStart ? 'var(--rose)' : '', maxWidth: 220 }} />
+                      {errors.windowStart && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.windowStart}</div>}
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 5 }}>
+                        <span style={{ color: 'var(--rose)' }}>*</span> Latest Acceptable Date
+                      </label>
+                      <input type="date" value={windowEnd} min={windowStart || today}
+                        onChange={e => { setWindowEnd(e.target.value); setErrors(v => ({...v, windowEnd: ''})); }}
+                        style={{ borderColor: errors.windowEnd ? 'var(--rose)' : '', maxWidth: 220 }} />
+                      {errors.windowEnd && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.windowEnd}</div>}
+                    </div>
+                    <div className="hint">Deliveries are made Monday–Friday. Weekend dates will not be accepted.</div>
+                  </div>
+                )}
+              </div>
+              <div style={{ marginTop: 4 }}>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingLogistics(false)}>Done</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <ReadField label="Delivery Address" value={deliveryAddress || '—'} />
+              <ReadField label="Preferred Delivery Window" value={
+                windowAsap ? 'As early as possible' :
+                (windowStart || windowEnd) ? `${windowStart || 'TBD'} to ${windowEnd || 'TBD'}` : 'Not yet set'
+              } />
+              {errors.windowStart && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.windowStart}</div>}
+              {errors.windowEnd && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.windowEnd}</div>}
+            </>
+          )}
         </div>
 
         {/* Site Readiness */}
@@ -828,7 +878,7 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
           </label>
           {errors.ackRead && <div style={{ color: 'var(--rose)', fontSize: 12, marginBottom: 12 }}>{errors.ackRead}</div>}
           <div className="field">
-            <label><span style={{ color: 'var(--rose)' }}>*</span> Your Full Name (acknowledgment signature)</label>
+            <label><span style={{ color: 'var(--rose)' }}>*</span> Your Full Name (Acknowledgment Signature)</label>
             <input type="text" value={ackName} onChange={e => { setAckName(e.target.value); setErrors(v => ({...v, ackName: ''})); }}
               placeholder="Type your full name"
               style={{ borderColor: errors.ackName ? 'var(--rose)' : '' }} />
@@ -1318,7 +1368,16 @@ function InstallationTab({ order, onNav }) {
       }).filter(d => d.url)
     : [];
 
-  const hasContent = videos.length > 0 || docs.length > 0;
+  const links = order.installationLinks
+    ? order.installationLinks.split('\n').map(line => {
+        const parts = line.trim().split('|');
+        return parts.length >= 2
+          ? { label: parts[0].trim(), url: parts[1].trim() }
+          : { label: 'Installation Resource', url: parts[0].trim() };
+      }).filter(l => l.url)
+    : [];
+
+  const hasContent = videos.length > 0 || docs.length > 0 || links.length > 0;
 
   function docIcon(url) {
     const u = url.toLowerCase();
@@ -1353,6 +1412,34 @@ function InstallationTab({ order, onNav }) {
         </div>
       ) : (
         <>
+          {/* Installation Material Links */}
+          {links.length > 0 && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="ch"><h3>🔗 Installation Materials</h3></div>
+              <p style={{ fontSize: 13.5, color: 'var(--mut)', marginBottom: 16 }}>
+                Click any link below to open the installation material in a new tab.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {links.map((link, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: 'var(--paper)', borderRadius: 10, border: '1px solid var(--line)' }}>
+                    <div style={{ flex: 1, fontWeight: 600, fontSize: 14 }}>{link.label}</div>
+                    <a
+                      href={link.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`Open ${link.label}`}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 8, background: 'var(--moss)', color: '#fff', textDecoration: 'none', fontSize: 16, flex: 'none', transition: 'opacity .15s' }}
+                      onMouseEnter={e => e.currentTarget.style.opacity = '0.8'}
+                      onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+                    >
+                      ↗
+                    </a>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Videos */}
           {videos.length > 0 && (
             <div className="card" style={{ marginBottom: 16 }}>

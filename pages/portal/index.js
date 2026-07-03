@@ -896,17 +896,49 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
 // ── Tab: Color & Product Selections ──────────────────────────────────────────
 
 function ColorTab({ order, completions, markComplete, showToast, colorForms, onNext, onBack }) {
+  const [formSubmitted, setFormSubmitted] = useState(false);
+  const formId = order.colorFormId?.trim();
+  const embedUrl = formId ? `https://form.jotform.com/${formId}?orderId=${encodeURIComponent(order.id)}&orderName=${encodeURIComponent(order.name)}` : null;
+
+  // Listen for Jotform's postMessage on submission
+  React.useEffect(() => {
+    if (!embedUrl) return;
+    function onMessage(e) {
+      if (typeof e.data === 'string' && e.data.includes('formSubmitted')) setFormSubmitted(true);
+      if (typeof e.data === 'object' && e.data?.action === 'submission-completed') setFormSubmitted(true);
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [embedUrl]);
+
   return (
     <>
-      <div className="ph"><h2>Color & Product Selections</h2><p>Complete your color selection form to finalize your equipment configuration.</p></div>
+      <div className="ph">
+        <h2>Color & Product Selections</h2>
+        <p>Complete your color selection form to finalize your equipment configuration.</p>
+      </div>
       {completions.color && <div className="alert success" style={{ marginBottom: 16 }}>✅ Color selections submitted.</div>}
 
-      {colorForms.length === 0 ? (
+      {embedUrl ? (
+        <div className="card" style={{ marginBottom: 16, padding: 0, overflow: 'hidden' }}>
+          {formSubmitted && (
+            <div className="alert success" style={{ margin: 16, marginBottom: 0 }}>
+              ✅ Form submitted! Click "Mark as Complete" below to continue.
+            </div>
+          )}
+          <iframe
+            src={embedUrl}
+            title="Color Selection Form"
+            style={{ width: '100%', height: 900, border: 'none', display: 'block' }}
+            allow="geolocation; camera"
+          />
+        </div>
+      ) : colorForms.length === 0 ? (
         <div className="card">
           <div className="empty">
             <div className="ei">🎨</div>
-            <h3>No color form required</h3>
-            <p>No color selection form is configured for your product type. Contact Summit Sensory Gym if you have questions.</p>
+            <h3>Color form not yet assigned</h3>
+            <p>Your color selection form hasn't been assigned yet. Our team will update this as your order progresses — you'll receive a notification when it's ready.</p>
           </div>
         </div>
       ) : (

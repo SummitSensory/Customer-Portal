@@ -960,15 +960,27 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
 
 function ColorTab({ order, completions, markComplete, showToast, colorForms, onNext, onBack }) {
   const [formSubmitted, setFormSubmitted] = useState(false);
+  const [frameHeight, setFrameHeight] = useState(800);
   const formId = order.colorFormId?.trim();
   const embedUrl = formId ? `https://form.jotform.com/${formId}?orderId=${encodeURIComponent(order.id)}&orderName=${encodeURIComponent(order.name)}` : null;
 
-  // Listen for Jotform's postMessage on submission
+  // Listen for Jotform postMessages — auto-resize height and detect submission
   useEffect(() => {
     if (!embedUrl) return;
     function onMessage(e) {
-      if (typeof e.data === 'string' && e.data.includes('formSubmitted')) setFormSubmitted(true);
-      if (typeof e.data === 'object' && e.data?.action === 'submission-completed') setFormSubmitted(true);
+      // Height auto-resize
+      if (typeof e.data === 'string') {
+        try {
+          const d = JSON.parse(e.data);
+          if (d?.action === 'setHeight' && d.height) setFrameHeight(Number(d.height) + 32);
+          if (d?.action === 'submission-completed') setFormSubmitted(true);
+        } catch {}
+        if (e.data.includes('formSubmitted')) setFormSubmitted(true);
+      }
+      if (typeof e.data === 'object' && e.data) {
+        if (e.data.action === 'setHeight' && e.data.height) setFrameHeight(Number(e.data.height) + 32);
+        if (e.data.action === 'submission-completed') setFormSubmitted(true);
+      }
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -981,21 +993,24 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
         <p>Complete your color selection form to finalize your equipment configuration.</p>
       </div>
       {completions.color && <div className="alert success" style={{ marginBottom: 16 }}>✅ Color selections submitted.</div>}
+      {formSubmitted && <div className="alert success" style={{ marginBottom: 16 }}>✅ Form submitted! Click &quot;Mark as Complete&quot; below to continue.</div>}
 
       {embedUrl ? (
-        <div className="card" style={{ marginBottom: 16, padding: 0, overflow: 'hidden' }}>
-          {formSubmitted && (
-            <div className="alert success" style={{ margin: 16, marginBottom: 0 }}>
-              ✅ Form submitted! Click "Mark as Complete" below to continue.
-            </div>
-          )}
-          <iframe
-            src={embedUrl}
-            title="Color Selection Form"
-            style={{ width: '100%', height: 900, border: 'none', display: 'block' }}
-            allow="geolocation; camera"
-          />
-        </div>
+        /* Seamless embed — no card border, no padding, form flows as part of the page */
+        <iframe
+          src={embedUrl}
+          title="Color Selection Form"
+          scrolling="no"
+          style={{
+            width: '100%',
+            height: frameHeight,
+            border: 'none',
+            display: 'block',
+            background: 'transparent',
+            marginBottom: 16,
+          }}
+          allow="geolocation; camera"
+        />
       ) : colorForms.length === 0 ? (
         <div className="card">
           <div className="empty">

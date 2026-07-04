@@ -43,6 +43,7 @@ export default function CustomerPortal() {
   const [loading, setLoading] = useState(true);
   const [completions, setCompletions] = useState({});
   const [toast, setToast] = useState('');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   function showToast(msg) {
     setToast(msg);
@@ -109,6 +110,10 @@ export default function CustomerPortal() {
   useEffect(() => {
     if (order) { loadFiles(); loadMessages(); }
   }, [order, loadFiles, loadMessages]);
+  useEffect(() => {
+    document.body.style.overflow = mobileNavOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [mobileNavOpen]);
 
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
@@ -164,6 +169,7 @@ export default function CustomerPortal() {
 
         {/* Top Bar */}
         <div className="top">
+          <button className="mob-menu-btn" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation">☰</button>
           <div className="brand">
             <img src="/logo.png" style={{ width: 30, height: 30, objectFit: 'contain' }} alt="Summit Sensory Gym" onError={e => { e.target.style.display = 'none'; }} />
             <b style={{ fontSize: 15 }}>Summit Sensory Gym</b>
@@ -255,6 +261,63 @@ export default function CustomerPortal() {
             {activeTab === 'messages'     && <MessagesTab     order={order} messages={messages} onRefresh={loadMessages} showToast={showToast} />}
             {activeTab === 'contact_us'   && <ContactUsTab    onNav={setActiveTab} />}
           </main>
+        </div>
+
+        {/* Mobile navigation drawer */}
+        {mobileNavOpen && (
+          <div className="mob-overlay" onClick={() => setMobileNavOpen(false)} />
+        )}
+        <div className={`mob-drawer${mobileNavOpen ? ' open' : ''}`}>
+          <div className="mob-drawer-head">
+            <div className="brand">
+              <img src="/logo.png" style={{ width: 24, height: 24, objectFit: 'contain' }} alt="" onError={e => { e.target.style.display = 'none'; }} />
+              <b style={{ fontSize: 14 }}>Summit Sensory Gym</b>
+            </div>
+            <button className="mob-close" onClick={() => setMobileNavOpen(false)}>✕</button>
+          </div>
+          <div className="nav">
+            {/* Setup progress */}
+            <div style={{ padding: '12px 12px 4px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, fontWeight: 700, color: 'var(--mut)', letterSpacing: '.05em', textTransform: 'uppercase', marginBottom: 6 }}>
+                <span>Account Setup</span>
+                <span style={{ color: setupComplete ? 'var(--ok)' : 'var(--sun)' }}>{setupCount}/{setupTotal}</span>
+              </div>
+              <div className="prog">
+                <i style={{ width: `${Math.round((setupCount / setupTotal) * 100)}%` }} />
+              </div>
+            </div>
+            {SETUP_TABS.map(tab => {
+              const done = completions[tab.id];
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  className={isActive ? 'on' : ''}
+                  onClick={() => { setActiveTab(tab.id); setMobileNavOpen(false); }}
+                  style={{ position: 'relative' }}
+                >
+                  <span className="ni" style={{ fontSize: 13 }}>{done ? '✓' : tab.icon}</span>
+                  <span style={{ flex: 1, textAlign: 'left' }}>{tab.label}</span>
+                  {done && <span style={{ fontSize: 11, color: isActive ? 'rgba(255,255,255,.7)' : 'var(--ok)', fontWeight: 700 }}>Done</span>}
+                  {!done && !isActive && <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--sun)', display: 'inline-block', flex: 'none' }} />}
+                </button>
+              );
+            })}
+            <div className="lab">My Order</div>
+            {ORDER_TABS.map(tab => (
+              <button
+                key={tab.id}
+                className={activeTab === tab.id ? 'on' : ''}
+                onClick={() => { setActiveTab(tab.id); setMobileNavOpen(false); }}
+              >
+                <span className="ni">{tab.icon}</span>
+                {tab.label}
+                {tab.id === 'messages' && unreadMessages > 0 && (
+                  <span className="badge">{unreadMessages}</span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

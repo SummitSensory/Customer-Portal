@@ -960,31 +960,39 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
 
 function ColorTab({ order, completions, markComplete, showToast, colorForms, onNext, onBack }) {
   const [formSubmitted, setFormSubmitted] = useState(false);
-  const [frameHeight, setFrameHeight] = useState(800);
   const formId = order.colorFormId?.trim();
-  const embedUrl = formId ? `https://form.jotform.com/${formId}?orderId=${encodeURIComponent(order.id)}&orderName=${encodeURIComponent(order.name)}` : null;
+  const iframeId = formId ? `JotFormIFrame-${formId}` : null;
 
-  // Listen for Jotform postMessages — auto-resize height and detect submission
+  // Load Jotform embed handler script and wire it up after iframe mounts
   useEffect(() => {
-    if (!embedUrl) return;
+    if (!formId || !iframeId) return;
+
+    function initHandler() {
+      if (window.jotformEmbedHandler) {
+        window.jotformEmbedHandler(`iframe[id='${iframeId}']`, 'https://form.jotform.com/');
+      }
+    }
+
+    // If script already loaded from a previous render, just init
+    if (window.jotformEmbedHandler) {
+      initHandler();
+    } else {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jotfor.ms/s/umd/latest/for-form-embed-handler.js';
+      script.onload = initHandler;
+      document.body.appendChild(script);
+    }
+
+    // Detect form submission via postMessage
     function onMessage(e) {
-      // Height auto-resize
-      if (typeof e.data === 'string') {
-        try {
-          const d = JSON.parse(e.data);
-          if (d?.action === 'setHeight' && d.height) setFrameHeight(Number(d.height) + 32);
-          if (d?.action === 'submission-completed') setFormSubmitted(true);
-        } catch {}
-        if (e.data.includes('formSubmitted')) setFormSubmitted(true);
-      }
-      if (typeof e.data === 'object' && e.data) {
-        if (e.data.action === 'setHeight' && e.data.height) setFrameHeight(Number(e.data.height) + 32);
-        if (e.data.action === 'submission-completed') setFormSubmitted(true);
-      }
+      const raw = e.data;
+      const data = typeof raw === 'string' ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : raw;
+      if (data?.action === 'submission-completed') setFormSubmitted(true);
+      if (typeof raw === 'string' && raw.includes('formSubmitted')) setFormSubmitted(true);
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [embedUrl]);
+  }, [formId, iframeId]);
 
   return (
     <>
@@ -995,21 +1003,17 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
       {completions.color && <div className="alert success" style={{ marginBottom: 16 }}>✅ Color selections submitted.</div>}
       {formSubmitted && <div className="alert success" style={{ marginBottom: 16 }}>✅ Form submitted! Click &quot;Mark as Complete&quot; below to continue.</div>}
 
-      {embedUrl ? (
-        /* Seamless embed — no card border, no padding, form flows as part of the page */
+      {formId ? (
         <iframe
-          src={embedUrl}
+          id={iframeId}
           title="Color Selection Form"
+          onLoad={() => { if (typeof window !== 'undefined') window.parent?.scrollTo(0, 0); }}
+          allowTransparency="true"
+          allow="geolocation; microphone; camera; fullscreen; payment"
+          src={`https://form.jotform.com/${formId}`}
+          frameBorder="0"
+          style={{ minWidth: '100%', maxWidth: '100%', height: 539, border: 'none', display: 'block', marginBottom: 16 }}
           scrolling="no"
-          style={{
-            width: '100%',
-            height: frameHeight,
-            border: 'none',
-            display: 'block',
-            background: 'transparent',
-            marginBottom: 16,
-          }}
-          allow="geolocation; camera"
         />
       ) : colorForms.length === 0 ? (
         <div className="card">

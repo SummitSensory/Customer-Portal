@@ -8,7 +8,6 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import Script from 'next/script';
 
 // ── Navigation config ─────────────────────────────────────────────────────────
 
@@ -159,12 +158,6 @@ export default function CustomerPortal() {
   return (
     <>
       <Head><title>{order.name} — Summit Portal</title></Head>
-      {process.env.NEXT_PUBLIC_GOOGLE_PLACES_API_KEY && (
-        <Script
-          src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_PLACES_API_KEY}&libraries=places`}
-          strategy="afterInteractive"
-        />
-      )}
       <div id="app" style={{ display: 'block' }}>
 
         {/* Top Bar */}
@@ -960,7 +953,8 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
 
 function ColorTab({ order, completions, markComplete, showToast, colorForms, onNext, onBack }) {
   const [formSubmitted, setFormSubmitted] = useState(false);
-  const formId = order.colorFormId?.trim();
+  const rawFormId = order?.colorFormId;
+  const formId = typeof rawFormId === 'string' ? rawFormId.trim() : '';
   const iframeId = formId ? `JotFormIFrame-${formId}` : null;
 
   // Load Jotform embed handler script and wire it up after iframe mounts
@@ -1004,16 +998,23 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
       {formSubmitted && <div className="alert success" style={{ marginBottom: 16 }}>✅ Form submitted! Click &quot;Mark as Complete&quot; below to continue.</div>}
 
       {formId ? (
-        <iframe
-          id={iframeId}
-          title="Color Selection Form"
-          onLoad={() => { if (typeof window !== 'undefined') window.parent?.scrollTo(0, 0); }}
-          allowTransparency="true"
-          allow="geolocation; microphone; camera; fullscreen; payment"
-          src={`https://form.jotform.com/${formId}`}
-          frameBorder="0"
-          style={{ minWidth: '100%', maxWidth: '100%', height: 539, border: 'none', display: 'block', marginBottom: 16 }}
-          scrolling="no"
+        /* dangerouslySetInnerHTML isolates the iframe from React's reconciler.
+           The Jotform embed handler moves DOM nodes outside React's knowledge,
+           which causes "removeChild" crashes when React tries to reconcile. */
+        <div
+          key={formId}
+          dangerouslySetInnerHTML={{
+            __html: `<iframe
+              id="${iframeId}"
+              title="Color Selection Form"
+              allowtransparency="true"
+              allow="geolocation; microphone; camera; fullscreen; payment"
+              src="https://form.jotform.com/${formId}"
+              frameborder="0"
+              style="min-width:100%;max-width:100%;height:539px;border:none;display:block;margin-bottom:16px;"
+              scrolling="no"
+            ></iframe>`,
+          }}
         />
       ) : colorForms.length === 0 ? (
         <div className="card">

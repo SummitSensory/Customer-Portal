@@ -16,21 +16,26 @@ const nextConfig = {
         ],
       },
       {
-        // Allow the portal pages to be embedded from summitsensory.com only.
-        // Change the Content-Security-Policy frame-ancestors value if your
-        // website domain differs.
         source: '/:path*',
         headers: [
           {
             key: 'X-Frame-Options',
-            // ALLOW-FROM is deprecated; CSP frame-ancestors is the modern replacement
             value: 'SAMEORIGIN',
           },
           {
             key: 'Content-Security-Policy',
-            // Allows embedding from summitsensory.com and www.summitsensory.com.
-            // 'self' covers portal.summitsensory.com itself (e.g. admin iframes).
-            value: "frame-ancestors 'self' https://summitsensory.com https://www.summitsensory.com",
+            value: [
+              // Who can embed this portal in an iframe
+              "frame-ancestors 'self' https://summitsensory.com https://www.summitsensory.com",
+              // Allow Jotform iframes to load inside the portal
+              "frame-src 'self' https://form.jotform.com https://*.jotfor.ms",
+              // Allow Jotform scripts and CDN assets
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jotfor.ms https://*.jotfor.ms",
+              // Allow Jotform API calls and CDN connections
+              "connect-src 'self' https://api.jotform.com https://cdn.jotfor.ms https://*.jotfor.ms",
+              // Allow images from Jotform and Monday
+              "img-src 'self' data: https://*.jotfor.ms https://files-monday-com.s3.amazonaws.com https://monday-files.s3.amazonaws.com",
+            ].join('; '),
           },
         ],
       },

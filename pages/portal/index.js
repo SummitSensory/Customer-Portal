@@ -1667,8 +1667,6 @@ function FilesTab({ files }) {
 // ── Tab: Invoice & Payment ────────────────────────────────────────────────────
 
 function InvoiceTab({ order }) {
-  const [iframeError, setIframeError] = useState(false);
-
   return (
     <>
       <div className="ph"><h2>Invoice & Payment</h2><p>View your current invoice and submit payment securely.</p></div>
@@ -1683,40 +1681,26 @@ function InvoiceTab({ order }) {
           <strong>Late Payment Policy:</strong> Invoices not paid in full prior to the scheduled ship date are subject to a late payment fee of <strong>1.5% per month (18% annually)</strong> on the outstanding balance. Late fees begin accruing on the first business day following the ship date if payment has not been received. Summit Sensory Gym reserves the right to delay shipment until the account balance is cleared.
         </p>
         <p style={{ fontSize: 13, color: 'var(--mut)', margin: 0 }}>
-          Questions about your invoice?{' '}
-          <a href="mailto:orders@summitsensory.com" style={{ color: 'var(--moss)' }}>orders@summitsensory.com</a>
+          Questions about your invoice? <a href="mailto:orders@summitsensory.com" style={{ color: 'var(--moss)' }}>orders@summitsensory.com</a>
         </p>
       </div>
 
       {order.invoiceLink ? (
         <>
           {/* Embedded invoice */}
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="ch" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3>Your Invoice</h3>
+          <div className="card pad0" style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid var(--line)' }}>
+              <h3 style={{ fontSize: 16, margin: 0 }}>Your Invoice</h3>
               <a href={order.invoiceLink} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">
                 Open in New Tab →
               </a>
             </div>
-            {!iframeError ? (
-              <div style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid var(--line)', marginTop: 4, background: 'var(--paper)' }}>
-                <iframe
-                  src={order.invoiceLink}
-                  style={{ width: '100%', height: 620, border: 'none', display: 'block' }}
-                  title="Invoice"
-                  onError={() => setIframeError(true)}
-                />
-              </div>
-            ) : (
-              <div className="empty">
-                <div className="ei">📄</div>
-                <h3>Unable to preview invoice</h3>
-                <p>Your invoice can't be embedded here, but you can open it directly.</p>
-                <a href={order.invoiceLink} target="_blank" rel="noreferrer" className="btn btn-moss" style={{ display: 'inline-flex', marginTop: 12 }}>
-                  Open Invoice →
-                </a>
-              </div>
-            )}
+            <iframe
+              src={order.invoiceLink}
+              title="Invoice"
+              style={{ width: '100%', height: 700, border: 'none', display: 'block' }}
+              allow="fullscreen"
+            />
           </div>
 
           {/* Payment button */}

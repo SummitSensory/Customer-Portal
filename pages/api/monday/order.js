@@ -9,6 +9,7 @@ import {
   getOrderById,
   getOrdersByEmail,
   updateOrderColumn,
+  postTaggedUpdate,
   COLS,
 } from '../../../lib/monday';
 import {
@@ -49,21 +50,32 @@ export default async function handler(req, res) {
     const changed = [];
 
     try {
+      // address — long_text column expects a plain string, not an object
       if (address !== undefined && address !== order.address) {
-        await updateOrderColumn(order.id, COLS.address, { address });
+        await updateOrderColumn(order.id, COLS.address, address);
         changed.push('Ship-to address');
       }
+
+      // phone and contactName are mirror columns (read-only in Monday) or unmapped.
+      // Store changes as a tagged update so the team can update the source board.
+      const notes = [];
       if (phone !== undefined && phone !== order.phone) {
-        await updateOrderColumn(order.id, COLS.phone, phone);
+        notes.push(`Phone: ${phone}`);
         changed.push('Phone');
       }
-      if (contactName !== undefined && contactName !== order.contactName) {
-        await updateOrderColumn(order.id, COLS.contactName, contactName);
+      if (contactName !== undefined) {
+        notes.push(`Contact name: ${contactName}`);
         changed.push('Primary contact');
+      }
+      if (notes.length > 0) {
+        await postTaggedUpdate(
+          order.id,
+          'PORTAL: Contact Update Requested',
+          `Customer requested contact update on ${new Date().toLocaleDateString()}.\n${notes.join('\n')}`
+        );
       }
 
       if (changed.length > 0) {
-        // Alert the team of any contact info change
         await notifyTeamContactChange(order.name, session.email, changed).catch(console.error);
       }
 

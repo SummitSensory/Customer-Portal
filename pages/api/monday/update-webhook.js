@@ -37,10 +37,11 @@ export default async function handler(req, res) {
     const order = await getOrderById(itemId);
     if (!order?.customerEmail) return res.status(200).json({ skipped: 'No customer email on order.' });
 
-    // Strip HTML tags for the email preview
+    // Strip HTML and internal portal tags from the email preview
     const preview = (updateBody || '')
       .replace(/<[^>]+>/g, '')
-      .replace(/\[PORTAL:.*?\]/g, '') // remove internal tags
+      .replace(/\[PORTAL:[^\]]*\]/g, '') // remove [PORTAL: X] completion tags
+      .replace(/^\[PORTAL\]\n?/m, '')    // remove bare [PORTAL] message prefix
       .trim()
       .slice(0, 280);
 

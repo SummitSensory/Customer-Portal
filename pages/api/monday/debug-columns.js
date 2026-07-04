@@ -11,6 +11,11 @@ import { authOptions } from '../auth/[...nextauth]';
 const MONDAY_API = 'https://api.monday.com/v2';
 
 export default async function handler(req, res) {
+  // Only available in development or when explicitly enabled
+  if (process.env.NODE_ENV === 'production' && !process.env.ENABLE_DEBUG_ENDPOINTS) {
+    return res.status(404).end();
+  }
+
   // Staff only
   const session = await getServerSession(req, res, authOptions);
   if (!session) return res.status(401).json({ error: 'Staff auth required.' });

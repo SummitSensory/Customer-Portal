@@ -146,6 +146,22 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true });
       }
 
+      // ── Tab 4: Color Selections ─────────────────────────────────────────
+      case 'color': {
+        await postTaggedUpdate(order.id, 'PORTAL: Color Selections',
+          `Customer marked color and product selections complete on ${new Date().toLocaleDateString()}.`
+        );
+        return res.status(200).json({ ok: true });
+      }
+
+      // ── Tab 5: Required Documents ───────────────────────────────────────
+      case 'documents': {
+        await postTaggedUpdate(order.id, 'PORTAL: Documents Submitted',
+          `Customer marked required documents complete on ${new Date().toLocaleDateString()}.`
+        );
+        return res.status(200).json({ ok: true });
+      }
+
       default:
         return res.status(400).json({ error: `Unknown tab: ${tab}` });
     }

@@ -11,7 +11,7 @@
  *   {"formId": {"name": "Site Assessment", "checklistIndex": 1}}
  */
 
-import { getOrderByEmail } from '../../../lib/monday';
+import { getOrderByEmail, postTaggedUpdate } from '../../../lib/monday';
 import { notifyTeamFormCompleted } from '../../../lib/email';
 
 // Parse the form→checklist map from env
@@ -75,11 +75,19 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, note: 'No order found for email.' });
   }
 
+  // Record completion in Monday.com as a tagged update so the cron can detect it
+  const tag = formConfig.tab === 'color' || formConfig.tab === 'color_selection'
+    ? 'PORTAL: Color Selections'
+    : 'PORTAL: Documents Submitted';
+
+  await postTaggedUpdate(
+    order.id,
+    tag,
+    `Jotform submission received for "${formConfig.name}" on ${new Date().toLocaleDateString()}. Submitted by: ${email}`
+  ).catch(console.error);
+
   // Notify team
   await notifyTeamFormCompleted(order.name, email, formConfig.name).catch(console.error);
-
-  // TODO: In a future iteration, write the completion back to a dedicated
-  // Monday.com column per form. For now, the team notification is the signal.
 
   return res.status(200).json({ ok: true, orderName: order.name, form: formConfig.name });
 }

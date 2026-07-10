@@ -1215,9 +1215,8 @@ function aftershipTrackUrl(slug, tracking) {
 }
 
 function TrackingRow({ tracking, slug, expanded, trackingInfo, loading, onToggle }) {
-  const { name: carrierName, url: trackUrl } = slug
-    ? { name: carrierFromSlug(slug), url: aftershipTrackUrl(slug, tracking) }
-    : getCarrierInfo(tracking);
+  const carrierName = slug ? carrierFromSlug(slug) : getCarrierInfo(tracking).name;
+  const events = trackingInfo?.events || [];
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -1225,11 +1224,8 @@ function TrackingRow({ tracking, slug, expanded, trackingInfo, loading, onToggle
           {tracking}
         </code>
         <button type="button" className="btn btn-ghost btn-sm" onClick={onToggle} style={{ fontSize: 12 }}>
-          {expanded ? 'Hide Details ▲' : 'View Details ▼'}
+          {expanded ? 'Hide Tracking History ▲' : 'View Tracking History ▼'}
         </button>
-        <a href={trackUrl} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ fontSize: 12 }}>
-          Track on {carrierName} →
-        </a>
       </div>
       {expanded && (
         <div style={{ marginTop: 10, background: 'var(--paper)', borderRadius: 10, padding: '14px 16px', border: '1px solid var(--line)' }}>
@@ -1237,34 +1233,52 @@ function TrackingRow({ tracking, slug, expanded, trackingInfo, loading, onToggle
             <div style={{ fontSize: 13, color: 'var(--mut)' }}>Loading tracking details…</div>
           ) : trackingInfo ? (
             <>
-              <div style={{ display: 'flex', gap: 24, marginBottom: 12, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 24, marginBottom: 14, flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mut)', textTransform: 'uppercase', marginBottom: 2 }}>Carrier</div>
+                  <div style={{ fontSize: 15, fontWeight: 700 }}>{carrierName || '—'}</div>
+                </div>
                 <div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mut)', textTransform: 'uppercase', marginBottom: 2 }}>Status</div>
                   <div style={{ fontSize: 15, fontWeight: 700 }}>{trackingInfo.status}</div>
                 </div>
-                {trackingInfo.estimatedDelivery && (
+                {trackingInfo.actualDelivery ? (
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mut)', textTransform: 'uppercase', marginBottom: 2 }}>Delivered</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--ok)' }}>{new Date(trackingInfo.actualDelivery).toLocaleDateString()}</div>
+                  </div>
+                ) : trackingInfo.estimatedDelivery ? (
                   <div>
                     <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mut)', textTransform: 'uppercase', marginBottom: 2 }}>Est. Delivery</div>
                     <div style={{ fontSize: 15, fontWeight: 700 }}>{new Date(trackingInfo.estimatedDelivery).toLocaleDateString()}</div>
                   </div>
-                )}
+                ) : null}
               </div>
-              {trackingInfo.events?.slice(0, 5).map((ev, i) => (
-                <div key={i} style={{ padding: '8px 0', borderBottom: i < Math.min((trackingInfo.events?.length || 0), 5) - 1 ? '1px solid var(--line)' : 'none', fontSize: 13 }}>
-                  <div style={{ fontWeight: 600 }}>{ev.description}</div>
-                  {ev.location && <div style={{ color: 'var(--mut)', fontSize: 12 }}>{ev.location}</div>}
-                  {ev.timestamp && <div style={{ color: 'var(--mut)', fontSize: 11.5, marginTop: 1 }}>{new Date(ev.timestamp).toLocaleString()}</div>}
+
+              {events.length > 0 ? (
+                <>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mut)', textTransform: 'uppercase', marginBottom: 10 }}>Transit History</div>
+                  <div style={{ paddingLeft: 18 }}>
+                    {events.map((ev, i) => (
+                      <div key={i} style={{ position: 'relative', paddingBottom: i < events.length - 1 ? 16 : 0 }}>
+                        <span style={{ position: 'absolute', left: -18, top: 3, width: 9, height: 9, borderRadius: '50%', background: i === 0 ? 'var(--moss)' : 'var(--line)', border: '2px solid var(--paper)', boxShadow: '0 0 0 1px var(--line)' }} />
+                        {i < events.length - 1 && <span style={{ position: 'absolute', left: -14, top: 12, bottom: 0, width: 1, background: 'var(--line)' }} />}
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{ev.description}</div>
+                        {ev.location && <div style={{ color: 'var(--mut)', fontSize: 12 }}>{ev.location}</div>}
+                        {ev.timestamp && <div style={{ color: 'var(--mut)', fontSize: 11.5, marginTop: 1 }}>{new Date(ev.timestamp).toLocaleString()}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize: 13, color: 'var(--mut)' }}>
+                  This shipment has been registered. Detailed transit updates will appear here as the carrier scans it.
                 </div>
-              ))}
-              {trackingInfo.url && (
-                <a href={trackingInfo.url} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: 10, fontSize: 12, color: 'var(--moss)', fontWeight: 600 }}>
-                  View full tracking on {carrierName} →
-                </a>
               )}
             </>
           ) : (
             <div style={{ fontSize: 13, color: 'var(--mut)' }}>
-              Tracking details not available. <a href={trackUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--moss)' }}>View on {carrierName} →</a>
+              Tracking details are being retrieved. Please check back shortly.
             </div>
           )}
         </div>

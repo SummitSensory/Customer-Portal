@@ -1605,35 +1605,30 @@ function InstallationTab({ order, onNav }) {
         </div>
       ) : (
         <>
-          {/* Installation Materials — video links render as inline players, everything else as a link */}
+          {/* Installation Material Links */}
           {links.length > 0 && (
             <div className="card" style={{ marginBottom: 16 }}>
               <div className="ch"><h3>🔗 Installation Materials</h3></div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {links.map((link, i) => {
-                  const embed = getVideoEmbed(link.url);
-                  return embed ? (
-                    <div key={i}>
-                      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>{link.label}</div>
-                      <VideoEmbed embed={embed} title={link.label} />
-                    </div>
-                  ) : (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: 'var(--paper)', borderRadius: 10, border: '1px solid var(--line)' }}>
-                      <div style={{ flex: 1, fontWeight: 600, fontSize: 14 }}>{link.label}</div>
-                      <a
-                        href={link.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={`Open ${link.label}`}
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 8, background: 'var(--moss)', color: '#fff', textDecoration: 'none', fontSize: 16, flex: 'none', transition: 'opacity .15s' }}
-                        onMouseEnter={e => e.currentTarget.style.opacity = '0.8'}
-                        onMouseLeave={e => e.currentTarget.style.opacity = '1'}
-                      >
-                        ↗
-                      </a>
-                    </div>
-                  );
-                })}
+              <p style={{ fontSize: 13.5, color: 'var(--mut)', marginBottom: 16 }}>
+                Click any link below to open the installation material in a new tab.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {links.map((link, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: 'var(--paper)', borderRadius: 10, border: '1px solid var(--line)' }}>
+                    <div style={{ flex: 1, fontWeight: 600, fontSize: 14 }}>{link.label}</div>
+                    <a
+                      href={link.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`Open ${link.label}`}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 8, background: 'var(--moss)', color: '#fff', textDecoration: 'none', fontSize: 16, flex: 'none', transition: 'opacity .15s' }}
+                      onMouseEnter={e => e.currentTarget.style.opacity = '0.8'}
+                      onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+                    >
+                      ↗
+                    </a>
+                  </div>
+                ))}
               </div>
             </div>
           )}

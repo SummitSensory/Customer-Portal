@@ -1506,14 +1506,47 @@ function StatusTab({ order }) {
 
 // ── Tab: Installation ─────────────────────────────────────────────────────────
 
-function InstallationTab({ order, onNav }) {
-  function getEmbedUrl(url) {
-    const ytMatch = url.match(/(?:youtu\.be\/|youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{11})/);
-    if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}?rel=0`;
-    const vimeoMatch = url.match(/vimeo\.com\/(\d+)/);
-    if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[1]}`;
-    return null;
+// Convert common video URLs (YouTube, Vimeo, Loom, Google Drive, direct files) into an embeddable player.
+function getVideoEmbed(url) {
+  if (!url) return null;
+  const u = url.trim();
+  // Already an embed URL
+  if (/youtube\.com\/embed\//.test(u) || /player\.vimeo\.com\/video\//.test(u) || /loom\.com\/embed\//.test(u)) {
+    return { kind: 'iframe', src: u };
   }
+  const yt = u.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|live\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  if (yt) return { kind: 'iframe', src: `https://www.youtube.com/embed/${yt[1]}?rel=0` };
+  const vm = u.match(/vimeo\.com\/(?:video\/)?(\d+)(?:\/([a-zA-Z0-9]+))?/);
+  if (vm) return { kind: 'iframe', src: `https://player.vimeo.com/video/${vm[1]}${vm[2] ? `?h=${vm[2]}` : ''}` };
+  const loom = u.match(/loom\.com\/share\/([a-zA-Z0-9]+)/);
+  if (loom) return { kind: 'iframe', src: `https://www.loom.com/embed/${loom[1]}` };
+  const drive = u.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (drive) return { kind: 'iframe', src: `https://drive.google.com/file/d/${drive[1]}/preview` };
+  if (/\.(mp4|webm|mov|m4v)(\?|$)/i.test(u)) return { kind: 'video', src: u };
+  return null;
+}
+
+// Responsive 16:9 inline video player (iframe for hosted services, <video> for direct files).
+function VideoEmbed({ embed, title }) {
+  const wrap = { position: 'relative', paddingBottom: '56.25%', height: 0, borderRadius: 10, overflow: 'hidden', background: '#000' };
+  const inner = { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' };
+  if (embed.kind === 'video') {
+    return <div style={wrap}><video src={embed.src} controls playsInline style={{ ...inner, objectFit: 'contain' }} /></div>;
+  }
+  return (
+    <div style={wrap}>
+      <iframe
+        src={embed.src}
+        style={inner}
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowFullScreen
+        title={title}
+      />
+    </div>
+  );
+}
+
+function InstallationTab({ order, onNav }) {
 
   const videos = order.installationVideos
     ? order.installationVideos.split(',').map(u => u.trim()).filter(Boolean)
@@ -1572,30 +1605,35 @@ function InstallationTab({ order, onNav }) {
         </div>
       ) : (
         <>
-          {/* Installation Material Links */}
+          {/* Installation Materials — video links render as inline players, everything else as a link */}
           {links.length > 0 && (
             <div className="card" style={{ marginBottom: 16 }}>
               <div className="ch"><h3>🔗 Installation Materials</h3></div>
-              <p style={{ fontSize: 13.5, color: 'var(--mut)', marginBottom: 16 }}>
-                Click any link below to open the installation material in a new tab.
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {links.map((link, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: 'var(--paper)', borderRadius: 10, border: '1px solid var(--line)' }}>
-                    <div style={{ flex: 1, fontWeight: 600, fontSize: 14 }}>{link.label}</div>
-                    <a
-                      href={link.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      title={`Open ${link.label}`}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 8, background: 'var(--moss)', color: '#fff', textDecoration: 'none', fontSize: 16, flex: 'none', transition: 'opacity .15s' }}
-                      onMouseEnter={e => e.currentTarget.style.opacity = '0.8'}
-                      onMouseLeave={e => e.currentTarget.style.opacity = '1'}
-                    >
-                      ↗
-                    </a>
-                  </div>
-                ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {links.map((link, i) => {
+                  const embed = getVideoEmbed(link.url);
+                  return embed ? (
+                    <div key={i}>
+                      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>{link.label}</div>
+                      <VideoEmbed embed={embed} title={link.label} />
+                    </div>
+                  ) : (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: 'var(--paper)', borderRadius: 10, border: '1px solid var(--line)' }}>
+                      <div style={{ flex: 1, fontWeight: 600, fontSize: 14 }}>{link.label}</div>
+                      <a
+                        href={link.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`Open ${link.label}`}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 8, background: 'var(--moss)', color: '#fff', textDecoration: 'none', fontSize: 16, flex: 'none', transition: 'opacity .15s' }}
+                        onMouseEnter={e => e.currentTarget.style.opacity = '0.8'}
+                        onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+                      >
+                        ↗
+                      </a>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1608,18 +1646,10 @@ function InstallationTab({ order, onNav }) {
                 Watch these before your delivery to familiarize yourself with the installation process.
               </p>
               {videos.map((url, i) => {
-                const embedUrl = getEmbedUrl(url);
-                return embedUrl ? (
+                const embed = getVideoEmbed(url);
+                return embed ? (
                   <div key={i} style={{ marginBottom: i < videos.length - 1 ? 20 : 0 }}>
-                    <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0, borderRadius: 10, overflow: 'hidden', background: '#000' }}>
-                      <iframe
-                        src={embedUrl}
-                        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                        allowFullScreen
-                        title={`Installation Video ${i + 1}`}
-                      />
-                    </div>
+                    <VideoEmbed embed={embed} title={`Installation Video ${i + 1}`} />
                   </div>
                 ) : (
                   <div key={i} style={{ marginBottom: 10 }}>

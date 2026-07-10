@@ -29,21 +29,36 @@ export default async function handler(req, res) {
   if (!key) return res.status(200).json({ ...info, note: 'AFTERSHIP_API_KEY is NOT set in this environment. Add it in Vercel and redeploy.' });
   if (!slug || !number) return res.status(200).json({ ...info, note: 'Pass ?slug=...&number=... to test a shipment.' });
 
+  const headers = { 'Content-Type': 'application/json', 'as-api-key': key, 'aftership-api-key': key };
+  const result = { ...info };
+
   try {
-    const r = await fetch(`${BASE}/trackings/${encodeURIComponent(slug)}/${encodeURIComponent(number)}`, {
-      headers: { 'Content-Type': 'application/json', 'as-api-key': key, 'aftership-api-key': key },
-    });
+    // Optional: ?create=1 registers the tracking in AfterShip (what the portal does on first view).
+    if (req.query.create) {
+      const cr = await fetch(`${BASE}/trackings`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ tracking: { slug, tracking_number: number } }),
+      });
+      const cText = await cr.text();
+      let cBody; try { cBody = JSON.parse(cText); } catch { cBody = cText; }
+      result.createHttpStatus = cr.status;          // 201 = created, 400/409 w/ 4003 = already exists
+      result.createMeta = cBody?.meta ?? null;      // AfterShip's message if the create was rejected
+    }
+
+    // Look up the tracking
+    const r = await fetch(`${BASE}/trackings/${encodeURIComponent(slug)}/${encodeURIComponent(number)}`, { headers });
     const text = await r.text();
     let body; try { body = JSON.parse(text); } catch { body = text; }
     const t = body?.data?.tracking;
-    return res.status(200).json({
-      ...info,
-      getHttpStatus: r.status,               // 200 = found, 401 = bad key, 404 = not created yet
-      aftershipMeta: body?.meta ?? null,     // AfterShip's own error code/message if any
-      trackingTag: t?.tag ?? null,           // e.g. "Delivered", "InTransit", "Pending"
-      checkpointCount: Array.isArray(t?.checkpoints) ? t.checkpoints.length : null,
-    });
+
+    result.getHttpStatus = r.status;                // 200 = found, 401 = bad key, 404 = not created yet
+    result.aftershipMeta = body?.meta ?? null;
+    result.trackingTag = t?.tag ?? null;            // e.g. "Delivered", "InTransit", "Pending"
+    result.trackingSlug = t?.slug ?? null;
+    result.checkpointCount = Array.isArray(t?.checkpoints) ? t.checkpoints.length : null;
+    return res.status(200).json(result);
   } catch (err) {
-    return res.status(200).json({ ...info, fetchError: err.message });
+    return res.status(200).json({ ...result, fetchError: err.message });
   }
 }

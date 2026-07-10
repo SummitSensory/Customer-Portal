@@ -16,6 +16,7 @@ import {
   getOrderById,
   updateOrderColumn,
   postTaggedUpdate,
+  markSectionComplete,
   COLS,
 } from '../../../lib/monday';
 import { notifyTeamContactChange } from '../../../lib/email';
@@ -50,6 +51,7 @@ export default async function handler(req, res) {
           `Customer confirmed contact information on ${new Date().toLocaleDateString()}.`
         );
         await notifyTeamContactChange(order.name, session.email, ['Contact Information Confirmed']).catch(console.error);
+        await markSectionComplete(order.id, 'portalContact').catch(console.error);
         return res.status(200).json({ ok: true });
       }
 
@@ -68,6 +70,7 @@ export default async function handler(req, res) {
           session.email,
           [name && 'Name', phone && 'Phone', newEmail && 'Email'].filter(Boolean)
         ).catch(console.error);
+        await markSectionComplete(order.id, 'portalContact').catch(console.error);
         return res.status(200).json({ ok: true });
       }
 
@@ -97,6 +100,7 @@ export default async function handler(req, res) {
           `Billing Address: ${addressText}\nBilling Contact: ${contactText}\nSubmitted: ${new Date().toLocaleDateString()}`
         );
         await notifyTeamContactChange(order.name, session.email, ['Billing Information']).catch(console.error);
+        await markSectionComplete(order.id, 'portalBilling').catch(console.error);
         return res.status(200).json({ ok: true });
       }
 
@@ -133,6 +137,7 @@ export default async function handler(req, res) {
           ? changedRestricted
           : ['Delivery Details'];
         await notifyTeamContactChange(order.name, session.email, notifyFields).catch(console.error);
+        await markSectionComplete(order.id, 'portalDelivery').catch(console.error);
 
         return res.status(200).json({ ok: true, requiresConfirmation: changedRestricted?.length > 0 });
       }
@@ -143,6 +148,7 @@ export default async function handler(req, res) {
         await postTaggedUpdate(order.id, 'PORTAL: Freight Delivery Acknowledgment',
           `Acknowledged by: ${acknowledgedBy}\nDate: ${acknowledgedAt}\nCustomer has read and agreed to all freight delivery requirements.`
         );
+        await markSectionComplete(order.id, 'portalDelivery').catch(console.error);
         return res.status(200).json({ ok: true });
       }
 
@@ -151,6 +157,7 @@ export default async function handler(req, res) {
         await postTaggedUpdate(order.id, 'PORTAL: Color Selections',
           `Customer marked color and product selections complete on ${new Date().toLocaleDateString()}.`
         );
+        await markSectionComplete(order.id, 'portalColors').catch(console.error);
         return res.status(200).json({ ok: true });
       }
 
@@ -159,6 +166,7 @@ export default async function handler(req, res) {
         await postTaggedUpdate(order.id, 'PORTAL: Documents Submitted',
           `Customer marked required documents complete on ${new Date().toLocaleDateString()}.`
         );
+        await markSectionComplete(order.id, 'portalDocuments').catch(console.error);
         return res.status(200).json({ ok: true });
       }
 

@@ -1199,8 +1199,25 @@ function getCarrierInfo(tracking) {
   return { name: 'FedEx', url: `https://www.fedex.com/fedextrack/?trknbr=${clean}` };
 }
 
-function TrackingRow({ tracking, expanded, trackingInfo, loading, onToggle }) {
-  const { name: carrierName, url: trackUrl } = getCarrierInfo(tracking);
+// AfterShip carrier slug → friendly display name
+const SLUG_NAMES = {
+  fedex: 'FedEx', 'fedex-freight': 'FedEx Freight', ups: 'UPS', usps: 'USPS',
+  dhl: 'DHL', estes: 'Estes', 'estes-express': 'Estes',
+  'old-dominion-freight-line': 'Old Dominion', 'rl-carriers': 'R+L Carriers',
+  xpo: 'XPO', saia: 'Saia',
+};
+function carrierFromSlug(slug) {
+  if (!slug) return null;
+  return SLUG_NAMES[slug] || slug;
+}
+function aftershipTrackUrl(slug, tracking) {
+  return `https://track.aftership.com/${encodeURIComponent(slug)}/${encodeURIComponent((tracking || '').trim())}`;
+}
+
+function TrackingRow({ tracking, slug, expanded, trackingInfo, loading, onToggle }) {
+  const { name: carrierName, url: trackUrl } = slug
+    ? { name: carrierFromSlug(slug), url: aftershipTrackUrl(slug, tracking) }
+    : getCarrierInfo(tracking);
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -1256,7 +1273,7 @@ function TrackingRow({ tracking, expanded, trackingInfo, loading, onToggle }) {
   );
 }
 
-function ShipmentCard({ title, carrierLabel, trackingNumbers, shipped, notIncluded, expandedTracking, trackingData, loadingTracking, onToggleTracking, note, carrierPhone, carrierPhoneLabel }) {
+function ShipmentCard({ title, slug, carrierLabel, trackingNumbers, shipped, notIncluded, expandedTracking, trackingData, loadingTracking, onToggleTracking, note, carrierPhone, carrierPhoneLabel }) {
   if (notIncluded) return null;
   return (
     <div className="card" style={{ marginBottom: 16 }}>
@@ -1277,10 +1294,11 @@ function ShipmentCard({ title, carrierLabel, trackingNumbers, shipped, notInclud
             <TrackingRow
               key={t}
               tracking={t}
+              slug={slug}
               expanded={expandedTracking[t]}
               trackingInfo={trackingData[t]}
               loading={loadingTracking[t]}
-              onToggle={() => onToggleTracking(t)}
+              onToggle={() => onToggleTracking(t, slug)}
             />
           ))}
           {carrierPhone && (
@@ -1310,11 +1328,14 @@ function StatusTab({ order }) {
   const [trackingData, setTrackingData] = useState({});
   const [loadingTracking, setLoadingTracking] = useState({});
 
-  async function loadTracking(trackingNumber) {
+  async function loadTracking(trackingNumber, slug) {
     if (trackingData[trackingNumber] || loadingTracking[trackingNumber]) return;
     setLoadingTracking(prev => ({ ...prev, [trackingNumber]: true }));
     try {
-      const res = await fetch(`/api/fedex/track?number=${encodeURIComponent(trackingNumber)}`);
+      const url = slug
+        ? `/api/aftership/track?slug=${encodeURIComponent(slug)}&number=${encodeURIComponent(trackingNumber)}`
+        : `/api/fedex/track?number=${encodeURIComponent(trackingNumber)}`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setTrackingData(prev => ({ ...prev, [trackingNumber]: data.tracking }));
@@ -1323,10 +1344,10 @@ function StatusTab({ order }) {
     finally { setLoadingTracking(prev => ({ ...prev, [trackingNumber]: false })); }
   }
 
-  function toggleTracking(t) {
+  function toggleTracking(t, slug) {
     const nowExpanded = !expandedTracking[t];
     setExpandedTracking(prev => ({ ...prev, [t]: nowExpanded }));
-    if (nowExpanded) loadTracking(t);
+    if (nowExpanded) loadTracking(t, slug);
   }
 
   const stages = order.stages || [];
@@ -1335,11 +1356,18 @@ function StatusTab({ order }) {
   const isShipped = order.stageIndex >= shippedIdx && shippedIdx >= 0;
   const isDelivered = order.stageIndex >= deliveredIdx && deliveredIdx >= 0;
 
-  // Parse tracking numbers
-  const frameTrackings = order.trackingNumber ? [order.trackingNumber] : [];
-  const matTrackings = order.matTracking
-    ? order.matTracking.split(',').map(t => t.trim()).filter(Boolean)
-    : [];
+  // Shipment carrier slug + tracking number (AfterShip inputs; fall back to legacy fields)
+  const frameSlug = order.frameCarrierSlug || '';
+  const frameNumber = order.frameTrackingId || order.trackingNumber || '';
+  const frameTrackings = frameNumber ? [frameNumber] : [];
+
+  const matsSlug = order.matsCarrierSlug || '';
+  const matsNumber = order.matsTrackingId || '';
+  const matTrackings = matsNumber
+    ? [matsNumber]
+    : (order.matTracking && order.matTracking !== 'N/A'
+        ? order.matTracking.split(',').map(t => t.trim()).filter(Boolean)
+        : []);
 
   // Parse other shipments: "Label|Carrier|Tracking" per line
   const otherShipments = order.otherShipments
@@ -1397,7 +1425,8 @@ function StatusTab({ order }) {
       {/* Frame shipment */}
       <ShipmentCard
         title="Sensory Gym Frame"
-        carrierLabel="FedEx Freight"
+        slug={frameSlug}
+        carrierLabel={carrierFromSlug(frameSlug) || 'FedEx Freight'}
         trackingNumbers={frameTrackings}
         shipped={frameTrackings.length > 0}
         note="Your frame arrives on a freight pallet. Please have personnel on-site to assist with unloading and moving components into your facility."
@@ -1409,7 +1438,8 @@ function StatusTab({ order }) {
       {/* Mats & Padding */}
       <ShipmentCard
         title="Therapy Mats & Padding"
-        carrierLabel={matTrackings.length > 0 ? 'Standard Carrier' : null}
+        slug={matsSlug}
+        carrierLabel={carrierFromSlug(matsSlug) || (matTrackings.length > 0 ? 'Standard Carrier' : null)}
         trackingNumbers={matTrackings}
         shipped={matTrackings.length > 0}
         notIncluded={order.matTracking === 'N/A'}

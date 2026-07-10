@@ -103,6 +103,19 @@ The portal posts these as updates on the order item. The reminder engine (SYS-7)
 
 `[PORTAL: Invitation Sent]` · `[PORTAL: Contact Confirmed]` · `[PORTAL: Contact Update Requested]` · `[PORTAL: Billing Information]` · `[PORTAL: Delivery Details]` · `[PORTAL: Freight Delivery Acknowledgment]` · `[PORTAL: Color Selections]` · `[PORTAL: Documents Submitted]` · `[PORTAL: Reminder #N]`
 
+### 2d. AfterShip tracking input columns `[LIVE — writable text]`
+
+The portal reads these per order and passes **slug + tracking number** to AfterShip (see PLAN-1). Slug = AfterShip carrier code (e.g. `fedex`, `estes`). These are the current source for shipment tracking, replacing DS-03 (frame) and DS-11 (mats).
+
+| Ref | Shipment | Field | Monday column ID |
+|---|---|---|---|
+| DS-29 | Sensory Gym Frame (SHP-1) | AfterShip slug (carrier) | `text_mm538vtm` |
+| DS-30 | Sensory Gym Frame (SHP-1) | Tracking number | `text_mm53p3b2` |
+| DS-31 | Therapy Mats & Padding (SHP-2) | AfterShip slug (carrier) | `text_mm51pap1` |
+| DS-32 | Therapy Mats & Padding (SHP-2) | Tracking number | `text_mm51wdm5` |
+
+**AfterShip create-tracking payload (per shipment):** required `tracking_number` (DS-30/DS-32) + `slug` (DS-29/DS-31); recommended `title` (order name), `order_id` (Monday order/subitem ID = match key for webhooks). API key stored in `.env` (`AFTERSHIP_API_KEY`), sent as the `as-api-key` header.
+
 ---
 
 ## 3. API endpoints (SYS-1)
@@ -215,8 +228,8 @@ The portal shows a 5-step setup checklist. Completing each one: (a) posts a tagg
 
 | Ref | Card title | Current carrier label | Current data source | Planned |
 |---|---|---|---|---|
-| SHP-1 | Sensory Gym Frame | "FedEx Freight" | DS-03 | AfterShip via subitem (PLAN-2) |
-| SHP-2 | Therapy Mats & Padding | "Standard Carrier" (hidden if `N/A`) | DS-11 | AfterShip via subitem (PLAN-2) |
+| SHP-1 | Sensory Gym Frame | "FedEx Freight" | DS-03 → moving to **DS-29 (slug) + DS-30 (tracking)** | AfterShip via DS-29/DS-30 (PLAN-1) |
+| SHP-2 | Therapy Mats & Padding | "Standard Carrier" (hidden if `N/A`) | DS-11 → moving to **DS-31 (slug) + DS-32 (tracking)** | AfterShip via DS-31/DS-32 (PLAN-1) |
 | SHP-3 | Additional Order Items | per-line carrier | DS-12 (`Label\|Carrier\|Tracking`) | "Miscellaneous Equipment & Accessories" section (PLAN-4) |
 
 ### Phase 5 — Delivery & post-delivery

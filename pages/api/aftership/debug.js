@@ -13,7 +13,7 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 
-const DEFAULT_BASE = process.env.AFTERSHIP_API_BASE || 'https://api.aftership.com/v4';
+const DEFAULT_BASE = process.env.AFTERSHIP_API_BASE || 'https://api.aftership.com/tracking/2025-07';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -33,7 +33,7 @@ export default async function handler(req, res) {
   };
 
   if (!key) return res.status(200).json({ ...info, note: 'AFTERSHIP_API_KEY is NOT set in this environment.' });
-  if (!slug || !number) return res.status(200).json({ ...info, note: 'Pass ?slug=...&number=... to test a shipment.' });
+  if (!req.query.id && (!slug || !number)) return res.status(200).json({ ...info, note: 'Pass ?slug=...&number=... (or ?id=...) to test a shipment.' });
 
   const headers = { 'Content-Type': 'application/json', 'as-api-key': key, 'aftership-api-key': key };
   const result = { ...info };
@@ -52,7 +52,10 @@ export default async function handler(req, res) {
       result.createBodyPreview = clip(cBody);              // helps confirm the response shape
     }
 
-    const r = await fetch(`${base}/trackings/${encodeURIComponent(slug)}/${encodeURIComponent(number)}`, { headers });
+    const getUrl = req.query.id
+      ? `${base}/trackings/${encodeURIComponent(req.query.id)}`                       // current API: fetch by id
+      : `${base}/trackings/${encodeURIComponent(slug)}/${encodeURIComponent(number)}`; // legacy: slug+number
+    const r = await fetch(getUrl, { headers });
     const text = await r.text();
     let body; try { body = JSON.parse(text); } catch { body = text; }
     const t = body?.data?.tracking || body?.data || null;

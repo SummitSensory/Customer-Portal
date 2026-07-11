@@ -72,6 +72,8 @@ All column IDs are read in `lib/monday.js`. Many are overridable by environment 
 | DS-21 | First name | First Name | `lookup_mkvx85hs` | Mirror (read-only) | Connected board | Used in email greetings |
 | DS-22 | Delivery instructions | Special Delivery Instructions | `lookup_mm0anh5a` | Mirror (read-only) | Connected board | |
 | DS-23 | Balance due | *(env `MONDAY_COL_BALANCE`, unset)* | — | Numbers | Staff | `[PARTIAL]` not yet mapped |
+| DS-33 | Tax Exempt? | Tax Exempt? | `color_mm55tjn2` | Status | Customer (via portal) | `[LIVE]` Yes/No — written via EP-6 (`tax_exemption`); see PLAN-7 |
+| DS-34 | Tax exemption cert file | Tax Exemption Certificate | `file_mm55t6kn` | File | Customer (via portal) | `[LIVE]` Uploaded via EP-6 (`tax_exemption`) using the multipart `/v2/file` upload flow; see PLAN-7 |
 
 ### 2a. Portal onboarding checklist columns `[LIVE]`
 
@@ -101,7 +103,7 @@ Defined in `lib/monday.js` `STATUS_STAGES` (labels overridable via env). The por
 
 The portal posts these as updates on the order item. The reminder engine (SYS-7) reads them to know what's complete and when the clock started.
 
-`[PORTAL: Invitation Sent]` · `[PORTAL: Contact Confirmed]` · `[PORTAL: Contact Update Requested]` · `[PORTAL: Billing Information]` · `[PORTAL: Delivery Details]` · `[PORTAL: Freight Delivery Acknowledgment]` · `[PORTAL: Color Selections]` · `[PORTAL: Documents Submitted]` · `[PORTAL: Reminder #N]`
+`[PORTAL: Invitation Sent]` · `[PORTAL: Contact Confirmed]` · `[PORTAL: Contact Update Requested]` · `[PORTAL: Billing Information]` · `[PORTAL: Delivery Details]` · `[PORTAL: Freight Delivery Acknowledgment]` · `[PORTAL: Color Selections]` · `[PORTAL: Documents Submitted]` · `[PORTAL: Reminder #N]` · `[PORTAL: Tax Exempt - No]` · `[PORTAL: Tax Exemption Certificate Uploaded]`
 
 ### 2d. AfterShip tracking input columns `[LIVE — writable text]`
 
@@ -127,7 +129,7 @@ The portal reads these per order and passes **slug + tracking number** to AfterS
 | EP-3 | `/api/auth/session-check` | GET | cookie | Validate current customer session |
 | EP-4 | `/api/auth/signout-customer` | POST | cookie | Clear customer session |
 | EP-5 | `/api/auth/[...nextauth]` | — | Azure AD | Staff SSO (admin) |
-| EP-6 | `/api/portal/setup` | POST | customer | Record a completed onboarding section → tagged update + flip checklist column (DS-24…28) |
+| EP-6 | `/api/portal/setup` | POST | customer | Record a completed onboarding section → tagged update + flip checklist column (DS-24…28). Also handles `tax_exemption` (DS-33/DS-34, ongoing — not part of the 5-step checklist) |
 | EP-7 | `/api/portal/invite` | POST | staff | Send portal invitation (EM-02) + log `[PORTAL: Invitation Sent]` |
 | EP-8 | `/api/monday/order` | GET/PATCH | customer | Fetch the customer's order; PATCH updates address (DS-09) / logs contact change |
 | EP-9 | `/api/monday/orders` | GET/PATCH | staff | Admin orders list; edit order fields |
@@ -163,6 +165,7 @@ From: `portal@updates.summitsensory.com` · Team inbox: `orders@summitsensorygym
 | EM-11 | Team replied to message | Monday update webhook (EP-14) | Customer |
 | EM-12 | Incoming customer message | Customer posts in Messages (EP-12) | Team |
 | EM-13 | Contact info changed (⚠️ verify before shipment) | Customer edits contact/delivery | Team |
+| EM-14 | Tax exemption certificate submitted | Customer uploads cert (EP-6 `tax_exemption`) | Team |
 
 ---
 
@@ -240,6 +243,8 @@ The portal shows a 5-step setup checklist. Completing each one: (a) posts a tagg
 
 **S-5.3 Ongoing support** `[LIVE]` → Messages (SCR-10, EP-12) two-way: customer message → EM-12 to team; staff reply in Monday → EP-14 → EM-11 to customer. Files (SCR-8) and Invoice/Payment (SCR-9, DS-06/DS-07/DS-23) remain available.
 
+**S-5.4 Tax exemption certificate** `[LIVE]` → Invoice & Payment tab (SCR-9) → customer selects Yes/No. **No** → EP-6 (`tax_exemption`) sets DS-33 = *No* + tag `[PORTAL: Tax Exempt - No]`; nothing further requested. **Yes** → customer uploads a certificate → EP-6 uploads the file to DS-34 via the multipart `/v2/file` endpoint, sets DS-33 = *Yes*, tags `[PORTAL: Tax Exemption Certificate Uploaded]`, and sends EM-14 to the team for review. Portal always displays: without an approved certificate on file, sales tax applies to the invoice.
+
 ---
 
 ## 6. Customer portal screen map (`/portal`)
@@ -254,7 +259,7 @@ The portal shows a 5-step setup checklist. Completing each one: (a) posts a tagg
 | SCR-2 | Order Status | Progress bar + shipment tracking | DS-02 (bar), SHP-1/2/3, EP-15 |
 | SCR-7 | Installation | Videos, docs, resources | DS-13/14/15 |
 | SCR-8 | Files & Documents | Shared files | DS-05, EP-11 |
-| SCR-9 | Invoice & Payment | Invoice link, balance | DS-06, DS-07, DS-23 |
+| SCR-9 | Invoice & Payment | Invoice link, balance, tax exemption cert upload | DS-06, DS-07, DS-23, DS-33, DS-34 |
 | SCR-10 | Messages | Two-way messaging | EP-12, EM-11/EM-12 |
 | SCR-11 | Contact Us | Support info | static |
 
@@ -272,6 +277,7 @@ The portal shows a 5-step setup checklist. Completing each one: (a) posts a tagg
 | PLAN-4 | **"Miscellaneous Equipment & Accessories" (Amazon) section** | `[PLANNED]` | Third shipment section; never reference Amazon to the customer; suppress carrier name (Amazon Logistics). Auto-pull via Amazon Business API / AfterShip email parser, matched by ship-to address. |
 | PLAN-5 | **Notifications via portal's own layer** | `[PLANNED]` | Route AfterShip status webhooks → Resend (SYS-5) so wording/branding is controlled and carrier/Amazon references can be stripped. |
 | PLAN-6 | **"Ready to Manufacture" gate & view** | `[PLANNED]` | Monday view filtered to DS-24…28 all `✅`; optional automation to auto-advance DS-02. |
+| PLAN-7 | **Tax Exemption Certificate upload (SCR-9)** | `[LIVE — built 2026-07-11]` | Added a "Tax Exemption Certificate" module to the Invoice & Payment tab (S-5.4). Yes/No selector writes DS-33; uploading a certificate writes the file to DS-34 via a new `uploadFileToColumn()` helper in `lib/monday.js` (multipart request to Monday's dedicated `/v2/file` endpoint — the existing `addFileToOrder()` helper only supports URL-based files and can't be used for direct customer uploads). Staff should periodically review uploaded certificates in Monday and follow up if a certificate looks invalid or expired — there is no automatic approval/expiration workflow yet. |
 | OPEN-1 | Status/balance emails only fire from the admin portal | `[GAP]` | EM-04 and EM-09 are triggered by EP-9 (admin order edit) only. If staff change **Manufacturing Phase (DS-02)** or balance **directly in Monday.com**, no customer email is sent. Fix: add a Monday automation → webhook that fires EM-04 on DS-02 change regardless of where it's edited. |
 | OPEN-2 | EM-05 / EM-06 defined but not wired | `[GAP]` | Both emails exist in `lib/email.js` but have no trigger. Decide whether to wire them (EM-05 on color-form assignment; EM-06 for ad-hoc tasks) or remove. |
 

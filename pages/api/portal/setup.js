@@ -4,10 +4,11 @@
  * Body: { tab, data }
  *
  * Tabs handled:
- *   contact      — confirmation only (data lives in Monday mirrors)
- *   billing      — stores billing address + POC as a tagged Monday update
- *   delivery     — saves editable fields + freight acknowledgment
- *   freight_ack  — records signed freight acknowledgment as Monday update
+ *   contact         — confirmation only (data lives in Monday mirrors)
+ *   billing         — stores billing address + POC as a tagged Monday update
+ *   delivery        — saves editable fields + freight acknowledgment
+ *   freight_ack     — records signed freight acknowledgment as Monday update
+ *   tax_exemption   — Yes/No status (color_mm55tjn2) + certificate upload (file_mm55t6kn)
  */
 
 import { parse } from 'cookie';
@@ -17,12 +18,24 @@ import {
   updateOrderColumn,
   postTaggedUpdate,
   markSectionComplete,
+  setStatusLabel,
+  uploadFileToColumn,
   COLS,
+  TAX_EXEMPT_YES_LABEL,
+  TAX_EXEMPT_NO_LABEL,
 } from '../../../lib/monday';
-import { notifyTeamContactChange } from '../../../lib/email';
+import { notifyTeamContactChange, notifyTeamFormCompleted } from '../../../lib/email';
 
 // Fields that require Summit confirmation when changed
 const RESTRICTED_FIELDS = ['deliveryAddress', 'liftgate', 'loadingDock', 'deliveryWindow'];
+
+// Tax exemption certificate uploads arrive as base64 in the JSON body — raise
+// the default 1mb Next.js body limit so scanned PDFs/photos aren't rejected.
+export const config = {
+  api: {
+    bodyParser: { sizeLimit: '10mb' },
+  },
+};
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -167,6 +180,35 @@ export default async function handler(req, res) {
           `Customer marked required documents complete on ${new Date().toLocaleDateString()}.`
         );
         await markSectionComplete(order.id, 'portalDocuments').catch(console.error);
+        return res.status(200).json({ ok: true });
+      }
+
+      // ── Invoice & Payment: Tax Exemption ─────────────────────────────────
+      case 'tax_exemption': {
+        const { taxExempt, fileBase64, fileName, mimeType } = data;
+
+        // "No" — record it and stop. No certificate requested; sales tax applies.
+        if (!taxExempt) {
+          await setStatusLabel(order.id, 'taxExemptStatus', TAX_EXEMPT_NO_LABEL);
+          await postTaggedUpdate(order.id, 'PORTAL: Tax Exempt - No',
+            `Customer indicated they are NOT tax-exempt on ${new Date().toLocaleDateString()}. Sales tax applies to this order.`
+          );
+          return res.status(200).json({ ok: true });
+        }
+
+        // "Yes" — a certificate file is required.
+        if (!fileBase64 || !fileName) {
+          return res.status(400).json({ error: 'Please upload your tax exemption certificate.' });
+        }
+
+        const buffer = Buffer.from(fileBase64, 'base64');
+        await uploadFileToColumn(order.id, COLS.taxExemptCertFile, buffer, fileName, mimeType);
+        await setStatusLabel(order.id, 'taxExemptStatus', TAX_EXEMPT_YES_LABEL);
+        await postTaggedUpdate(order.id, 'PORTAL: Tax Exemption Certificate Uploaded',
+          `Customer uploaded a tax exemption certificate (${fileName}) on ${new Date().toLocaleDateString()}.`
+        );
+        await notifyTeamFormCompleted(order.name, session.email, 'Tax Exemption Certificate').catch(console.error);
+
         return res.status(200).json({ ok: true });
       }
 

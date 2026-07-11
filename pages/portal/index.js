@@ -250,7 +250,7 @@ export default function CustomerPortal() {
             {activeTab === 'status'       && <StatusTab       order={order} />}
             {activeTab === 'installation' && <InstallationTab order={order} onNav={setActiveTab} />}
             {activeTab === 'files'        && <FilesTab        files={files} />}
-            {activeTab === 'invoice'      && <InvoiceTab      order={order} />}
+            {activeTab === 'invoice'      && <InvoiceTab      order={order} showToast={showToast} onRefresh={loadOrder} />}
             {activeTab === 'messages'     && <MessagesTab     order={order} messages={messages} onRefresh={loadMessages} showToast={showToast} />}
             {activeTab === 'contact_us'   && <ContactUsTab    onNav={setActiveTab} />}
           </main>
@@ -332,6 +332,16 @@ async function saveSetup(tab, data) {
     throw new Error(d.error || 'Save failed.');
   }
   return res.json();
+}
+
+// Read a File object into a base64 string (no data: URL prefix) for JSON upload.
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 // ── Tab: Contact Information ──────────────────────────────────────────────────
@@ -1214,6 +1224,35 @@ function aftershipTrackUrl(slug, tracking) {
   return `https://track.aftership.com/${encodeURIComponent(slug)}/${encodeURIComponent((tracking || '').trim())}`;
 }
 
+// Manual (non-AfterShip) carrier support. Set the shipment's carrier/slug column to:
+//   manual                                          → number + a carrier-search link
+//   manual|Averitt Express                          → carrier name + number + search link
+//   manual|Averitt Express|https://site/track?p={tracking}  → links directly ({tracking} is replaced)
+function parseManual(slug) {
+  if (!slug || !/^manual\b/i.test(slug.trim())) return null;
+  const parts = slug.split('|').map(s => s.trim());
+  return { carrier: parts[1] || 'Freight Carrier', url: parts[2] || '' };
+}
+function manualTrackUrl(url, carrier, number) {
+  if (url) return url.replace(/\{tracking\}/gi, encodeURIComponent(number));
+  return `https://www.google.com/search?q=${encodeURIComponent(`${carrier} tracking ${number}`)}`;
+}
+function ManualTracking({ carrier, url, numbers }) {
+  return (
+    <>
+      {numbers.map((n, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+          <code style={{ background: 'var(--paper)', padding: '4px 10px', borderRadius: 6, fontSize: 13, fontFamily: 'monospace', letterSpacing: '.02em', border: '1px solid var(--line)' }}>{n}</code>
+          <a href={manualTrackUrl(url, carrier, n)} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ fontSize: 12 }}>Track your shipment →</a>
+        </div>
+      ))}
+      <div style={{ fontSize: 12.5, color: 'var(--mut)', marginTop: 4 }}>
+        Live in-portal tracking isn't available for this carrier — use the tracking link above for the latest status.
+      </div>
+    </>
+  );
+}
+
 function TrackingRow({ tracking, slug, expanded, trackingInfo, loading, onToggle }) {
   const carrierName = slug ? carrierFromSlug(slug) : getCarrierInfo(tracking).name;
   const events = trackingInfo?.events || [];
@@ -1287,7 +1326,7 @@ function TrackingRow({ tracking, slug, expanded, trackingInfo, loading, onToggle
   );
 }
 
-function ShipmentCard({ title, slug, carrierLabel, trackingNumbers, shipped, notIncluded, expandedTracking, trackingData, loadingTracking, onToggleTracking, note, carrierPhone, carrierPhoneLabel }) {
+function ShipmentCard({ title, slug, manual, carrierLabel, trackingNumbers, shipped, notIncluded, expandedTracking, trackingData, loadingTracking, onToggleTracking, note, carrierPhone, carrierPhoneLabel }) {
   if (notIncluded) return null;
   return (
     <div className="card" style={{ marginBottom: 16 }}>
@@ -1303,6 +1342,9 @@ function ShipmentCard({ title, slug, carrierLabel, trackingNumbers, shipped, not
       </div>
       {carrierLabel && <div style={{ fontSize: 13, color: 'var(--mut)', marginBottom: shipped ? 12 : 0 }}>Carrier: {carrierLabel}</div>}
       {shipped && trackingNumbers.length > 0 ? (
+        manual ? (
+          <ManualTracking carrier={manual.carrier} url={manual.url} numbers={trackingNumbers} />
+        ) : (
         <>
           {trackingNumbers.map(t => (
             <TrackingRow
@@ -1322,6 +1364,7 @@ function ShipmentCard({ title, slug, carrierLabel, trackingNumbers, shipped, not
             </div>
           )}
         </>
+        )
       ) : !shipped ? (
         <div style={{ fontSize: 13.5, color: 'var(--mut)', fontStyle: 'italic', marginTop: 4 }}>
           Tracking information will appear here once this shipment has been dispatched.
@@ -1372,10 +1415,12 @@ function StatusTab({ order }) {
 
   // Shipment carrier slug + tracking number (AfterShip inputs; fall back to legacy fields)
   const frameSlug = order.frameCarrierSlug || '';
+  const frameManual = parseManual(frameSlug);
   const frameNumber = order.frameTrackingId || order.trackingNumber || '';
   const frameTrackings = frameNumber ? [frameNumber] : [];
 
   const matsSlug = order.matsCarrierSlug || '';
+  const matsManual = parseManual(matsSlug);
   const matsNumber = order.matsTrackingId || '';
   const matTrackings = matsNumber
     ? [matsNumber]
@@ -1439,8 +1484,9 @@ function StatusTab({ order }) {
       {/* Frame shipment */}
       <ShipmentCard
         title="Sensory Gym Frame"
-        slug={frameSlug}
-        carrierLabel={carrierFromSlug(frameSlug) || 'FedEx Freight'}
+        slug={frameManual ? '' : frameSlug}
+        manual={frameManual}
+        carrierLabel={frameManual ? frameManual.carrier : (carrierFromSlug(frameSlug) || 'FedEx Freight')}
         trackingNumbers={frameTrackings}
         shipped={frameTrackings.length > 0}
         note="Your frame arrives on a freight pallet. Please have personnel on-site to assist with unloading and moving components into your facility."
@@ -1452,8 +1498,9 @@ function StatusTab({ order }) {
       {/* Mats & Padding */}
       <ShipmentCard
         title="Therapy Mats & Padding"
-        slug={matsSlug}
-        carrierLabel={carrierFromSlug(matsSlug) || (matTrackings.length > 0 ? 'Standard Carrier' : null)}
+        slug={matsManual ? '' : matsSlug}
+        manual={matsManual}
+        carrierLabel={matsManual ? matsManual.carrier : (carrierFromSlug(matsSlug) || (matTrackings.length > 0 ? 'Standard Carrier' : null))}
         trackingNumbers={matTrackings}
         shipped={matTrackings.length > 0}
         notIncluded={order.matTracking === 'N/A'}
@@ -1755,7 +1802,7 @@ function FilesTab({ files }) {
 
 // ── Tab: Invoice & Payment ────────────────────────────────────────────────────
 
-function InvoiceTab({ order }) {
+function InvoiceTab({ order, showToast, onRefresh }) {
   return (
     <>
       <div className="ph"><h2>Invoice & Payment</h2><p>View your current invoice and submit payment securely.</p></div>
@@ -1773,6 +1820,9 @@ function InvoiceTab({ order }) {
           Questions about your invoice? <a href="mailto:orders@summitsensory.com" style={{ color: 'var(--moss)' }}>orders@summitsensory.com</a>
         </p>
       </div>
+
+      {/* Tax exemption */}
+      <TaxExemptionCard order={order} showToast={showToast} onRefresh={onRefresh} />
 
       {order.invoiceLink ? (
         <>
@@ -1816,6 +1866,120 @@ function InvoiceTab({ order }) {
         </div>
       )}
     </>
+  );
+}
+
+// ── Card: Tax Exemption Certificate (within Invoice & Payment) ───────────────
+
+function TaxExemptionCard({ order, showToast, onRefresh }) {
+  // 'yes' | 'no' | null — tracks the selector's current on-screen state, seeded
+  // from whatever's already saved on the order (color_mm55tjn2).
+  const alreadyYes = order.taxExemptStatus === 'Yes';
+  const alreadyNo = order.taxExemptStatus === 'No';
+  const [choice, setChoice] = useState(alreadyYes ? 'yes' : alreadyNo ? 'no' : null);
+  const [file, setFile] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  async function chooseNo() {
+    setChoice('no');
+    setSaving(true);
+    try {
+      await saveSetup('tax_exemption', { taxExempt: false });
+      showToast('Got it — sales tax will apply to your invoice.');
+      onRefresh?.();
+    } catch {
+      showToast('Error saving. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function chooseYes() {
+    setChoice('yes');
+  }
+
+  async function submitCertificate(e) {
+    e.preventDefault();
+    if (!file) {
+      showToast('Please select your tax exemption certificate to upload.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const fileBase64 = await fileToBase64(file);
+      await saveSetup('tax_exemption', {
+        taxExempt: true,
+        fileBase64,
+        fileName: file.name,
+        mimeType: file.type,
+      });
+      showToast("Certificate uploaded — we'll review it and remove sales tax once approved.");
+      setFile(null);
+      onRefresh?.();
+    } catch {
+      showToast('Error uploading your certificate. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="ch"><h3>Tax Exemption Certificate</h3></div>
+      <p style={{ fontSize: 13.5, lineHeight: 1.65, marginBottom: 16 }}>
+        If your organization is tax-exempt, upload a current tax exemption certificate below. Once verified, sales tax will be removed from your invoice. <strong>Without an approved certificate on file, applicable sales tax will be included on your invoice.</strong>
+      </p>
+
+      {alreadyYes && choice === 'yes' && !file && (
+        <div className="alert success" style={{ marginBottom: 16 }}>✅ Certificate on file. Upload a new file below only if you need to replace it.</div>
+      )}
+      {alreadyNo && choice === 'no' && (
+        <div style={{ padding: '10px 14px', background: 'var(--paper)', borderRadius: 8, fontSize: 13.5, color: 'var(--mut)', border: '1px solid var(--line)', marginBottom: 16 }}>
+          You've indicated your organization is not tax-exempt. Sales tax will apply to your invoice.
+        </div>
+      )}
+
+      {choice !== 'yes' ? (
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className={`btn ${choice === 'no' ? 'btn-moss' : 'btn-ghost'}`}
+            onClick={chooseNo}
+            disabled={saving}
+          >
+            No, we are not tax-exempt
+          </button>
+          <button type="button" className="btn btn-ghost" onClick={chooseYes} disabled={saving}>
+            Yes, we are tax-exempt
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={submitCertificate}>
+          <div className="field">
+            <label><span style={{ color: 'var(--rose)' }}>*</span> Upload Tax Exemption Certificate</label>
+            <input
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png"
+              onChange={e => setFile(e.target.files?.[0] || null)}
+              required
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+            <button type="submit" className="btn btn-moss" disabled={saving}>
+              {saving ? 'Uploading…' : 'Upload Certificate'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => { setChoice(alreadyNo ? 'no' : null); setFile(null); }}
+              disabled={saving}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
   );
 }
 

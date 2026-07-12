@@ -11,7 +11,7 @@
  *   {"formId": {"name": "Site Assessment", "checklistIndex": 1}}
  */
 
-import { getOrderByEmail, postTaggedUpdate } from '../../../lib/monday';
+import { getOrderByEmail, postTaggedUpdate, markSectionComplete } from '../../../lib/monday';
 import { notifyTeamFormCompleted } from '../../../lib/email';
 
 // Parse the form→checklist map from env
@@ -76,15 +76,17 @@ export default async function handler(req, res) {
   }
 
   // Record completion in Monday.com as a tagged update so the cron can detect it
-  const tag = formConfig.tab === 'color' || formConfig.tab === 'color_selection'
-    ? 'PORTAL: Color Selections'
-    : 'PORTAL: Documents Submitted';
+  const isColor = formConfig.tab === 'color' || formConfig.tab === 'color_selection';
+  const tag = isColor ? 'PORTAL: Color Selections' : 'PORTAL: Documents Submitted';
 
   await postTaggedUpdate(
     order.id,
     tag,
     `Jotform submission received for "${formConfig.name}" on ${new Date().toLocaleDateString()}. Submitted by: ${email}`
   ).catch(console.error);
+
+  // Flip the matching portal checklist column (Portal: Color Selections / Portal: Documents) to ✅
+  await markSectionComplete(order.id, isColor ? 'portalColors' : 'portalDocuments').catch(console.error);
 
   // Notify team
   await notifyTeamFormCompleted(order.name, email, formConfig.name).catch(console.error);

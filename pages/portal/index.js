@@ -250,7 +250,7 @@ export default function CustomerPortal() {
             {activeTab === 'status'       && <StatusTab       order={order} />}
             {activeTab === 'installation' && <InstallationTab order={order} onNav={setActiveTab} />}
             {activeTab === 'files'        && <FilesTab        files={files} />}
-            {activeTab === 'invoice'      && <InvoiceTab      order={order} showToast={showToast} onRefresh={loadOrder} />}
+            {activeTab === 'invoice'      && <InvoiceTab      order={order} />}
             {activeTab === 'messages'     && <MessagesTab     order={order} messages={messages} onRefresh={loadMessages} showToast={showToast} />}
             {activeTab === 'contact_us'   && <ContactUsTab    onNav={setActiveTab} />}
           </main>
@@ -332,16 +332,6 @@ async function saveSetup(tab, data) {
     throw new Error(d.error || 'Save failed.');
   }
   return res.json();
-}
-
-// Read a File object into a base64 string (no data: URL prefix) for JSON upload.
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
 }
 
 // ── Tab: Contact Information ──────────────────────────────────────────────────
@@ -611,10 +601,30 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
   const [phoneCanText, setPhoneCanText] = useState(false);
   const [pocEmail, setPocEmail] = useState(order.pocEmail || '');
   const [specialInstructions, setSpecialInstructions] = useState(order.deliveryInstructions || '');
-  const [deliveryAddress, setDeliveryAddress] = useState(order.address || '');
-  const [windowAsap, setWindowAsap] = useState(false);
-  const [windowStart, setWindowStart] = useState('');
-  const [windowEnd, setWindowEnd] = useState('');
+
+  // Secondary delivery point of contact (optional, expands when enabled)
+  const [hasSecondaryPoc, setHasSecondaryPoc] = useState(false);
+  const [secondaryPocName, setSecondaryPocName] = useState('');
+  const [secondaryPocPhone, setSecondaryPocPhone] = useState('');
+  const [secondaryPhoneCanText, setSecondaryPhoneCanText] = useState(false);
+  const [secondaryPocEmail, setSecondaryPocEmail] = useState('');
+
+  // Ship-to address: confirm what's on file, or expand to enter a new one
+  const [addressConfirmed, setAddressConfirmed] = useState(null); // null = unanswered, true = yes, false = no
+  const [addressLine1, setAddressLine1] = useState('');
+  const [addressLine2, setAddressLine2] = useState('');
+  const [addressCity, setAddressCity] = useState('');
+  const [addressState, setAddressState] = useState('');
+  const [addressZip, setAddressZip] = useState('');
+  const [addressCountry, setAddressCountry] = useState('');
+
+  // Loading dock — required, defaults to "No" (liftgate delivery)
+  const [hasLoadingDock, setHasLoadingDock] = useState('no'); // 'yes' | 'no'
+
+  // Delivery timing — ship ASAP, or schedule on/after a preferred date
+  const [deliveryTiming, setDeliveryTiming] = useState(''); // 'asap' | 'scheduled'
+  const [preferredDeliveryDate, setPreferredDeliveryDate] = useState('');
+
   const [commMethods, setCommMethods] = useState(['Email']);
   const [mobilePhone, setMobilePhone] = useState('');
   const [ackRead, setAckRead] = useState(false);
@@ -644,13 +654,26 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
     if (!pocName.trim()) e.pocName = 'Required';
     if (!pocPhone.trim()) e.pocPhone = 'Required';
     if (!pocEmail.trim()) e.pocEmail = 'Required';
-    if (!windowAsap) {
-      if (!windowStart) e.windowStart = 'Required — or select "Deliver as early as possible"';
-      else if (!isWeekday(windowStart)) e.windowStart = 'Must be a weekday';
-      if (!windowEnd) e.windowEnd = 'Required — or select "Deliver as early as possible"';
-      else if (!isWeekday(windowEnd)) e.windowEnd = 'Must be a weekday';
-      if (windowStart && windowEnd && windowEnd < windowStart) e.windowEnd = 'End date must be after start date';
+
+    if (hasSecondaryPoc) {
+      if (!secondaryPocName.trim()) e.secondaryPocName = 'Required';
+      if (!secondaryPocPhone.trim()) e.secondaryPocPhone = 'Required';
+      if (!secondaryPocEmail.trim()) e.secondaryPocEmail = 'Required';
     }
+
+    if (addressConfirmed === null) e.addressConfirmed = 'Please confirm your ship-to address';
+    if (addressConfirmed === false) {
+      if (!addressLine1.trim()) e.addressLine1 = 'Required';
+      if (!addressCity.trim()) e.addressCity = 'Required';
+      if (!addressCountry.trim()) e.addressCountry = 'Required';
+    }
+
+    if (!deliveryTiming) e.deliveryTiming = 'Please choose a delivery timing option';
+    if (deliveryTiming === 'scheduled') {
+      if (!preferredDeliveryDate) e.preferredDeliveryDate = 'Required';
+      else if (!isWeekday(preferredDeliveryDate)) e.preferredDeliveryDate = 'Must be a weekday';
+    }
+
     if (!ackRead) e.ackRead = 'Required';
     if (!ackName.trim()) e.ackName = 'Required';
     return e;
@@ -658,8 +681,9 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
 
   function getChangedRestricted() {
     const changed = [];
-    if (deliveryAddress && deliveryAddress !== order.address) changed.push('Delivery Address');
-    if (windowStart || windowEnd || windowAsap) changed.push('Preferred Delivery Window');
+    if (addressConfirmed === false) changed.push('Ship-To Address');
+    if (deliveryTiming) changed.push('Preferred Delivery Timing');
+    if (hasLoadingDock) changed.push('Loading Dock / Liftgate Requirement');
     return changed;
   }
 
@@ -669,23 +693,50 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
       // Open the relevant section so errors are visible
-      if (errs.pocName || errs.pocPhone || errs.pocEmail) setEditingPoc(true);
-      if (errs.windowStart || errs.windowEnd) setEditingLogistics(true);
+      if (errs.pocName || errs.pocPhone || errs.pocEmail || errs.secondaryPocName || errs.secondaryPocPhone || errs.secondaryPocEmail) setEditingPoc(true);
+      if (errs.addressConfirmed || errs.addressLine1 || errs.addressCity || errs.addressCountry || errs.deliveryTiming || errs.preferredDeliveryDate) setEditingLogistics(true);
       showToast('Please complete all required fields.');
       return;
     }
     setErrors({});
     setSaving(true);
     const changedRestricted = getChangedRestricted();
-    const deliveryWindow = windowAsap ? 'As early as possible'
-      : (windowStart || windowEnd) ? `${windowStart || 'TBD'} to ${windowEnd || 'TBD'}`
-      : '';
+
+    const formattedAddress = addressConfirmed === false
+      ? [addressLine1, addressLine2, addressCity, [addressState, addressZip].filter(Boolean).join(' '), addressCountry].filter(Boolean).join(', ')
+      : (order.address || '');
+
+    const deliveryTimingLabel = deliveryTiming === 'asap'
+      ? 'Ship as soon as my order is ready'
+      : `Schedule delivery on or after ${preferredDeliveryDate}`;
+
+    const loadingDockLabel = hasLoadingDock === 'yes'
+      ? 'Yes, No need for lift gate delivery'
+      : 'No, I need liftgate delivery';
+
     try {
       await saveSetup('delivery', {
         pocName, pocPhone, phoneCanText, pocEmail, specialInstructions,
+        hasSecondaryPoc,
+        secondaryPocName: hasSecondaryPoc ? secondaryPocName : '',
+        secondaryPocPhone: hasSecondaryPoc ? secondaryPocPhone : '',
+        secondaryPhoneCanText: hasSecondaryPoc ? secondaryPhoneCanText : false,
+        secondaryPocEmail: hasSecondaryPoc ? secondaryPocEmail : '',
         commMethods, mobilePhone,
-        deliveryAddress, deliveryWindow,
+        addressConfirmed,
+        addressLine1: addressConfirmed === false ? addressLine1 : '',
+        addressLine2: addressConfirmed === false ? addressLine2 : '',
+        addressCity: addressConfirmed === false ? addressCity : '',
+        addressState: addressConfirmed === false ? addressState : '',
+        addressZip: addressConfirmed === false ? addressZip : '',
+        addressCountry: addressConfirmed === false ? addressCountry : '',
+        formattedAddress,
+        loadingDock: loadingDockLabel,
+        deliveryTiming: deliveryTimingLabel,
+        preferredDeliveryDate: deliveryTiming === 'scheduled' ? preferredDeliveryDate : '',
         changedRestricted,
+        freightAckBy: ackName,
+        freightAckDate: new Date().toISOString().split('T')[0],
       });
       await saveSetup('freight_ack', {
         acknowledgedBy: ackName,
@@ -798,6 +849,41 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
           )}
         </div>
 
+        {/* Secondary Delivery POC */}
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="ch"><h3>Secondary Delivery Point of Contact</h3></div>
+          <label className="sw" style={{ marginBottom: hasSecondaryPoc ? 16 : 0, cursor: 'pointer' }}>
+            <div className={`toggle${hasSecondaryPoc ? ' on' : ''}`} onClick={() => setHasSecondaryPoc(v => !v)} />
+            <span>Is there a secondary point of contact for the delivery?</span>
+          </label>
+          {hasSecondaryPoc && (
+            <>
+              <p style={{ fontSize: 13, color: 'var(--mut)', marginBottom: 16 }}>An additional person who can be reached about this delivery.</p>
+              <div className="row">
+                <div className="field">
+                  <label><span style={{ color: 'var(--rose)' }}>*</span> Full Name</label>
+                  <input type="text" value={secondaryPocName} onChange={e => { setSecondaryPocName(e.target.value); setErrors(v => ({...v, secondaryPocName: ''})); }} style={{ borderColor: errors.secondaryPocName ? 'var(--rose)' : '' }} />
+                  {errors.secondaryPocName && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.secondaryPocName}</div>}
+                </div>
+                <div className="field">
+                  <label><span style={{ color: 'var(--rose)' }}>*</span> Direct Phone</label>
+                  <input type="tel" value={secondaryPocPhone} onChange={e => { setSecondaryPocPhone(e.target.value); setErrors(v => ({...v, secondaryPocPhone: ''})); }} placeholder="+1 303 555 0100" style={{ borderColor: errors.secondaryPocPhone ? 'var(--rose)' : '' }} />
+                  {errors.secondaryPocPhone && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.secondaryPocPhone}</div>}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 13, cursor: 'pointer', fontWeight: 400 }}>
+                    <input type="checkbox" checked={secondaryPhoneCanText} onChange={e => setSecondaryPhoneCanText(e.target.checked)} style={{ width: 'auto' }} />
+                    This number can receive text messages
+                  </label>
+                </div>
+              </div>
+              <div className="field">
+                <label><span style={{ color: 'var(--rose)' }}>*</span> Email</label>
+                <input type="email" value={secondaryPocEmail} onChange={e => { setSecondaryPocEmail(e.target.value); setErrors(v => ({...v, secondaryPocEmail: ''})); }} style={{ borderColor: errors.secondaryPocEmail ? 'var(--rose)' : '' }} />
+                {errors.secondaryPocEmail && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.secondaryPocEmail}</div>}
+              </div>
+            </>
+          )}
+        </div>
+
         {/* Communication preferences — multi-select */}
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="ch"><h3>Communication Preferences</h3></div>
@@ -830,71 +916,136 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingLogistics(true)}>Edit</button>
             )}
           </div>
+          <p style={{ fontSize: 13.5, color: 'var(--mut)', marginBottom: 16, lineHeight: 1.55 }}>
+            Summit Sensory Gym is committed to ensuring your new sensory therapy gym is delivered as quickly as possible. Please be aware that most gyms require 6 to 8 weeks for manufacturing. We kindly ask that you consider this timeline when providing your ideal delivery date range in the question below.
+          </p>
           {editingLogistics ? (
             <>
               <div className="alert warn" style={{ marginBottom: 16 }}>
                 <span>⚠️</span>
                 <span>Changes to delivery logistics may increase your overall freight costs and could delay your delivery depending on various factors. Changes also require confirmation from the Summit team before taking effect — we'll follow up within 1 business day.</span>
               </div>
+
+              {/* Ship-to address — confirm what's on file, or expand to enter a new one */}
               <div className="field">
-                <label>Delivery Address <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(update if changed)</span></label>
-                <input type="text" value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)} />
-              </div>
-              <div className="field">
-                <label><span style={{ color: 'var(--rose)' }}>*</span> Preferred Delivery Window <strong>(weekdays only)</strong></label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, marginBottom: 14, fontSize: 13.5, cursor: 'pointer', fontWeight: 500 }}>
-                  <input
-                    type="checkbox"
-                    checked={windowAsap}
-                    onChange={e => {
-                      setWindowAsap(e.target.checked);
-                      if (e.target.checked) {
-                        setWindowStart('');
-                        setWindowEnd('');
-                        setErrors(v => ({...v, windowStart: '', windowEnd: ''}));
-                      }
-                    }}
-                    style={{ width: 'auto' }}
-                  />
-                  Deliver as early as possible
+                <label>Ship-To Address <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(on file)</span></label>
+                <div style={{ padding: '10px 14px', background: 'var(--paper)', borderRadius: 8, fontSize: 13.5, color: 'var(--mut)', border: '1px solid var(--line)', marginBottom: 12 }}>
+                  {order.address || <em>No delivery address on file</em>}
+                </div>
+                <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8 }}>
+                  <span style={{ color: 'var(--rose)' }}>*</span> Is this the correct ship-to address?
                 </label>
-                {!windowAsap && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                    <div>
-                      <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 5 }}>
-                        <span style={{ color: 'var(--rose)' }}>*</span> Earliest Acceptable Date
-                      </label>
-                      <input type="date" value={windowStart} min={today}
-                        onChange={e => { setWindowStart(e.target.value); setErrors(v => ({...v, windowStart: ''})); }}
-                        style={{ borderColor: errors.windowStart ? 'var(--rose)' : '', maxWidth: 220 }} />
-                      {errors.windowStart && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.windowStart}</div>}
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <button type="button" className={`chip${addressConfirmed === true ? ' on' : ''}`}
+                    onClick={() => { setAddressConfirmed(true); setErrors(v => ({...v, addressConfirmed: ''})); }}>
+                    Yes, this is correct
+                  </button>
+                  <button type="button" className={`chip${addressConfirmed === false ? ' on' : ''}`}
+                    onClick={() => { setAddressConfirmed(false); setErrors(v => ({...v, addressConfirmed: ''})); }}>
+                    No, I need to update it
+                  </button>
+                </div>
+                {errors.addressConfirmed && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 4 }}>{errors.addressConfirmed}</div>}
+                {addressConfirmed === false && (
+                  <div style={{ marginTop: 16 }}>
+                    <div className="hint" style={{ marginBottom: 10 }}>Enter your complete ship-to address below. Shipping outside the U.S.? Just fill in whichever fields apply to your country.</div>
+                    <div className="field">
+                      <label><span style={{ color: 'var(--rose)' }}>*</span> Address Line 1</label>
+                      <input type="text" value={addressLine1} onChange={e => { setAddressLine1(e.target.value); setErrors(v => ({...v, addressLine1: ''})); }}
+                        placeholder="Street address" style={{ borderColor: errors.addressLine1 ? 'var(--rose)' : '' }} />
+                      {errors.addressLine1 && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.addressLine1}</div>}
                     </div>
-                    <div>
-                      <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 5 }}>
-                        <span style={{ color: 'var(--rose)' }}>*</span> Latest Acceptable Date
-                      </label>
-                      <input type="date" value={windowEnd} min={windowStart || today}
-                        onChange={e => { setWindowEnd(e.target.value); setErrors(v => ({...v, windowEnd: ''})); }}
-                        style={{ borderColor: errors.windowEnd ? 'var(--rose)' : '', maxWidth: 220 }} />
-                      {errors.windowEnd && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.windowEnd}</div>}
+                    <div className="field">
+                      <label>Address Line 2 <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(optional)</span></label>
+                      <input type="text" value={addressLine2} onChange={e => setAddressLine2(e.target.value)} placeholder="Suite, unit, building, floor, etc." />
                     </div>
+                    <div className="row">
+                      <div className="field">
+                        <label><span style={{ color: 'var(--rose)' }}>*</span> City</label>
+                        <input type="text" value={addressCity} onChange={e => { setAddressCity(e.target.value); setErrors(v => ({...v, addressCity: ''})); }}
+                          style={{ borderColor: errors.addressCity ? 'var(--rose)' : '' }} />
+                        {errors.addressCity && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.addressCity}</div>}
+                      </div>
+                      <div className="field">
+                        <label>State / Province / Region <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(if applicable)</span></label>
+                        <input type="text" value={addressState} onChange={e => setAddressState(e.target.value)} placeholder="e.g. CO, Ontario, Bavaria" />
+                      </div>
+                      <div className="field" style={{ maxWidth: 160 }}>
+                        <label>ZIP / Postal Code <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(if applicable)</span></label>
+                        <input type="text" value={addressZip} onChange={e => setAddressZip(e.target.value)} />
+                      </div>
+                    </div>
+                    <div className="field">
+                      <label><span style={{ color: 'var(--rose)' }}>*</span> Country</label>
+                      <input type="text" value={addressCountry} onChange={e => { setAddressCountry(e.target.value); setErrors(v => ({...v, addressCountry: ''})); }}
+                        placeholder="United States" style={{ borderColor: errors.addressCountry ? 'var(--rose)' : '' }} />
+                      {errors.addressCountry && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.addressCountry}</div>}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Loading dock — required, asked before delivery timing */}
+              <div className="field">
+                <label><span style={{ color: 'var(--rose)' }}>*</span> Does your facility have a loading dock?</label>
+                <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+                  <button type="button" className={`chip${hasLoadingDock === 'no' ? ' on' : ''}`} onClick={() => setHasLoadingDock('no')}>
+                    No, I need liftgate delivery
+                  </button>
+                  <button type="button" className={`chip${hasLoadingDock === 'yes' ? ' on' : ''}`} onClick={() => setHasLoadingDock('yes')}>
+                    Yes, No need for lift gate delivery
+                  </button>
+                </div>
+              </div>
+
+              {/* Delivery timing — ship ASAP or schedule a preferred date */}
+              <div className="field">
+                <label><span style={{ color: 'var(--rose)' }}>*</span> How soon would you like us to schedule the delivery of your order?</label>
+                <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+                  <button type="button" className={`chip${deliveryTiming === 'asap' ? ' on' : ''}`}
+                    onClick={() => { setDeliveryTiming('asap'); setPreferredDeliveryDate(''); setErrors(v => ({...v, deliveryTiming: '', preferredDeliveryDate: ''})); }}>
+                    Ship as soon as my order is ready
+                  </button>
+                  <button type="button" className={`chip${deliveryTiming === 'scheduled' ? ' on' : ''}`}
+                    onClick={() => { setDeliveryTiming('scheduled'); setErrors(v => ({...v, deliveryTiming: ''})); }}>
+                    Schedule my preferred delivery date
+                  </button>
+                </div>
+                {errors.deliveryTiming && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 4 }}>{errors.deliveryTiming}</div>}
+                {deliveryTiming === 'scheduled' && (
+                  <div style={{ marginTop: 14 }}>
+                    <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 5 }}>
+                      <span style={{ color: 'var(--rose)' }}>*</span> Schedule my delivery on or after this date
+                    </label>
+                    <input type="date" value={preferredDeliveryDate} min={today}
+                      onChange={e => { setPreferredDeliveryDate(e.target.value); setErrors(v => ({...v, preferredDeliveryDate: ''})); }}
+                      style={{ borderColor: errors.preferredDeliveryDate ? 'var(--rose)' : '', maxWidth: 220 }} />
+                    {errors.preferredDeliveryDate && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.preferredDeliveryDate}</div>}
                     <div className="hint">Deliveries are made Monday–Friday. Weekend dates will not be accepted.</div>
                   </div>
                 )}
               </div>
+
               <div style={{ marginTop: 4 }}>
                 <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingLogistics(false)}>Done</button>
               </div>
             </>
           ) : (
             <>
-              <ReadField label="Delivery Address" value={deliveryAddress || '—'} />
-              <ReadField label="Preferred Delivery Window" value={
-                windowAsap ? 'As early as possible' :
-                (windowStart || windowEnd) ? `${windowStart || 'TBD'} to ${windowEnd || 'TBD'}` : 'Not yet set'
+              <ReadField label="Ship-To Address" value={
+                addressConfirmed === false
+                  ? [addressLine1, addressLine2, addressCity, [addressState, addressZip].filter(Boolean).join(' '), addressCountry].filter(Boolean).join(', ') || '—'
+                  : (order.address || '—')
               } />
-              {errors.windowStart && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.windowStart}</div>}
-              {errors.windowEnd && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.windowEnd}</div>}
+              <ReadField label="Loading Dock at Facility" value={hasLoadingDock === 'yes' ? 'Yes, No need for lift gate delivery' : 'No, I need liftgate delivery'} />
+              <ReadField label="Delivery Timing" value={
+                !deliveryTiming ? 'Not yet set' :
+                deliveryTiming === 'asap' ? 'Ship as soon as my order is ready' :
+                `Schedule on or after ${preferredDeliveryDate || 'TBD'}`
+              } />
+              {errors.addressConfirmed && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.addressConfirmed}</div>}
+              {errors.deliveryTiming && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.deliveryTiming}</div>}
+              {errors.preferredDeliveryDate && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.preferredDeliveryDate}</div>}
             </>
           )}
         </div>
@@ -1224,35 +1375,6 @@ function aftershipTrackUrl(slug, tracking) {
   return `https://track.aftership.com/${encodeURIComponent(slug)}/${encodeURIComponent((tracking || '').trim())}`;
 }
 
-// Manual (non-AfterShip) carrier support. Set the shipment's carrier/slug column to:
-//   manual                                          → number + a carrier-search link
-//   manual|Averitt Express                          → carrier name + number + search link
-//   manual|Averitt Express|https://site/track?p={tracking}  → links directly ({tracking} is replaced)
-function parseManual(slug) {
-  if (!slug || !/^manual\b/i.test(slug.trim())) return null;
-  const parts = slug.split('|').map(s => s.trim());
-  return { carrier: parts[1] || 'Freight Carrier', url: parts[2] || '' };
-}
-function manualTrackUrl(url, carrier, number) {
-  if (url) return url.replace(/\{tracking\}/gi, encodeURIComponent(number));
-  return `https://www.google.com/search?q=${encodeURIComponent(`${carrier} tracking ${number}`)}`;
-}
-function ManualTracking({ carrier, url, numbers }) {
-  return (
-    <>
-      {numbers.map((n, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
-          <code style={{ background: 'var(--paper)', padding: '4px 10px', borderRadius: 6, fontSize: 13, fontFamily: 'monospace', letterSpacing: '.02em', border: '1px solid var(--line)' }}>{n}</code>
-          <a href={manualTrackUrl(url, carrier, n)} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ fontSize: 12 }}>Track your shipment →</a>
-        </div>
-      ))}
-      <div style={{ fontSize: 12.5, color: 'var(--mut)', marginTop: 4 }}>
-        Live in-portal tracking isn't available for this carrier — use the tracking link above for the latest status.
-      </div>
-    </>
-  );
-}
-
 function TrackingRow({ tracking, slug, expanded, trackingInfo, loading, onToggle }) {
   const carrierName = slug ? carrierFromSlug(slug) : getCarrierInfo(tracking).name;
   const events = trackingInfo?.events || [];
@@ -1326,7 +1448,7 @@ function TrackingRow({ tracking, slug, expanded, trackingInfo, loading, onToggle
   );
 }
 
-function ShipmentCard({ title, slug, manual, carrierLabel, trackingNumbers, shipped, notIncluded, expandedTracking, trackingData, loadingTracking, onToggleTracking, note, carrierPhone, carrierPhoneLabel }) {
+function ShipmentCard({ title, slug, carrierLabel, trackingNumbers, shipped, notIncluded, expandedTracking, trackingData, loadingTracking, onToggleTracking, note, carrierPhone, carrierPhoneLabel }) {
   if (notIncluded) return null;
   return (
     <div className="card" style={{ marginBottom: 16 }}>
@@ -1342,9 +1464,6 @@ function ShipmentCard({ title, slug, manual, carrierLabel, trackingNumbers, ship
       </div>
       {carrierLabel && <div style={{ fontSize: 13, color: 'var(--mut)', marginBottom: shipped ? 12 : 0 }}>Carrier: {carrierLabel}</div>}
       {shipped && trackingNumbers.length > 0 ? (
-        manual ? (
-          <ManualTracking carrier={manual.carrier} url={manual.url} numbers={trackingNumbers} />
-        ) : (
         <>
           {trackingNumbers.map(t => (
             <TrackingRow
@@ -1364,7 +1483,6 @@ function ShipmentCard({ title, slug, manual, carrierLabel, trackingNumbers, ship
             </div>
           )}
         </>
-        )
       ) : !shipped ? (
         <div style={{ fontSize: 13.5, color: 'var(--mut)', fontStyle: 'italic', marginTop: 4 }}>
           Tracking information will appear here once this shipment has been dispatched.
@@ -1415,12 +1533,10 @@ function StatusTab({ order }) {
 
   // Shipment carrier slug + tracking number (AfterShip inputs; fall back to legacy fields)
   const frameSlug = order.frameCarrierSlug || '';
-  const frameManual = parseManual(frameSlug);
   const frameNumber = order.frameTrackingId || order.trackingNumber || '';
   const frameTrackings = frameNumber ? [frameNumber] : [];
 
   const matsSlug = order.matsCarrierSlug || '';
-  const matsManual = parseManual(matsSlug);
   const matsNumber = order.matsTrackingId || '';
   const matTrackings = matsNumber
     ? [matsNumber]
@@ -1484,9 +1600,8 @@ function StatusTab({ order }) {
       {/* Frame shipment */}
       <ShipmentCard
         title="Sensory Gym Frame"
-        slug={frameManual ? '' : frameSlug}
-        manual={frameManual}
-        carrierLabel={frameManual ? frameManual.carrier : (carrierFromSlug(frameSlug) || 'FedEx Freight')}
+        slug={frameSlug}
+        carrierLabel={carrierFromSlug(frameSlug) || 'FedEx Freight'}
         trackingNumbers={frameTrackings}
         shipped={frameTrackings.length > 0}
         note="Your frame arrives on a freight pallet. Please have personnel on-site to assist with unloading and moving components into your facility."
@@ -1498,9 +1613,8 @@ function StatusTab({ order }) {
       {/* Mats & Padding */}
       <ShipmentCard
         title="Therapy Mats & Padding"
-        slug={matsManual ? '' : matsSlug}
-        manual={matsManual}
-        carrierLabel={matsManual ? matsManual.carrier : (carrierFromSlug(matsSlug) || (matTrackings.length > 0 ? 'Standard Carrier' : null))}
+        slug={matsSlug}
+        carrierLabel={carrierFromSlug(matsSlug) || (matTrackings.length > 0 ? 'Standard Carrier' : null)}
         trackingNumbers={matTrackings}
         shipped={matTrackings.length > 0}
         notIncluded={order.matTracking === 'N/A'}
@@ -1553,47 +1667,14 @@ function StatusTab({ order }) {
 
 // ── Tab: Installation ─────────────────────────────────────────────────────────
 
-// Convert common video URLs (YouTube, Vimeo, Loom, Google Drive, direct files) into an embeddable player.
-function getVideoEmbed(url) {
-  if (!url) return null;
-  const u = url.trim();
-  // Already an embed URL
-  if (/youtube\.com\/embed\//.test(u) || /player\.vimeo\.com\/video\//.test(u) || /loom\.com\/embed\//.test(u)) {
-    return { kind: 'iframe', src: u };
-  }
-  const yt = u.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|live\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-  if (yt) return { kind: 'iframe', src: `https://www.youtube.com/embed/${yt[1]}?rel=0` };
-  const vm = u.match(/vimeo\.com\/(?:video\/)?(\d+)(?:\/([a-zA-Z0-9]+))?/);
-  if (vm) return { kind: 'iframe', src: `https://player.vimeo.com/video/${vm[1]}${vm[2] ? `?h=${vm[2]}` : ''}` };
-  const loom = u.match(/loom\.com\/share\/([a-zA-Z0-9]+)/);
-  if (loom) return { kind: 'iframe', src: `https://www.loom.com/embed/${loom[1]}` };
-  const drive = u.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
-  if (drive) return { kind: 'iframe', src: `https://drive.google.com/file/d/${drive[1]}/preview` };
-  if (/\.(mp4|webm|mov|m4v)(\?|$)/i.test(u)) return { kind: 'video', src: u };
-  return null;
-}
-
-// Responsive 16:9 inline video player (iframe for hosted services, <video> for direct files).
-function VideoEmbed({ embed, title }) {
-  const wrap = { position: 'relative', paddingBottom: '56.25%', height: 0, borderRadius: 10, overflow: 'hidden', background: '#000' };
-  const inner = { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' };
-  if (embed.kind === 'video') {
-    return <div style={wrap}><video src={embed.src} controls playsInline style={{ ...inner, objectFit: 'contain' }} /></div>;
-  }
-  return (
-    <div style={wrap}>
-      <iframe
-        src={embed.src}
-        style={inner}
-        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-        allowFullScreen
-        title={title}
-      />
-    </div>
-  );
-}
-
 function InstallationTab({ order, onNav }) {
+  function getEmbedUrl(url) {
+    const ytMatch = url.match(/(?:youtu\.be\/|youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{11})/);
+    if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}?rel=0`;
+    const vimeoMatch = url.match(/vimeo\.com\/(\d+)/);
+    if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[1]}`;
+    return null;
+  }
 
   const videos = order.installationVideos
     ? order.installationVideos.split(',').map(u => u.trim()).filter(Boolean)
@@ -1688,10 +1769,18 @@ function InstallationTab({ order, onNav }) {
                 Watch these before your delivery to familiarize yourself with the installation process.
               </p>
               {videos.map((url, i) => {
-                const embed = getVideoEmbed(url);
-                return embed ? (
+                const embedUrl = getEmbedUrl(url);
+                return embedUrl ? (
                   <div key={i} style={{ marginBottom: i < videos.length - 1 ? 20 : 0 }}>
-                    <VideoEmbed embed={embed} title={`Installation Video ${i + 1}`} />
+                    <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0, borderRadius: 10, overflow: 'hidden', background: '#000' }}>
+                      <iframe
+                        src={embedUrl}
+                        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                        title={`Installation Video ${i + 1}`}
+                      />
+                    </div>
                   </div>
                 ) : (
                   <div key={i} style={{ marginBottom: 10 }}>
@@ -1802,7 +1891,7 @@ function FilesTab({ files }) {
 
 // ── Tab: Invoice & Payment ────────────────────────────────────────────────────
 
-function InvoiceTab({ order, showToast, onRefresh }) {
+function InvoiceTab({ order }) {
   return (
     <>
       <div className="ph"><h2>Invoice & Payment</h2><p>View your current invoice and submit payment securely.</p></div>
@@ -1820,9 +1909,6 @@ function InvoiceTab({ order, showToast, onRefresh }) {
           Questions about your invoice? <a href="mailto:orders@summitsensory.com" style={{ color: 'var(--moss)' }}>orders@summitsensory.com</a>
         </p>
       </div>
-
-      {/* Tax exemption */}
-      <TaxExemptionCard order={order} showToast={showToast} onRefresh={onRefresh} />
 
       {order.invoiceLink ? (
         <>
@@ -1866,120 +1952,6 @@ function InvoiceTab({ order, showToast, onRefresh }) {
         </div>
       )}
     </>
-  );
-}
-
-// ── Card: Tax Exemption Certificate (within Invoice & Payment) ───────────────
-
-function TaxExemptionCard({ order, showToast, onRefresh }) {
-  // 'yes' | 'no' | null — tracks the selector's current on-screen state, seeded
-  // from whatever's already saved on the order (color_mm55tjn2).
-  const alreadyYes = order.taxExemptStatus === 'Yes';
-  const alreadyNo = order.taxExemptStatus === 'No';
-  const [choice, setChoice] = useState(alreadyYes ? 'yes' : alreadyNo ? 'no' : null);
-  const [file, setFile] = useState(null);
-  const [saving, setSaving] = useState(false);
-
-  async function chooseNo() {
-    setChoice('no');
-    setSaving(true);
-    try {
-      await saveSetup('tax_exemption', { taxExempt: false });
-      showToast('Got it — sales tax will apply to your invoice.');
-      onRefresh?.();
-    } catch {
-      showToast('Error saving. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function chooseYes() {
-    setChoice('yes');
-  }
-
-  async function submitCertificate(e) {
-    e.preventDefault();
-    if (!file) {
-      showToast('Please select your tax exemption certificate to upload.');
-      return;
-    }
-    setSaving(true);
-    try {
-      const fileBase64 = await fileToBase64(file);
-      await saveSetup('tax_exemption', {
-        taxExempt: true,
-        fileBase64,
-        fileName: file.name,
-        mimeType: file.type,
-      });
-      showToast("Certificate uploaded — we'll review it and remove sales tax once approved.");
-      setFile(null);
-      onRefresh?.();
-    } catch {
-      showToast('Error uploading your certificate. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="card" style={{ marginBottom: 16 }}>
-      <div className="ch"><h3>Tax Exemption Certificate</h3></div>
-      <p style={{ fontSize: 13.5, lineHeight: 1.65, marginBottom: 16 }}>
-        If your organization is tax-exempt, upload a current tax exemption certificate below. Once verified, sales tax will be removed from your invoice. <strong>Without an approved certificate on file, applicable sales tax will be included on your invoice.</strong>
-      </p>
-
-      {alreadyYes && choice === 'yes' && !file && (
-        <div className="alert success" style={{ marginBottom: 16 }}>✅ Certificate on file. Upload a new file below only if you need to replace it.</div>
-      )}
-      {alreadyNo && choice === 'no' && (
-        <div style={{ padding: '10px 14px', background: 'var(--paper)', borderRadius: 8, fontSize: 13.5, color: 'var(--mut)', border: '1px solid var(--line)', marginBottom: 16 }}>
-          You've indicated your organization is not tax-exempt. Sales tax will apply to your invoice.
-        </div>
-      )}
-
-      {choice !== 'yes' ? (
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            className={`btn ${choice === 'no' ? 'btn-moss' : 'btn-ghost'}`}
-            onClick={chooseNo}
-            disabled={saving}
-          >
-            No, we are not tax-exempt
-          </button>
-          <button type="button" className="btn btn-ghost" onClick={chooseYes} disabled={saving}>
-            Yes, we are tax-exempt
-          </button>
-        </div>
-      ) : (
-        <form onSubmit={submitCertificate}>
-          <div className="field">
-            <label><span style={{ color: 'var(--rose)' }}>*</span> Upload Tax Exemption Certificate</label>
-            <input
-              type="file"
-              accept=".pdf,.jpg,.jpeg,.png"
-              onChange={e => setFile(e.target.files?.[0] || null)}
-              required
-            />
-          </div>
-          <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
-            <button type="submit" className="btn btn-moss" disabled={saving}>
-              {saving ? 'Uploading…' : 'Upload Certificate'}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => { setChoice(alreadyNo ? 'no' : null); setFile(null); }}
-              disabled={saving}
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      )}
-    </div>
   );
 }
 

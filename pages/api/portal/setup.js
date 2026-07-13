@@ -4,11 +4,10 @@
  * Body: { tab, data }
  *
  * Tabs handled:
- *   contact         — confirmation only (data lives in Monday mirrors)
- *   billing         — stores billing address + POC as a tagged Monday update
- *   delivery        — saves editable fields + freight acknowledgment
- *   freight_ack     — records signed freight acknowledgment as Monday update
- *   tax_exemption   — Yes/No status (color_mm55tjn2) + certificate upload (file_mm55t6kn)
+ *   contact      — confirmation only (data lives in Monday mirrors)
+ *   billing      — stores billing address + POC as a tagged Monday update
+ *   delivery     — saves editable fields + freight acknowledgment
+ *   freight_ack  — records signed freight acknowledgment as Monday update
  */
 
 import { parse } from 'cookie';
@@ -18,24 +17,13 @@ import {
   updateOrderColumn,
   postTaggedUpdate,
   markSectionComplete,
-  setStatusLabel,
-  uploadFileToColumn,
+  createDeliverySubmissionItem,
   COLS,
-  TAX_EXEMPT_YES_LABEL,
-  TAX_EXEMPT_NO_LABEL,
 } from '../../../lib/monday';
-import { notifyTeamContactChange, notifyTeamFormCompleted } from '../../../lib/email';
+import { notifyTeamContactChange } from '../../../lib/email';
 
 // Fields that require Summit confirmation when changed
 const RESTRICTED_FIELDS = ['deliveryAddress', 'liftgate', 'loadingDock', 'deliveryWindow'];
-
-// Tax exemption certificate uploads arrive as base64 in the JSON body — raise
-// the default 1mb Next.js body limit so scanned PDFs/photos aren't rejected.
-export const config = {
-  api: {
-    bodyParser: { sizeLimit: '10mb' },
-  },
-};
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -121,29 +109,54 @@ export default async function handler(req, res) {
       case 'delivery': {
         const {
           pocName, pocPhone, phoneCanText, pocEmail, specialInstructions,
+          hasSecondaryPoc, secondaryPocName, secondaryPocPhone, secondaryPhoneCanText, secondaryPocEmail,
           commMethods, mobilePhone,
-          deliveryAddress, deliveryWindow,
+          addressConfirmed, addressLine1, addressLine2, addressCity, addressState, addressZip, addressCountry,
+          formattedAddress,
+          loadingDock, deliveryTiming, preferredDeliveryDate,
           changedRestricted,
+          freightAckBy, freightAckDate,
         } = data;
 
-        // Save delivery address if provided and changed
-        if (deliveryAddress) {
-          await updateOrderColumn(order.id, COLS.address, deliveryAddress);
+        // Save the confirmed/updated ship-to address on the order record if the
+        // customer entered a new one (long-text "Confirmed Delivery Address" column)
+        if (addressConfirmed === false && formattedAddress) {
+          await updateOrderColumn(order.id, COLS.address, formattedAddress);
         }
 
-        // Log the full delivery submission as a tagged update
+        // Log the full delivery submission as a tagged update on the order (quick read for staff in Monday updates)
         const phoneNote = phoneCanText ? ' (can text)' : '';
         const commNote = Array.isArray(commMethods) ? commMethods.join(', ') : (commMethods || 'Email');
+        const secondaryNote = hasSecondaryPoc
+          ? `${secondaryPocName || '—'} | ${secondaryPocPhone || '—'}${secondaryPhoneCanText ? ' (can text)' : ''} | ${secondaryPocEmail || '—'}`
+          : 'None';
         const lines = [
-          `Delivery POC: ${pocName || '—'} | ${pocPhone || '—'}${phoneNote} | ${pocEmail || '—'}`,
+          `Primary Delivery POC: ${pocName || '—'} | ${pocPhone || '—'}${phoneNote} | ${pocEmail || '—'}`,
+          `Secondary Delivery POC: ${secondaryNote}`,
           `Preferred Communication: ${commNote}${mobilePhone ? ` — Mobile: ${mobilePhone}` : ''}`,
           `Special Instructions: ${specialInstructions || 'None'}`,
-          deliveryAddress ? `Delivery Address: ${deliveryAddress}` : null,
-          deliveryWindow ? `Preferred Delivery Window: ${deliveryWindow}` : null,
+          `Ship-To Address Confirmed: ${addressConfirmed === false ? 'No — updated' : 'Yes'}`,
+          formattedAddress ? `Ship-To Address: ${formattedAddress}` : null,
+          loadingDock ? `Loading Dock: ${loadingDock}` : null,
+          deliveryTiming ? `Delivery Timing: ${deliveryTiming}` : null,
           `Submitted: ${new Date().toLocaleDateString()}`,
         ].filter(Boolean);
 
         await postTaggedUpdate(order.id, 'PORTAL: Delivery Details', lines.join('\n'));
+
+        // Push the full structured submission to the standalone Delivery &
+        // Site Details Submissions board in Monday (one row per submission)
+        await createDeliverySubmissionItem(order, {
+          customerEmail: session.email,
+          pocName, pocPhone, phoneCanText, pocEmail, specialInstructions,
+          hasSecondaryPoc, secondaryPocName, secondaryPocPhone, secondaryPhoneCanText, secondaryPocEmail,
+          commMethods, mobilePhone,
+          addressConfirmed, addressLine1, addressLine2, addressCity, addressState, addressZip, addressCountry,
+          formattedAddress,
+          loadingDock, deliveryTiming, preferredDeliveryDate,
+          changedRestricted,
+          freightAckBy, freightAckDate,
+        }).catch(err => console.error('createDeliverySubmissionItem failed:', err));
 
         // Notify team of delivery submission (always) + flag restricted changes
         const notifyFields = changedRestricted?.length > 0
@@ -180,35 +193,6 @@ export default async function handler(req, res) {
           `Customer marked required documents complete on ${new Date().toLocaleDateString()}.`
         );
         await markSectionComplete(order.id, 'portalDocuments').catch(console.error);
-        return res.status(200).json({ ok: true });
-      }
-
-      // ── Invoice & Payment: Tax Exemption ─────────────────────────────────
-      case 'tax_exemption': {
-        const { taxExempt, fileBase64, fileName, mimeType } = data;
-
-        // "No" — record it and stop. No certificate requested; sales tax applies.
-        if (!taxExempt) {
-          await setStatusLabel(order.id, 'taxExemptStatus', TAX_EXEMPT_NO_LABEL);
-          await postTaggedUpdate(order.id, 'PORTAL: Tax Exempt - No',
-            `Customer indicated they are NOT tax-exempt on ${new Date().toLocaleDateString()}. Sales tax applies to this order.`
-          );
-          return res.status(200).json({ ok: true });
-        }
-
-        // "Yes" — a certificate file is required.
-        if (!fileBase64 || !fileName) {
-          return res.status(400).json({ error: 'Please upload your tax exemption certificate.' });
-        }
-
-        const buffer = Buffer.from(fileBase64, 'base64');
-        await uploadFileToColumn(order.id, COLS.taxExemptCertFile, buffer, fileName, mimeType);
-        await setStatusLabel(order.id, 'taxExemptStatus', TAX_EXEMPT_YES_LABEL);
-        await postTaggedUpdate(order.id, 'PORTAL: Tax Exemption Certificate Uploaded',
-          `Customer uploaded a tax exemption certificate (${fileName}) on ${new Date().toLocaleDateString()}.`
-        );
-        await notifyTeamFormCompleted(order.name, session.email, 'Tax Exemption Certificate').catch(console.error);
-
         return res.status(200).json({ ok: true });
       }
 

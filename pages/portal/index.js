@@ -337,15 +337,32 @@ async function saveSetup(tab, data) {
 // ── Tab: Contact Information ──────────────────────────────────────────────────
 
 function ContactTab({ order, completions, markComplete, showToast, onNext }) {
-  const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(order.pocName || order.firstName || '');
-  const [phone, setPhone] = useState(order.phone || '');
-  const [email, setEmail] = useState(order.customerEmail || '');
+  // Name, Email, and Phone are all required — auto-open editing if Monday is missing any of them
+  const [editing, setEditing] = useState(!(order.contactName?.trim() && order.contactPhone?.trim() && order.contactEmail?.trim()));
+  const [name, setName] = useState(order.contactName || '');
+  const [phone, setPhone] = useState(order.contactPhone || '');
+  const [email, setEmail] = useState(order.contactEmail || '');
   const [saving, setSaving] = useState(false);
   const [updateSubmitted, setUpdateSubmitted] = useState(false);
+  const [errors, setErrors] = useState({});
+
+  function validate() {
+    const e = {};
+    if (!name.trim()) e.name = 'Required';
+    if (!phone.trim()) e.phone = 'Required';
+    if (!email.trim()) e.email = 'Required';
+    return e;
+  }
 
   async function submitUpdate(e) {
     e.preventDefault();
+    const errs = validate();
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      showToast('Please complete all required fields.');
+      return;
+    }
+    setErrors({});
     setSaving(true);
     try {
       await saveSetup('contact_update', { name, phone, email });
@@ -357,6 +374,11 @@ function ContactTab({ order, completions, markComplete, showToast, onNext }) {
   }
 
   async function confirm() {
+    if (!order.contactName?.trim() || !order.contactPhone?.trim() || !order.contactEmail?.trim()) {
+      setEditing(true);
+      showToast('Please complete all required contact fields before continuing.');
+      return;
+    }
     setSaving(true);
     try {
       await saveSetup('contact', {});
@@ -385,16 +407,19 @@ function ContactTab({ order, completions, markComplete, showToast, onNext }) {
           <form onSubmit={submitUpdate}>
             <div className="grid g2">
               <div className="field">
-                <label>Full Name</label>
-                <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Full name" />
+                <label><span style={{ color: 'var(--rose)' }}>*</span> Full Name</label>
+                <input type="text" value={name} onChange={e => { setName(e.target.value); setErrors(v => ({...v, name: ''})); }} placeholder="Full name" required style={{ borderColor: errors.name ? 'var(--rose)' : '' }} />
+                {errors.name && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.name}</div>}
               </div>
               <div className="field">
-                <label>Email Address</label>
-                <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email@example.com" />
+                <label><span style={{ color: 'var(--rose)' }}>*</span> Email Address</label>
+                <input type="email" value={email} onChange={e => { setEmail(e.target.value); setErrors(v => ({...v, email: ''})); }} placeholder="email@example.com" required style={{ borderColor: errors.email ? 'var(--rose)' : '' }} />
+                {errors.email && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.email}</div>}
               </div>
               <div className="field">
-                <label>Phone</label>
-                <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1 303 555 0100" />
+                <label><span style={{ color: 'var(--rose)' }}>*</span> Phone</label>
+                <input type="tel" value={phone} onChange={e => { setPhone(e.target.value); setErrors(v => ({...v, phone: ''})); }} placeholder="+1 303 555 0100" required style={{ borderColor: errors.phone ? 'var(--rose)' : '' }} />
+                {errors.phone && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.phone}</div>}
               </div>
               <div className="field">
                 <label>Organization</label>
@@ -412,9 +437,9 @@ function ContactTab({ order, completions, markComplete, showToast, onNext }) {
           </form>
         ) : (
           <div className="grid g2">
-            <ReadField label="Name" value={order.pocName || order.firstName || '—'} />
-            <ReadField label="Email" value={order.customerEmail || '—'} />
-            <ReadField label="Phone" value={order.phone || '—'} />
+            <ReadField label="Name *" value={order.contactName || '—'} />
+            <ReadField label="Email *" value={order.contactEmail || '—'} />
+            <ReadField label="Phone *" value={order.contactPhone || '—'} />
             <ReadField label="Organization" value={order.name ? order.name.split(' - ')[0] : '—'} />
           </div>
         )}
@@ -428,12 +453,12 @@ function ContactTab({ order, completions, markComplete, showToast, onNext }) {
 // ── Tab: Billing Information ──────────────────────────────────────────────────
 
 function BillingTab({ order, completions, markComplete, showToast, onNext, onBack }) {
-  const [sameAsDelivery, setSameAsDelivery] = useState(false);
-  const [billingAddress, setBillingAddress] = useState('');
+  // Bill-to address is pre-filled from Monday.com (Manufacturing Process board) — editable, no toggle
+  const [billingAddress, setBillingAddress] = useState(order.billingAddressOnFile || '');
   const [billingAddressSuite, setBillingAddressSuite] = useState('');
   const [billingCity, setBillingCity] = useState('');
   const [billingState, setBillingState] = useState('');
-  const [billingZip, setBillingZip] = useState('');
+  const [billingZip, setBillingZip] = useState(order.billingZipOnFile || '');
   const [billingCountry, setBillingCountry] = useState('');
   const [sameContact, setSameContact] = useState(false);
   const [billingName, setBillingName] = useState('');
@@ -445,7 +470,7 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
 
   // Google Places autocomplete on street address
   useEffect(() => {
-    if (sameAsDelivery || !streetRef.current || typeof window === 'undefined' || !window.google?.maps?.places) return;
+    if (!streetRef.current || typeof window === 'undefined' || !window.google?.maps?.places) return;
     autocompleteRef.current = new window.google.maps.places.Autocomplete(streetRef.current, {
       types: ['address'],
       fields: ['address_components'],
@@ -470,11 +495,11 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
       setBillingCountry(country);
     });
     return () => { if (listener) window.google.maps.event.removeListener(listener); };
-  }, [sameAsDelivery]);
+  }, []);
 
   async function submit(e) {
     e.preventDefault();
-    if (!sameAsDelivery && !billingAddress.trim()) {
+    if (!billingAddress.trim()) {
       showToast('Please enter a billing address.');
       return;
     }
@@ -485,7 +510,6 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
     setSaving(true);
     try {
       await saveSetup('billing', {
-        billingSameAsDelivery: sameAsDelivery,
         billingAddress, billingAddressSuite, billingCity, billingState, billingZip, billingCountry,
         billingContactSameAsPrimary: sameContact,
         billingName, billingPhone, billingEmail,
@@ -504,57 +528,48 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
       <form onSubmit={submit}>
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="ch"><h3>Bill-To Address <span style={{ color: 'var(--rose)', fontWeight: 400 }}>*</span></h3></div>
-          <label className="sw" style={{ marginBottom: 16, cursor: 'pointer' }}>
-            <div className={`toggle${sameAsDelivery ? ' on' : ''}`} onClick={() => setSameAsDelivery(v => !v)} />
-            <span>Same as delivery address</span>
-          </label>
-          {sameAsDelivery ? (
-            <div style={{ padding: '10px 14px', background: 'var(--paper)', borderRadius: 8, fontSize: 13.5, color: 'var(--mut)', border: '1px solid var(--line)' }}>
-              {order.address || <em>No delivery address on file</em>}
-            </div>
-          ) : (
-            <>
-              <div className="field">
-                <label><span style={{ color: 'var(--rose)' }}>*</span> Street Address</label>
-                <input
-                  ref={streetRef}
-                  type="text"
-                  value={billingAddress}
-                  onChange={e => setBillingAddress(e.target.value)}
-                  placeholder="123 Main St"
-                  autoComplete="off"
-                  required
-                />
-              </div>
-              <div className="field">
-                <label>Suite / Apt / Unit <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(optional)</span></label>
-                <input
-                  type="text"
-                  value={billingAddressSuite}
-                  onChange={e => setBillingAddressSuite(e.target.value)}
-                  placeholder="Suite 100"
-                />
-              </div>
-              <div className="row">
-                <div className="field">
-                  <label><span style={{ color: 'var(--rose)' }}>*</span> City</label>
-                  <input type="text" value={billingCity} onChange={e => setBillingCity(e.target.value)} required />
-                </div>
-                <div className="field">
-                  <label>State / Province / Region</label>
-                  <input type="text" value={billingState} onChange={e => setBillingState(e.target.value)} placeholder="e.g. CO, Ontario, Bavaria" />
-                </div>
-                <div className="field" style={{ maxWidth: 140 }}>
-                  <label>Zip / Postal Code</label>
-                  <input type="text" value={billingZip} onChange={e => setBillingZip(e.target.value)} />
-                </div>
-              </div>
-              <div className="field">
-                <label><span style={{ color: 'var(--rose)' }}>*</span> Country</label>
-                <input type="text" value={billingCountry} onChange={e => setBillingCountry(e.target.value)} placeholder="United States" required />
-              </div>
-            </>
+          {(order.billingAddressOnFile || order.billingZipOnFile) && (
+            <p style={{ fontSize: 13, color: 'var(--mut)', marginBottom: 16 }}>Pre-filled from your record on file — update below if anything is incorrect.</p>
           )}
+          <div className="field">
+            <label><span style={{ color: 'var(--rose)' }}>*</span> Street Address</label>
+            <input
+              ref={streetRef}
+              type="text"
+              value={billingAddress}
+              onChange={e => setBillingAddress(e.target.value)}
+              placeholder="123 Main St"
+              autoComplete="off"
+              required
+            />
+          </div>
+          <div className="field">
+            <label>Suite / Apt / Unit <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(optional)</span></label>
+            <input
+              type="text"
+              value={billingAddressSuite}
+              onChange={e => setBillingAddressSuite(e.target.value)}
+              placeholder="Suite 100"
+            />
+          </div>
+          <div className="row">
+            <div className="field">
+              <label><span style={{ color: 'var(--rose)' }}>*</span> City</label>
+              <input type="text" value={billingCity} onChange={e => setBillingCity(e.target.value)} required />
+            </div>
+            <div className="field">
+              <label>State / Province / Region</label>
+              <input type="text" value={billingState} onChange={e => setBillingState(e.target.value)} placeholder="e.g. CO, Ontario, Bavaria" />
+            </div>
+            <div className="field" style={{ maxWidth: 140 }}>
+              <label>Zip / Postal Code</label>
+              <input type="text" value={billingZip} onChange={e => setBillingZip(e.target.value)} />
+            </div>
+          </div>
+          <div className="field">
+            <label><span style={{ color: 'var(--rose)' }}>*</span> Country</label>
+            <input type="text" value={billingCountry} onChange={e => setBillingCountry(e.target.value)} placeholder="United States" required />
+          </div>
         </div>
 
         <div className="card" style={{ marginBottom: 16 }}>
@@ -625,8 +640,11 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
   const [deliveryTiming, setDeliveryTiming] = useState(''); // 'asap' | 'scheduled'
   const [preferredDeliveryDate, setPreferredDeliveryDate] = useState('');
 
-  const [commMethods, setCommMethods] = useState(['Email']);
-  const [mobilePhone, setMobilePhone] = useState('');
+  // Communication preferences — specific to each contact, not shared
+  const [primaryCommMethods, setPrimaryCommMethods] = useState(['Email']);
+  const [primaryMobilePhone, setPrimaryMobilePhone] = useState('');
+  const [secondaryCommMethods, setSecondaryCommMethods] = useState(['Email']);
+  const [secondaryMobilePhone, setSecondaryMobilePhone] = useState('');
   const [ackRead, setAckRead] = useState(false);
   const [ackName, setAckName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -639,8 +657,13 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
 
   const today = new Date().toISOString().split('T')[0];
 
-  function toggleCommMethod(v) {
-    setCommMethods(prev => prev.includes(v) ? prev.filter(m => m !== v) : [...prev, v]);
+  // Default ship-to address comes from the Billing Information tab's Bill-To Address (Monday-sourced)
+  const billingAddressOnFile = order.billingAddressOnFile
+    ? `${order.billingAddressOnFile}${order.billingZipOnFile ? ' ' + order.billingZipOnFile : ''}`
+    : '';
+
+  function toggleCommMethod(setter, v) {
+    setter(prev => prev.includes(v) ? prev.filter(m => m !== v) : [...prev, v]);
   }
 
   function isWeekday(dateStr) {
@@ -704,7 +727,7 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
 
     const formattedAddress = addressConfirmed === false
       ? [addressLine1, addressLine2, addressCity, [addressState, addressZip].filter(Boolean).join(' '), addressCountry].filter(Boolean).join(', ')
-      : (order.address || '');
+      : billingAddressOnFile;
 
     const deliveryTimingLabel = deliveryTiming === 'asap'
       ? 'Ship as soon as my order is ready'
@@ -722,7 +745,9 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
         secondaryPocPhone: hasSecondaryPoc ? secondaryPocPhone : '',
         secondaryPhoneCanText: hasSecondaryPoc ? secondaryPhoneCanText : false,
         secondaryPocEmail: hasSecondaryPoc ? secondaryPocEmail : '',
-        commMethods, mobilePhone,
+        primaryCommMethods, primaryMobilePhone,
+        secondaryCommMethods: hasSecondaryPoc ? secondaryCommMethods : [],
+        secondaryMobilePhone: hasSecondaryPoc ? secondaryMobilePhone : '',
         addressConfirmed,
         addressLine1: addressConfirmed === false ? addressLine1 : '',
         addressLine2: addressConfirmed === false ? addressLine2 : '',
@@ -829,6 +854,25 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
                 {errors.pocEmail && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.pocEmail}</div>}
               </div>
               <div className="field">
+                <label>Preferred Communication Method <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(select all that apply)</span></label>
+                <div style={{ display: 'flex', gap: 10, marginTop: 4, flexWrap: 'wrap' }}>
+                  {['Phone Call', 'Text Message', 'Email'].map(v => (
+                    <button key={v} type="button"
+                      className={`chip${primaryCommMethods.includes(v) ? ' on' : ''}`}
+                      onClick={() => toggleCommMethod(setPrimaryCommMethods, v)}>
+                      {v === 'Phone Call' ? '📞' : v === 'Text Message' ? '💬' : '📧'} {v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {primaryCommMethods.includes('Text Message') && (
+                <div className="field">
+                  <label>Mobile Number for Text Messages</label>
+                  <input type="tel" value={primaryMobilePhone} onChange={e => setPrimaryMobilePhone(e.target.value)} placeholder="+1 303 555 0100" />
+                  <div className="hint">Standard message and data rates may apply.</div>
+                </div>
+              )}
+              <div className="field">
                 <label>Special Delivery Instructions <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(optional)</span></label>
                 <textarea value={specialInstructions} onChange={e => setSpecialInstructions(e.target.value)} placeholder="Gate codes, dock hours, parking instructions, etc." />
               </div>
@@ -844,6 +888,7 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
                 <ReadField label="Direct Phone" value={pocPhone ? `${pocPhone}${phoneCanText ? ' (can text)' : ''}` : '—'} />
               </div>
               {pocEmail && <ReadField label="Email" value={pocEmail} />}
+              <ReadField label="Preferred Communication" value={`${primaryCommMethods.join(', ') || 'None selected'}${primaryCommMethods.includes('Text Message') && primaryMobilePhone ? ` — Mobile: ${primaryMobilePhone}` : ''}`} />
               {specialInstructions && <ReadField label="Special Delivery Instructions" value={specialInstructions} />}
             </>
           )}
@@ -880,31 +925,26 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
                 <input type="email" value={secondaryPocEmail} onChange={e => { setSecondaryPocEmail(e.target.value); setErrors(v => ({...v, secondaryPocEmail: ''})); }} style={{ borderColor: errors.secondaryPocEmail ? 'var(--rose)' : '' }} />
                 {errors.secondaryPocEmail && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.secondaryPocEmail}</div>}
               </div>
+              <div className="field">
+                <label>Preferred Communication Method <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(select all that apply)</span></label>
+                <div style={{ display: 'flex', gap: 10, marginTop: 4, flexWrap: 'wrap' }}>
+                  {['Phone Call', 'Text Message', 'Email'].map(v => (
+                    <button key={v} type="button"
+                      className={`chip${secondaryCommMethods.includes(v) ? ' on' : ''}`}
+                      onClick={() => toggleCommMethod(setSecondaryCommMethods, v)}>
+                      {v === 'Phone Call' ? '📞' : v === 'Text Message' ? '💬' : '📧'} {v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {secondaryCommMethods.includes('Text Message') && (
+                <div className="field">
+                  <label>Mobile Number for Text Messages</label>
+                  <input type="tel" value={secondaryMobilePhone} onChange={e => setSecondaryMobilePhone(e.target.value)} placeholder="+1 303 555 0100" />
+                  <div className="hint">Standard message and data rates may apply.</div>
+                </div>
+              )}
             </>
-          )}
-        </div>
-
-        {/* Communication preferences — multi-select */}
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div className="ch"><h3>Communication Preferences</h3></div>
-          <div className="field">
-            <label>Preferred Communication Method <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(select all that apply)</span></label>
-            <div style={{ display: 'flex', gap: 10, marginTop: 4, flexWrap: 'wrap' }}>
-              {['Phone Call', 'Text Message', 'Email'].map(v => (
-                <button key={v} type="button"
-                  className={`chip${commMethods.includes(v) ? ' on' : ''}`}
-                  onClick={() => toggleCommMethod(v)}>
-                  {v === 'Phone Call' ? '📞' : v === 'Text Message' ? '💬' : '📧'} {v}
-                </button>
-              ))}
-            </div>
-          </div>
-          {commMethods.includes('Text Message') && (
-            <div className="field">
-              <label>Mobile Number for Text Messages</label>
-              <input type="tel" value={mobilePhone} onChange={e => setMobilePhone(e.target.value)} placeholder="+1 303 555 0100" />
-              <div className="hint">Standard message and data rates may apply.</div>
-            </div>
           )}
         </div>
 
@@ -930,7 +970,7 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
               <div className="field">
                 <label>Ship-To Address <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(on file)</span></label>
                 <div style={{ padding: '10px 14px', background: 'var(--paper)', borderRadius: 8, fontSize: 13.5, color: 'var(--mut)', border: '1px solid var(--line)', marginBottom: 12 }}>
-                  {order.address || <em>No delivery address on file</em>}
+                  {billingAddressOnFile || <em>No billing address on file</em>}
                 </div>
                 <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8 }}>
                   <span style={{ color: 'var(--rose)' }}>*</span> Is this the correct ship-to address?
@@ -1035,7 +1075,7 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
               <ReadField label="Ship-To Address" value={
                 addressConfirmed === false
                   ? [addressLine1, addressLine2, addressCity, [addressState, addressZip].filter(Boolean).join(' '), addressCountry].filter(Boolean).join(', ') || '—'
-                  : (order.address || '—')
+                  : (billingAddressOnFile || '—')
               } />
               <ReadField label="Loading Dock at Facility" value={hasLoadingDock === 'yes' ? 'Yes, No need for lift gate delivery' : 'No, I need liftgate delivery'} />
               <ReadField label="Delivery Timing" value={

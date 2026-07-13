@@ -78,20 +78,17 @@ export default async function handler(req, res) {
       // ── Tab 2: Billing ──────────────────────────────────────────────────
       case 'billing': {
         const {
-          billingSameAsDelivery,
           billingAddress, billingAddressSuite, billingCity, billingState, billingZip, billingCountry,
           billingContactSameAsPrimary,
           billingName, billingPhone, billingEmail,
         } = data;
 
-        let addressText = billingSameAsDelivery ? `Same as delivery address` : billingAddress;
-        if (!billingSameAsDelivery) {
-          if (billingAddressSuite) addressText += `, ${billingAddressSuite}`;
-          addressText += `, ${billingCity}`;
-          if (billingState) addressText += `, ${billingState}`;
-          if (billingZip) addressText += ` ${billingZip}`;
-          if (billingCountry) addressText += `, ${billingCountry}`;
-        }
+        let addressText = billingAddress;
+        if (billingAddressSuite) addressText += `, ${billingAddressSuite}`;
+        addressText += `, ${billingCity}`;
+        if (billingState) addressText += `, ${billingState}`;
+        if (billingZip) addressText += ` ${billingZip}`;
+        if (billingCountry) addressText += `, ${billingCountry}`;
 
         const contactText = billingContactSameAsPrimary
           ? `Same as primary contact`
@@ -110,7 +107,8 @@ export default async function handler(req, res) {
         const {
           pocName, pocPhone, phoneCanText, pocEmail, specialInstructions,
           hasSecondaryPoc, secondaryPocName, secondaryPocPhone, secondaryPhoneCanText, secondaryPocEmail,
-          commMethods, mobilePhone,
+          primaryCommMethods, primaryMobilePhone,
+          secondaryCommMethods, secondaryMobilePhone,
           addressConfirmed, addressLine1, addressLine2, addressCity, addressState, addressZip, addressCountry,
           formattedAddress,
           loadingDock, deliveryTiming, preferredDeliveryDate,
@@ -126,14 +124,16 @@ export default async function handler(req, res) {
 
         // Log the full delivery submission as a tagged update on the order (quick read for staff in Monday updates)
         const phoneNote = phoneCanText ? ' (can text)' : '';
-        const commNote = Array.isArray(commMethods) ? commMethods.join(', ') : (commMethods || 'Email');
+        const primaryCommNote = Array.isArray(primaryCommMethods) ? primaryCommMethods.join(', ') : (primaryCommMethods || 'Email');
+        const secondaryCommNote = Array.isArray(secondaryCommMethods) ? secondaryCommMethods.join(', ') : (secondaryCommMethods || '');
         const secondaryNote = hasSecondaryPoc
           ? `${secondaryPocName || '—'} | ${secondaryPocPhone || '—'}${secondaryPhoneCanText ? ' (can text)' : ''} | ${secondaryPocEmail || '—'}`
           : 'None';
         const lines = [
           `Primary Delivery POC: ${pocName || '—'} | ${pocPhone || '—'}${phoneNote} | ${pocEmail || '—'}`,
+          `Primary Preferred Communication: ${primaryCommNote}${primaryMobilePhone ? ` — Mobile: ${primaryMobilePhone}` : ''}`,
           `Secondary Delivery POC: ${secondaryNote}`,
-          `Preferred Communication: ${commNote}${mobilePhone ? ` — Mobile: ${mobilePhone}` : ''}`,
+          hasSecondaryPoc ? `Secondary Preferred Communication: ${secondaryCommNote || 'Email'}${secondaryMobilePhone ? ` — Mobile: ${secondaryMobilePhone}` : ''}` : null,
           `Special Instructions: ${specialInstructions || 'None'}`,
           `Ship-To Address Confirmed: ${addressConfirmed === false ? 'No — updated' : 'Yes'}`,
           formattedAddress ? `Ship-To Address: ${formattedAddress}` : null,
@@ -150,7 +150,8 @@ export default async function handler(req, res) {
           customerEmail: session.email,
           pocName, pocPhone, phoneCanText, pocEmail, specialInstructions,
           hasSecondaryPoc, secondaryPocName, secondaryPocPhone, secondaryPhoneCanText, secondaryPocEmail,
-          commMethods, mobilePhone,
+          primaryCommMethods, primaryMobilePhone,
+          secondaryCommMethods, secondaryMobilePhone,
           addressConfirmed, addressLine1, addressLine2, addressCity, addressState, addressZip, addressCountry,
           formattedAddress,
           loadingDock, deliveryTiming, preferredDeliveryDate,

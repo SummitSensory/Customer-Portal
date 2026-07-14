@@ -39,6 +39,8 @@ export default async function handler(req, res) {
       ...(order?.matTracking && order.matTracking !== 'N/A'
         ? order.matTracking.split(',').map(t => t.trim())
         : []),
+      // Therapy Equipment & Accessories — tracking numbers from Monday subitems
+      ...(order?.accessoryItems || []).map(a => a.trackingNumber),
     ].filter(Boolean);
 
     if (!known.includes(number)) {

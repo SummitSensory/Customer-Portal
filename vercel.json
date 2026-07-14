@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/reminders",
       "schedule": "0 14 * * 1-5"
+    },
+    {
+      "path": "/api/cron/accessory-tracking-sync",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

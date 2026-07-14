@@ -1538,6 +1538,64 @@ function ShipmentCard({ title, slug, carrierLabel, trackingNumbers, shipped, not
   );
 }
 
+// ── Therapy Equipment & Accessories — per-item card (Monday subitems) ────────
+// Three display tiers, matching the lifecycle Summit's team manages on the
+// subitem's "Order Status" column: Order Pending → Ordered → (carrier +
+// tracking entered) → full live AfterShip tracking, same fidelity as Frame
+// and Mats. "Out of Stock" is a 4th staff-set state with its own message.
+function accessoryStatusPill(item, hasTracking) {
+  if (hasTracking) {
+    const delivered = item.carrierStatus === 'Delivered';
+    return { label: delivered ? '✓ DELIVERED' : '✓ SHIPPED', bg: 'var(--ok-lt)', color: 'var(--ok)' };
+  }
+  if (item.orderStatus === 'Out of Stock') return { label: 'OUT OF STOCK', bg: '#FEF3C7', color: '#92400E' };
+  if (item.orderStatus === 'Ordered') return { label: 'ORDERED', bg: '#EFF6FF', color: '#1D4ED8' };
+  return { label: 'ORDER PENDING', bg: 'var(--line)', color: 'var(--mut)' };
+}
+
+function AccessoryItem({ item, expandedTracking, trackingData, loadingTracking, onToggleTracking, isLast }) {
+  const hasTracking = Boolean(item.carrierSlug && item.trackingNumber);
+  const carrierLabel = item.carrierSlug ? carrierFromSlug(item.carrierSlug) : null;
+  const pill = accessoryStatusPill(item, hasTracking);
+
+  return (
+    <div style={{ borderBottom: isLast ? 'none' : '1px solid var(--line)', paddingBottom: isLast ? 0 : 14, marginBottom: isLast ? 0 : 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+        <div style={{ fontWeight: 600, fontSize: 14 }}>{item.name}</div>
+        <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, letterSpacing: '.04em', background: pill.bg, color: pill.color }}>
+          {pill.label}
+        </span>
+      </div>
+
+      {hasTracking ? (
+        <>
+          {carrierLabel && <div style={{ fontSize: 13, color: 'var(--mut)', marginBottom: 8 }}>Carrier: {carrierLabel}</div>}
+          <TrackingRow
+            tracking={item.trackingNumber}
+            slug={item.carrierSlug}
+            expanded={expandedTracking[item.trackingNumber]}
+            trackingInfo={trackingData[item.trackingNumber]}
+            loading={loadingTracking[item.trackingNumber]}
+            onToggle={() => onToggleTracking(item.trackingNumber, item.carrierSlug)}
+          />
+        </>
+      ) : item.orderStatus === 'Out of Stock' ? (
+        <div style={{ fontSize: 13.5, color: 'var(--mut)', fontStyle: 'italic' }}>
+          This item is currently out of stock with our supplier. We'll update this section as soon as it's back in stock and ordered.
+        </div>
+      ) : item.orderStatus === 'Ordered' ? (
+        <div style={{ fontSize: 13.5, color: 'var(--mut)', fontStyle: 'italic' }}>
+          Product ordered{item.dateOrdered ? ` on ${item.dateOrdered}` : ''} — tracking information will be provided here once it becomes available.
+        </div>
+      ) : (
+        <div style={{ fontSize: 13.5, color: 'var(--mut)', fontStyle: 'italic' }}>
+          Product order pending. We'll update this section once it's been purchased on your behalf.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatusTab({ order }) {
   const [expandedTracking, setExpandedTracking] = useState({});
   const [trackingData, setTrackingData] = useState({});
@@ -1584,13 +1642,8 @@ function StatusTab({ order }) {
         ? order.matTracking.split(',').map(t => t.trim()).filter(Boolean)
         : []);
 
-  // Parse other shipments: "Label|Carrier|Tracking" per line
-  const otherShipments = order.otherShipments
-    ? order.otherShipments.split('\n').map(line => {
-        const parts = line.split('|');
-        return { label: parts[0]?.trim(), carrier: parts[1]?.trim(), tracking: parts[2]?.trim() };
-      }).filter(s => s.label && s.tracking)
-    : [];
+  // Therapy Equipment & Accessories — one entry per Monday subitem
+  const accessoryItems = order.accessoryItems || [];
 
   const sharedProps = { expandedTracking, trackingData, loadingTracking, onToggleTracking: toggleTracking };
 
@@ -1662,21 +1715,17 @@ function StatusTab({ order }) {
         {...sharedProps}
       />
 
-      {/* Other / additional items */}
-      {otherShipments.length > 0 && (
+      {/* Therapy Equipment & Accessories — misc items sourced from Monday subitems */}
+      {accessoryItems.length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="ch"><h3>Additional Order Items</h3></div>
-          {otherShipments.map((shipment, i) => (
-            <div key={i} style={{ borderBottom: i < otherShipments.length - 1 ? '1px solid var(--line)' : 'none', paddingBottom: i < otherShipments.length - 1 ? 14 : 0, marginBottom: i < otherShipments.length - 1 ? 14 : 0 }}>
-              <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14 }}>{shipment.label}</div>
-              <TrackingRow
-                tracking={shipment.tracking}
-                expanded={expandedTracking[shipment.tracking]}
-                trackingInfo={trackingData[shipment.tracking]}
-                loading={loadingTracking[shipment.tracking]}
-                onToggle={() => toggleTracking(shipment.tracking)}
-              />
-            </div>
+          <div className="ch"><h3>Therapy Equipment & Accessories</h3></div>
+          {accessoryItems.map((item, i) => (
+            <AccessoryItem
+              key={item.id}
+              item={item}
+              isLast={i === accessoryItems.length - 1}
+              {...sharedProps}
+            />
           ))}
         </div>
       )}

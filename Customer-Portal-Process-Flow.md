@@ -34,7 +34,7 @@ Every stage, data source, endpoint, email, and screen has a **stable reference c
 | SYS-5 | **Resend** | All transactional email | Called by SYS-1 (`lib/email.js`) |
 | SYS-6 | **Microsoft 365 / Azure AD** | Staff login (admin portal) | NextAuth SSO |
 | SYS-7 | **Vercel Cron** | Scheduled reminder engine | `pages/api/cron/reminders.js` |
-| SYS-8 | **AfterShip** `[PLANNED]` | Carrier-agnostic tracking engine (freight + parcel) | To be added as `lib/aftership.js` |
+| SYS-8 | **AfterShip** `[LIVE]` | Carrier-agnostic tracking engine (freight + parcel) | `lib/aftership.js`; webhook receiver at EP-21 syncs live status back onto Monday for accessory subitems (see PLAN-2) |
 
 **Two audiences, two logins:**
 
@@ -60,7 +60,7 @@ All column IDs are read in `lib/monday.js`. Many are overridable by environment 
 | DS-09 | Delivery address | Confirmed Delivery Address | `long_text_mkpkdtj4` | Long text | Customer (via portal) | Writable; updated in Delivery tab |
 | DS-10 | Product type | Product Series STD Column | `color_mkvw7b8` | Status | Staff | Used for Jotform form matching |
 | DS-11 | Mat/pad tracking | *(env `MONDAY_COL_MAT_TRACKING`, unset)* | — | Text | Staff | `[PARTIAL]` Feeds Mats & Padding card (SHP-2); to be replaced by subitem — see PLAN-2 |
-| DS-12 | Other shipments | *(env `MONDAY_COL_OTHER_SHIPMENTS`, unset)* | — | Text | Staff | `[PARTIAL]` Format `Label\|Carrier\|Tracking` per line (SHP-3) |
+| DS-12 | Other shipments *(retired 2026-07-14)* | *(env `MONDAY_COL_OTHER_SHIPMENTS`, unset)* | — | Text | Staff | `[DEPRECATED]` Superseded by DS-41…45 (Monday subitems) — see SHP-3, PLAN-4. Still parsed into `order.otherShipments` for backward compatibility but no longer rendered in the portal. |
 | DS-13 | Installation links | *(installation resources)* | `text_mm4x6xvf` | Text | Staff | Format `Label\|URL` per line (SCR-7) |
 | DS-14 | Installation videos | *(env `MONDAY_COL_INSTALLATION_VIDEOS`, unset)* | — | Text | Staff | `[PARTIAL]` YouTube/Vimeo URLs |
 | DS-15 | Installation docs | *(env `MONDAY_COL_INSTALLATION_DOCS`, unset)* | — | Text | Staff | `[PARTIAL]` `Label\|URL` per line |
@@ -72,8 +72,51 @@ All column IDs are read in `lib/monday.js`. Many are overridable by environment 
 | DS-21 | First name | First Name | `lookup_mkvx85hs` | Mirror (read-only) | Connected board | Used in email greetings |
 | DS-22 | Delivery instructions | Special Delivery Instructions | `lookup_mm0anh5a` | Mirror (read-only) | Connected board | |
 | DS-23 | Balance due | *(env `MONDAY_COL_BALANCE`, unset)* | — | Numbers | Staff | `[PARTIAL]` not yet mapped |
-| DS-33 | Tax Exempt? | Tax Exempt? | `color_mm55tjn2` | Status | Customer (via portal) | `[LIVE]` Yes/No — written via EP-6 (`tax_exemption`); see PLAN-7 |
-| DS-34 | Tax exemption cert file | Tax Exemption Certificate | `file_mm55t6kn` | File | Customer (via portal) | `[LIVE]` Uploaded via EP-6 (`tax_exemption`) using the multipart `/v2/file` upload flow; see PLAN-7 |
+| DS-33 | Tax exemption cert file | Tax Exemption Certificate | *(env `MONDAY_COL_TAX_CERT_FILE`, unset)* | File | Customer (via portal) | `[PLANNED]` Uploaded on SCR-9 — see PLAN-8 |
+| DS-34 | Tax exemption status | Tax Exempt Status | *(env `MONDAY_COL_TAX_CERT_STATUS`, unset)* | Status | Staff (review) | `[PLANNED]` Values: No Certificate / Pending Review / Approved / Expired — see PLAN-8 |
+| DS-35 | Ship-to address (updated) | Confirmed Delivery Address | `long_text_mkpkdtj4` (= DS-09) | Long text | Customer (via portal) | Written only when customer answers "No" to the address-confirm question in Delivery & Site Details (S-2.3) |
+| DS-36 | Primary Contact Name | *(mirror)* | `lookup6__1` | Mirror (read-only) | Connected board | Contact Information tab — Primary Contact (distinct from Delivery POC mirrors DS-18…20) |
+| DS-37 | Primary Contact Email | *(mirror)* | `dup__of_contact8__1` | Mirror (read-only) | Connected board | Contact Information tab — Primary Contact |
+| DS-38 | Primary Contact Phone | *(mirror)* | `dup__of_contact7__1` | Mirror (read-only) | Connected board | Contact Information tab — Primary Contact |
+| DS-39 | Bill-To Address | *(mirror)* | `lookup18__1` | Mirror (read-only) | Connected board | Billing Information tab — pre-fills Bill-To Address (2026-07-13: replaced the "same as delivery" toggle) |
+| DS-40 | Bill-To Zip/Postal Code | *(mirror)* | `dup__of_location__1` | Mirror (read-only) | Connected board | Billing Information tab — pre-fills Bill-To Address zip |
+| DS-41 | Accessory item — Order Status | "Order Status" (subitem) | `color_mm58wahg` | Status | Staff | `[LIVE]` Order Pending / Ordered / Out of Stock — see SHP-3, PLAN-2 |
+| DS-42 | Accessory item — Date Ordered | "Date Ordered" (subitem) | `date_mm58v7nv` | Date | Staff | `[LIVE]` Set when Order Status flips to Ordered |
+| DS-43 | Accessory item — Freight Carrier (display) | "Freight Carrier" (subitem) | `color_mm51tf2w` | Status | Staff | `[LIVE]` Human-readable carrier label for staff only — **NOT** read by the app for AfterShip (corrected 2026-07-14; see DS-46) |
+| DS-44 | Accessory item — Freight Tracking ID | "Freight Tracking ID" (subitem) | `text_mm5125q0` | Text | Staff | `[LIVE]` |
+| DS-45 | Accessory item — Carrier Status | "Carrier Status" (subitem) | `color_mm58zsbq` | Status | AfterShip (EP-21 webhook, EP-23 cron) | `[LIVE]` Auto-written (create_labels_if_missing) as the shipment transits — In Transit / Out for Delivery / Delivered / Exception / etc. |
+| DS-46 | Accessory item — Carrier Code | "Carrier Code" (subitem) | `text_mm58cnxf` | Text | Staff | `[LIVE]` **The actual AfterShip slug** (fedex / ups / usps / fedex-freight / etc.) — corrected 2026-07-14, was originally read from DS-43 in error |
+
+### 2a-1. Delivery & Site Details Submissions board `[LIVE]`
+
+Standalone Monday board (not the Manufacturing Process board) that logs every Delivery & Site Details submission as its own row/item, so edits/resubmissions keep full history instead of overwriting one record. Created 2026-07-13 via the monday.com API. Board ID and every column ID default in code (`lib/monday.js` → `DELIVERY_BOARD_ID`, `DELIVERY_COLS`) but can be overridden with env vars without a code change.
+
+| Ref | Field | Monday column title | Column ID (default) | Type |
+|---|---|---|---|---|
+| SUB-BOARD | *(board)* | Delivery & Site Details Submissions | `18421779422` | — |
+| SUB-1 | Order Item ID | Order Item ID | `text_mm571ym4` | Text |
+| SUB-2 | Order Record Link | Order Record Link | `link_mm57qepn` | Link |
+| SUB-3 | Customer Email | Customer Email | `text_mm57c4dm` | Text |
+| SUB-4 | Submitted Date | Submitted Date | `date_mm57s4r5` | Date |
+| SUB-5 | Primary POC Name/Phone/Can-Text/Email | Primary POC Name/Phone/Can Text/Email | `text_mm57830j` / `text_mm5767gr` / `boolean_mm57h4hs` / `text_mm57qnte` | Text/Text/Checkbox/Text |
+| SUB-6 | Special Delivery Instructions | Special Delivery Instructions | `long_text_mm57e4q` | Long text |
+| SUB-7 | Has Secondary POC | Has Secondary POC | `text_mm571zcw` | Text |
+| SUB-8 | Secondary POC Name/Phone/Can-Text/Email | Secondary POC Name/Phone/Can Text/Email | `text_mm57as86` / `text_mm576cps` / `boolean_mm57h4a5` / `text_mm57kmfe` | Text/Text/Checkbox/Text |
+| SUB-9 | Primary Preferred Communication Method | Preferred Communication Method | `text_mm57t33w` | Text |
+| SUB-10 | Primary Mobile Number for Texts | Mobile Number for Texts | `text_mm5778hh` | Text |
+| SUB-20 | Secondary Preferred Communication Method | Secondary Preferred Communication Method | `text_mm572ns5` | Text |
+| SUB-21 | Secondary Mobile Number | Secondary Mobile Number | `text_mm57wdc2` | Text |
+| SUB-11 | Loading Dock at Facility | Loading Dock at Facility | `text_mm5712dx` | Text |
+| SUB-12 | Delivery Timing Preference | Delivery Timing Preference | `text_mm57q2s6` | Text |
+| SUB-13 | Preferred Delivery Date | Preferred Delivery Date | `date_mm57m9rp` | Date |
+| SUB-14 | Ship-To Address Confirmed | Ship-To Address Confirmed | `text_mm572geh` | Text |
+| SUB-15 | Address Line 1/2, City, State, Zip, Country | Address Line 1/2 / City / State or Province / ZIP or Postal Code / Country | `text_mm57sf21` / `text_mm57mbr7` / `text_mm57g87z` / `text_mm57hhxm` / `text_mm57wkbf` / `text_mm57n32a` | Text (×6) |
+| SUB-16 | Full Ship-To Address Formatted | Full Ship-To Address Formatted | `long_text_mm57vhh3` | Long text |
+| SUB-17 | Freight Ack Signed By / Date | Freight Ack Signed By / Freight Ack Date | `text_mm57nnck` / `date_mm578gmh` | Text/Date |
+| SUB-18 | Changes Requiring Staff Confirmation | Changes Requiring Staff Confirmation | `long_text_mm57r7b1` | Long text |
+| SUB-19 | Staff Reviewed | Staff Reviewed | `boolean_mm576c3b` | Checkbox |
+
+Written by `lib/monday.js` → `createDeliverySubmissionItem()`, called from `EP-6 ('delivery')` in `pages/api/portal/setup.js`. Creates one new item per submission (does not overwrite prior submissions).
 
 ### 2a. Portal onboarding checklist columns `[LIVE]`
 
@@ -103,7 +146,7 @@ Defined in `lib/monday.js` `STATUS_STAGES` (labels overridable via env). The por
 
 The portal posts these as updates on the order item. The reminder engine (SYS-7) reads them to know what's complete and when the clock started.
 
-`[PORTAL: Invitation Sent]` · `[PORTAL: Contact Confirmed]` · `[PORTAL: Contact Update Requested]` · `[PORTAL: Billing Information]` · `[PORTAL: Delivery Details]` · `[PORTAL: Freight Delivery Acknowledgment]` · `[PORTAL: Color Selections]` · `[PORTAL: Documents Submitted]` · `[PORTAL: Reminder #N]` · `[PORTAL: Tax Exempt - No]` · `[PORTAL: Tax Exemption Certificate Uploaded]`
+`[PORTAL: Invitation Sent]` · `[PORTAL: Contact Confirmed]` · `[PORTAL: Contact Update Requested]` · `[PORTAL: Billing Information]` · `[PORTAL: Delivery Details]` · `[PORTAL: Freight Delivery Acknowledgment]` · `[PORTAL: Color Selections]` · `[PORTAL: Documents Submitted]` · `[PORTAL: Reminder #N]` · `[PORTAL: Tax Exemption Certificate Uploaded]` `[PLANNED — see PLAN-8]`
 
 ### 2d. AfterShip tracking input columns `[LIVE — writable text]`
 
@@ -129,7 +172,7 @@ The portal reads these per order and passes **slug + tracking number** to AfterS
 | EP-3 | `/api/auth/session-check` | GET | cookie | Validate current customer session |
 | EP-4 | `/api/auth/signout-customer` | POST | cookie | Clear customer session |
 | EP-5 | `/api/auth/[...nextauth]` | — | Azure AD | Staff SSO (admin) |
-| EP-6 | `/api/portal/setup` | POST | customer | Record a completed onboarding section → tagged update + flip checklist column (DS-24…28). Also handles `tax_exemption` (DS-33/DS-34, ongoing — not part of the 5-step checklist) |
+| EP-6 | `/api/portal/setup` | POST | customer | Record a completed onboarding section → tagged update + flip checklist column (DS-24…28) |
 | EP-7 | `/api/portal/invite` | POST | staff | Send portal invitation (EM-02) + log `[PORTAL: Invitation Sent]` |
 | EP-8 | `/api/monday/order` | GET/PATCH | customer | Fetch the customer's order; PATCH updates address (DS-09) / logs contact change |
 | EP-9 | `/api/monday/orders` | GET/PATCH | staff | Admin orders list; edit order fields |
@@ -143,6 +186,10 @@ The portal reads these per order and passes **slug + tracking number** to AfterS
 | EP-17 | `/api/cron/reminders` | GET | CRON_SECRET | Scheduled reminders (SYS-7) |
 | EP-18 | `/api/admin/notify-installation` | POST | staff | Send "installation ready" email (EM-07) |
 | EP-19 | `/api/settings/forms` | GET/POST | staff | Manage Jotform form mapping |
+| EP-20 | `/api/aftership/track?slug=&number=` | GET | customer (ownership-checked) / staff | Live AfterShip status for a tracking number — Frame/Mats/accessory items (DS-29…32, DS-46/44) |
+| EP-21 | `/api/aftership/webhook` | POST | AfterShip (HMAC-signed) | `[LIVE]` Receives AfterShip tracking-update events; matches by slug+tracking# to an accessory subitem (DS-44) and writes the live status onto DS-45. One-time setup still needed: register this URL + a shared secret (`AFTERSHIP_WEBHOOK_SECRET`) in the AfterShip dashboard — see PLAN-2 |
+| EP-22 | `/api/monday/accessory-webhook` | POST | Monday (query-param secret) | `[BLOCKED]` Built to push the instant DS-44/46 change — Monday's API rejects webhook registration on a subitems board ("Creating webhook on subitems board isn't allowed"), and the documented workaround (`change_subitem_column_value` on the parent board) errored server-side on retry. Code is in place and harmless if Monday ever fixes this; EP-23 is the working mechanism today. |
+| EP-23 | `/api/cron/accessory-tracking-sync` | GET | `CRON_SECRET` (Vercel Cron) | `[LIVE]` Every 15 min (vercel.json), scans all accessory items with both DS-46 (Carrier Code) + DS-44 (Tracking ID) set, onboards each into AfterShip (idempotent) and writes the current status to DS-45 if changed. Requires a Vercel plan supporting sub-daily cron frequency — Hobby tier runs this only once/day. |
 
 ---
 
@@ -165,7 +212,7 @@ From: `portal@updates.summitsensory.com` · Team inbox: `orders@summitsensorygym
 | EM-11 | Team replied to message | Monday update webhook (EP-14) | Customer |
 | EM-12 | Incoming customer message | Customer posts in Messages (EP-12) | Team |
 | EM-13 | Contact info changed (⚠️ verify before shipment) | Customer edits contact/delivery | Team |
-| EM-14 | Tax exemption certificate submitted | Customer uploads cert (EP-6 `tax_exemption`) | Team |
+| EM-14 | Tax exemption certificate submitted | Customer uploads cert on SCR-9 | Team | `[PLANNED]` see PLAN-8 |
 
 ---
 
@@ -194,11 +241,11 @@ Each stage: **Trigger → Actor → System(s) → Data source(s) → Output/next
 
 The portal shows a 5-step setup checklist. Completing each one: (a) posts a tagged update (§2c), and (b) flips its Status column to `✅` (DS-24…28) via EP-6. Manufacturing should not begin until all 5 are complete.
 
-**S-2.1 Contact Information** `[LIVE]` → EP-6 (`contact`) → tag `[PORTAL: Contact Confirmed]` → DS-24 ✅. Contact edits write via EP-8 (address DS-09 direct; phone/name as a change request + EM-13 to team).
+**S-2.1 Contact Information** `[LIVE]` → EP-6 (`contact`) → tag `[PORTAL: Contact Confirmed]` → DS-24 ✅. Contact edits write via EP-8 (address DS-09 direct; phone/name as a change request + EM-13 to team). As of 2026-07-13, Primary Contact's Name/Email/Phone are sourced from DS-36/37/38 (distinct mirror columns from the Delivery POC mirrors) and are all required — the tab auto-opens its edit form if any are missing from Monday.
 
-**S-2.2 Billing Information** `[LIVE]` → EP-6 (`billing`) → tag `[PORTAL: Billing Information]` → DS-25 ✅ → EM-13/team notify.
+**S-2.2 Billing Information** `[LIVE]` → EP-6 (`billing`) → tag `[PORTAL: Billing Information]` → DS-25 ✅ → EM-13/team notify. As of 2026-07-13, the "same as delivery address" toggle was removed — the Bill-To Address form is always shown, pre-filled from DS-39 (address) and DS-40 (zip).
 
-**S-2.3 Delivery & Site Details + Freight Acknowledgment** `[LIVE]` → EP-6 (`delivery` and `freight_ack`) → tags `[PORTAL: Delivery Details]` / `[PORTAL: Freight Delivery Acknowledgment]` → DS-26 ✅. Restricted changes (address, liftgate, dock, delivery window) flag the team (EM-13).
+**S-2.3 Delivery & Site Details + Freight Acknowledgment** `[LIVE]` → EP-6 (`delivery` and `freight_ack`) → tags `[PORTAL: Delivery Details]` / `[PORTAL: Freight Delivery Acknowledgment]` → DS-26 ✅. Restricted changes (address, liftgate, dock, delivery timing) flag the team (EM-13). As of 2026-07-13 this step also collects: an optional Secondary Delivery POC (same fields as primary), with **each of Primary and Secondary POC having their own independent Preferred Communication Method + mobile number** (no longer a single shared communication-preferences card); a required loading dock / liftgate question (default "No, I need liftgate delivery"); delivery timing as ship-ASAP vs. schedule-on-or-after-date (replaces the old earliest/latest date-range window); and a confirm-on-file / expand-to-edit ship-to address flow supporting international addresses (Address Line 1/2, City, State/Province, ZIP/Postal, Country). The "on file" ship-to address default now sources from the **Billing Information tab's Bill-To Address** (DS-39/DS-40) rather than DS-09 (Confirmed Delivery Address) — everything else in Delivery Logistics is unchanged. Every submission is also logged as a new row on the standalone **Delivery & Site Details Submissions** board (see §2a-1) via `createDeliverySubmissionItem()`, in addition to the tagged update and DS-09/DS-26 writes on the order's Manufacturing Process row.
 
 **S-2.4 Color & Product Selections** `[LIVE]` → Jotform embedded (form ID from DS-16, fallback DS-17). On submit, EP-16 matches the order by email and tags `[PORTAL: Color Selections]` → DS-27 ✅ + EM-10 to team. Customer may also be prompted by EM-05 when the form is assigned.
 
@@ -218,8 +265,8 @@ The portal shows a 5-step setup checklist. Completing each one: (a) posts a tagg
 ### Phase 4 — Shipping & tracking
 
 **S-4.1 Tracking numbers entered** `[LIVE / evolving]`
-- **Today:** frame tracking comes from DS-03 (mirror); mats/padding from DS-11 (env, unset); other items from DS-12.
-- **Planned:** carrier + tracking entered per shipment and synced to shipment **subitems** with AfterShip as the tracking engine — see PLAN-1 and PLAN-2.
+- **Today:** frame tracking comes from DS-29/30 (AfterShip slug + tracking, direct columns); mats/padding from DS-31/32 (same pattern). Therapy Equipment & Accessories (SHP-3) tracking comes from **Monday subitems** — staff add one subitem per misc item with Order Status (DS-41), Carrier Code (DS-46 — the actual AfterShip slug), and Freight Tracking ID (DS-44) — see PLAN-2, PLAN-4.
+- **Still planned:** migrating Frame and Mats (SHP-1/SHP-2) from direct board columns onto the same subitem pattern used for SHP-3 — see PLAN-2.
 
 **S-4.2 Status = Shipped** `[LIVE]` → DS-02 = *Shipped* → stage 3 → EM-04 ("Shipped").
 
@@ -233,7 +280,7 @@ The portal shows a 5-step setup checklist. Completing each one: (a) posts a tagg
 |---|---|---|---|---|
 | SHP-1 | Sensory Gym Frame | "FedEx Freight" | DS-03 → moving to **DS-29 (slug) + DS-30 (tracking)** | AfterShip via DS-29/DS-30 (PLAN-1) |
 | SHP-2 | Therapy Mats & Padding | "Standard Carrier" (hidden if `N/A`) | DS-11 → moving to **DS-31 (slug) + DS-32 (tracking)** | AfterShip via DS-31/DS-32 (PLAN-1) |
-| SHP-3 | Additional Order Items | per-line carrier | DS-12 (`Label\|Carrier\|Tracking`) | "Miscellaneous Equipment & Accessories" section (PLAN-4) |
+| SHP-3 | Therapy Equipment & Accessories | per-item, from subitem's Carrier Code (DS-46) | Monday **subitems** on the Manufacturing Process board (DS-41…46) — replaces the old DS-12 free-text column | AfterShip via DS-46/44; onboarded by cron (EP-23) and kept current by webhook (EP-21) into DS-45 — see PLAN-2, PLAN-4 |
 
 ### Phase 5 — Delivery & post-delivery
 
@@ -242,8 +289,6 @@ The portal shows a 5-step setup checklist. Completing each one: (a) posts a tagg
 **S-5.2 Installation materials** `[LIVE]` → Staff triggers EP-18 → EM-07. Installation tab (SCR-7) shows videos/docs/links from DS-13/DS-14/DS-15.
 
 **S-5.3 Ongoing support** `[LIVE]` → Messages (SCR-10, EP-12) two-way: customer message → EM-12 to team; staff reply in Monday → EP-14 → EM-11 to customer. Files (SCR-8) and Invoice/Payment (SCR-9, DS-06/DS-07/DS-23) remain available.
-
-**S-5.4 Tax exemption certificate** `[LIVE]` → Invoice & Payment tab (SCR-9) → customer selects Yes/No. **No** → EP-6 (`tax_exemption`) sets DS-33 = *No* + tag `[PORTAL: Tax Exempt - No]`; nothing further requested. **Yes** → customer uploads a certificate → EP-6 uploads the file to DS-34 via the multipart `/v2/file` endpoint, sets DS-33 = *Yes*, tags `[PORTAL: Tax Exemption Certificate Uploaded]`, and sends EM-14 to the team for review. Portal always displays: without an approved certificate on file, sales tax applies to the invoice.
 
 ---
 
@@ -259,7 +304,7 @@ The portal shows a 5-step setup checklist. Completing each one: (a) posts a tagg
 | SCR-2 | Order Status | Progress bar + shipment tracking | DS-02 (bar), SHP-1/2/3, EP-15 |
 | SCR-7 | Installation | Videos, docs, resources | DS-13/14/15 |
 | SCR-8 | Files & Documents | Shared files | DS-05, EP-11 |
-| SCR-9 | Invoice & Payment | Invoice link, balance, tax exemption cert upload | DS-06, DS-07, DS-23, DS-33, DS-34 |
+| SCR-9 | Invoice & Payment | Invoice link, balance, tax exemption cert upload `[PLANNED, see PLAN-8]` | DS-06, DS-07, DS-23, DS-33, DS-34 |
 | SCR-10 | Messages | Two-way messaging | EP-12, EM-11/EM-12 |
 | SCR-11 | Contact Us | Support info | static |
 
@@ -272,12 +317,13 @@ The portal shows a 5-step setup checklist. Completing each one: (a) posts a tagg
 | Ref | Item | Status | Summary |
 |---|---|---|---|
 | PLAN-1 | **AfterShip tracking engine** | `[PLANNED]` | Add `lib/aftership.js` (carrier-agnostic); make the track endpoint carrier-aware; retire FedEx-only limitation. Carrier "slug" examples: FedEx=`fedex`, Estes=`estes`, UPS=`ups`, USPS=`usps`. |
-| PLAN-2 | **Shipments as Monday subitems** | `[PLANNED]` | Each shipment = a subitem (Sensory Gym Frame, Therapy Mats & Padding, Miscellaneous Equipment & Accessories) with columns: Carrier (dropdown→slug), Tracking Number, Delivery Status (9 AfterShip states), Est. Delivery, Last Checkpoint, Show in Portal, + optional Ship Date / Hide Carrier from Customer. Portal reads shipments from subitems instead of DS-11/DS-12. |
+| PLAN-2 | **Shipments as Monday subitems** | `[LIVE for Therapy Equipment & Accessories only]` | Built 2026-07-14 for the 3rd shipment section (DS-41…45, SHP-3). Each accessory item = a subitem with Order Status (Order Pending/Ordered/Out of Stock), Date Ordered, Freight Carrier (=AfterShip slug), Freight Tracking ID, and Carrier Status (auto-synced live by the AfterShip webhook, EP-21). Frame (SHP-1) and Mats (SHP-2) remain on their existing direct board columns (DS-29…32) — **not yet** migrated to subitems. |
 | PLAN-3 | **Freight board → Manufacturing subitem sync** | `[PLANNED]` | Carrier + tracking entered on a separate board; match to this order (prefer a shared Order ID over customer name) and write to the correct subitem (e.g. Therapy Mats & Padding) via Make.com or integration code. |
-| PLAN-4 | **"Miscellaneous Equipment & Accessories" (Amazon) section** | `[PLANNED]` | Third shipment section; never reference Amazon to the customer; suppress carrier name (Amazon Logistics). Auto-pull via Amazon Business API / AfterShip email parser, matched by ship-to address. |
+| PLAN-4 | **"Therapy Equipment & Accessories" section** | `[LIVE]` | Built 2026-07-14. Portal card sourced from Monday subitems (SHP-3, DS-41…46) instead of the old DS-12 free-text column. Three display tiers: Order Pending → Ordered (no tracking yet) → full live AfterShip tracking once Carrier Code + Tracking ID are set on the subitem, matching Frame/Mats fidelity. "Out of Stock" gets its own message. Freight status reaches Monday via a cron sync (EP-23) + AfterShip webhook (EP-21), not a Monday-side webhook — Monday's API doesn't allow webhooks on subitems boards (see EP-22). |
 | PLAN-5 | **Notifications via portal's own layer** | `[PLANNED]` | Route AfterShip status webhooks → Resend (SYS-5) so wording/branding is controlled and carrier/Amazon references can be stripped. |
 | PLAN-6 | **"Ready to Manufacture" gate & view** | `[PLANNED]` | Monday view filtered to DS-24…28 all `✅`; optional automation to auto-advance DS-02. |
-| PLAN-7 | **Tax Exemption Certificate upload (SCR-9)** | `[LIVE — built 2026-07-11]` | Added a "Tax Exemption Certificate" module to the Invoice & Payment tab (S-5.4). Yes/No selector writes DS-33; uploading a certificate writes the file to DS-34 via a new `uploadFileToColumn()` helper in `lib/monday.js` (multipart request to Monday's dedicated `/v2/file` endpoint — the existing `addFileToOrder()` helper only supports URL-based files and can't be used for direct customer uploads). Staff should periodically review uploaded certificates in Monday and follow up if a certificate looks invalid or expired — there is no automatic approval/expiration workflow yet. |
+| PLAN-7 | **Auto-send portal invite on "Send Invite" status** | `[PLANNED — after AfterShip]` | When a Manufacturing item's invite-status column (`color_mm5427cr`) is set to **"Send Invite"**, automatically fire the invite (EM-02 + `[PORTAL: Invitation Sent]`) instead of clicking ✉️ Invite. Build as a Monday automation → secret-protected webhook (e.g. `/api/monday/invite-webhook`) reusing EP-7's logic; flip the status to "Invite Sent" after sending to prevent duplicates. Requested by Bryan; hold until AfterShip tracking is confirmed working. |
+| PLAN-8 | **Tax Exemption Certificate upload (SCR-9)** | `[PLANNED]` | Add a "Tax Exemption Certificate" module to the Invoice & Payment tab. Customer uploads via a file control → writes DS-33 (file) and posts tagged update `[PORTAL: Tax Exemption Certificate Uploaded]` + EM-14 to team. Staff reviews and sets DS-34 (status: No Certificate / Pending Review / Approved / Expired) in Monday. Portal shows the current status back to the customer plus a plain-language disclosure: without an **Approved** certificate on file, sales tax is applied to the invoice. Reuse EP-11's file-upload pattern for the endpoint; new Monday column IDs needed for DS-33/DS-34 (fetch via EP-10 `/api/monday/debug-columns` once columns are created). Secondary touchpoint: surface a short prompt/deep-link to this section during Billing Information (S-2.2) setup so tax-exempt customers are prompted before their first invoice, not after. |
 | OPEN-1 | Status/balance emails only fire from the admin portal | `[GAP]` | EM-04 and EM-09 are triggered by EP-9 (admin order edit) only. If staff change **Manufacturing Phase (DS-02)** or balance **directly in Monday.com**, no customer email is sent. Fix: add a Monday automation → webhook that fires EM-04 on DS-02 change regardless of where it's edited. |
 | OPEN-2 | EM-05 / EM-06 defined but not wired | `[GAP]` | Both emails exist in `lib/email.js` but have no trigger. Decide whether to wire them (EM-05 on color-form assignment; EM-06 for ad-hoc tasks) or remove. |
 

@@ -7,12 +7,15 @@
  * Delivery / Delivered / Exception on the board itself, not just in the
  * portal (which already shows live status on demand via /api/aftership/track).
  *
- * One-time setup required in the AfterShip dashboard (Settings → Webhooks):
- *   URL:    https://portal.summitsensory.com/api/aftership/webhook
- *   Secret: also set as AFTERSHIP_WEBHOOK_SECRET in Vercel env vars
+ * One-time setup required in the AfterShip dashboard (Developers → Webhooks):
+ *   URL: https://portal.summitsensory.com/api/aftership/webhook
  *
- * AfterShip signs the raw request body with HMAC-SHA256 (base64) in the
- * `aftership-hmac-sha256` header. Verified below before anything is processed.
+ * AfterShip's current webhook UI has no plain "secret" field — auth is done
+ * via a custom header instead. Add one custom header on the webhook named
+ * `x-webhook-secret` whose value matches AFTERSHIP_WEBHOOK_SECRET in Vercel's
+ * env vars; verified below (constant-time compare) before anything else runs.
+ * Older AfterShip accounts that DO sign requests with HMAC-SHA256 in an
+ * `aftership-hmac-sha256` header are also supported as a fallback.
  * Only shipments tracked via the Therapy Equipment & Accessories board are
  * acted on — Frame/Mats tracking numbers are safely ignored (no match found).
  */
@@ -21,8 +24,7 @@ import crypto from 'crypto';
 import { findAccessorySubitemByTracking, updateAccessoryCarrierStatus } from '../../../lib/monday';
 import { labelForTag } from '../../../lib/aftership';
 
-// Signature verification needs the exact raw bytes AfterShip signed, so the
-// default JSON body parser must be disabled.
+// Needed for the HMAC fallback path, which must sign the exact raw bytes.
 export const config = {
   api: { bodyParser: false },
 };
@@ -36,6 +38,18 @@ function readRawBody(req) {
   });
 }
 
+function timingSafeStringEqual(a, b) {
+  if (!a || !b) return false;
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) return false;
+  try {
+    return crypto.timingSafeEqual(bufA, bufB);
+  } catch {
+    return false;
+  }
+}
+
 function isValidSignature(rawBody, signature) {
   const secret = process.env.AFTERSHIP_WEBHOOK_SECRET;
   if (!secret || !signature) return false;
@@ -47,15 +61,29 @@ function isValidSignature(rawBody, signature) {
   }
 }
 
+function isAuthorized(req, rawBody) {
+  const secret = process.env.AFTERSHIP_WEBHOOK_SECRET;
+  if (!secret) return false;
+
+  // Preferred: plain shared-secret custom header (current AfterShip webhook UI).
+  const headerSecret = req.headers['x-webhook-secret'];
+  if (headerSecret && timingSafeStringEqual(headerSecret, secret)) return true;
+
+  // Fallback: HMAC-signed body (older AfterShip accounts).
+  const signature = req.headers['aftership-hmac-sha256'];
+  if (signature && isValidSignature(rawBody, signature)) return true;
+
+  return false;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
   const rawBody = await readRawBody(req);
-  const signature = req.headers['aftership-hmac-sha256'];
 
-  if (!isValidSignature(rawBody, signature)) {
-    console.error('AfterShip webhook: signature verification failed.');
-    return res.status(401).json({ error: 'Invalid signature.' });
+  if (!isAuthorized(req, rawBody)) {
+    console.error('AfterShip webhook: authorization failed.');
+    return res.status(401).json({ error: 'Unauthorized.' });
   }
 
   let payload;

@@ -19,11 +19,11 @@
  * returned a server-side internal error on retry. This polling job is the
  * reliable fallback — see Customer-Portal-Process-Flow.md EP-22/EP-23.
  *
- * vercel.json schedule: "*/15 * * * *" (every 15 minutes) — NOTE: Vercel
- * Hobby-tier projects are capped at once-per-day cron frequency; this will
- * silently run only once daily until the project is on a plan that supports
- * sub-daily schedules. AfterShip's own webhook (EP-21) still updates status
- * in real time once a shipment has been onboarded at least once.
+ * vercel.json schedule: "*/15 * * * *" (every 15 minutes — requires Vercel
+ * Pro or higher; Hobby-tier projects silently cap cron frequency at once per
+ * day). AfterShip's own webhook (EP-21) still updates status in real time
+ * once a shipment has been onboarded at least once — this job only affects
+ * how quickly a brand-new item gets its first onboarding.
  */
 
 import { getAllAccessoryItems, updateAccessoryCarrierStatus } from '../../../lib/monday';

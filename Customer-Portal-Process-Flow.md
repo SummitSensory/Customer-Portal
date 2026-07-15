@@ -86,6 +86,36 @@ All column IDs are read in `lib/monday.js`. Many are overridable by environment 
 | DS-44 | Accessory item — Freight Tracking ID | "Freight Tracking ID" (subitem) | `text_mm5125q0` | Text | Staff | `[LIVE]` |
 | DS-45 | Accessory item — Carrier Status | "Carrier Status" (subitem) | `color_mm58zsbq` | Status | AfterShip (EP-21 webhook, EP-23 cron) | `[LIVE]` Auto-written (create_labels_if_missing) as the shipment transits — In Transit / Out for Delivery / Delivered / Exception / etc. |
 | DS-46 | Accessory item — Carrier Code | "Carrier Code" (subitem) | `text_mm58cnxf` | Text | Staff | `[LIVE]` **The actual AfterShip slug** (fedex / ups / usps / fedex-freight / etc.) — corrected 2026-07-14, was originally read from DS-43 in error |
+| DS-47 | Photo/Video Showcase form ID | Photo/Video Showcase Form URL | `text_mm59x2cb` | Text | Staff | `[LIVE]` Same pattern as DS-16 (colorFormDirect) — paste the Jotform form URL/ID here once Bryan builds the "Share Your Gym" form. Also readable via `JOTFORM_SHOWCASE_FORM_ID` env override. Column created 2026-07-15; still needs the actual form URL pasted in once Bryan builds it. |
+| DS-48 | UGC — Customer Photos | Customer Photos | `file_mm59ndjx` | File | Portal (via EP-16 showcase branch) | `[LIVE]` One file per submitted photo, written by `attachUgcFile()` |
+| DS-49 | UGC — Customer Videos | Customer Videos | `file_mm599cvb` | File | Portal (via EP-16 showcase branch) | `[LIVE]` One file per submitted video, written by `attachUgcFile()` — kept in a **separate column from DS-48** per Bryan's requirement |
+| DS-50 | UGC — Photo Count | UGC Photo Count | `numeric_mm59hr` | Number | Portal (via `incrementUgcCounts()`) | `[LIVE]` Running count — Monday can't count Files-column attachments natively (confirmed: Files columns are incompatible with Formula columns), so counting happens in app code |
+| DS-51 | UGC — Video Count | UGC Video Count | `numeric_mm593cqk` | Number | Portal (via `incrementUgcCounts()`) | `[LIVE]` Running count, same mechanism as DS-50 |
+| DS-52 | UGC — Reward Credits | UGC Reward Credits | `numeric_mm59p094` | Number | Portal (via `incrementUgcCounts()`) | `[LIVE]` `photoCount + videoCount × 2`; every 10 credits = one $25 reward tier |
+| DS-53 | UGC — Reward Status | UGC Reward Status | `color_mm59p3gr` | Status | Portal (auto) + Staff (manual approval) | `[LIVE]` Labels: None / Pending Review / Approved / Paid. Flips to "Pending Review" automatically when a new reward tier is crossed (EM-16 to team); staff manually approves after a quick quality check (angles, usage, video ≥20s) — the app never auto-approves |
+
+### 2a-0. Referrals board `[LIVE]`
+
+Standalone Monday board — created 2026-07-15 (board ID `18422254966`, workspace "Summit Sensory Gym", `https://summit-sensory-gym.monday.com/boards/18422254966`) — that logs every "Refer a Friend" submission as its own row. Reward amount is computed by a **Monday Formula column** (Numbers columns are formula-compatible, unlike Files columns) once staff enters the referred friend's eventual order value: **2% of order value, $25 floor, $500 cap** (formula: `IF({Referred Order Value}=0,0,ROUND(MIN(MAX({Referred Order Value}*0.02,25),500),2))`). Default payout form is **account credit** (cash-equivalent gift cards for large/institutional referrals — clinics, schools, hospitals — carry kickback-perception risk); straight gift cards remain fine for smaller individual/family referrals at Bryan's discretion.
+
+| Ref | Field | Monday column title | Column ID | Type |
+|---|---|---|---|---|
+| REF-BOARD | *(board)* | Referrals | `18422254966` | — |
+| REF-1 | Referrer Name | Referrer Name | `text_mm59xen8` | Text |
+| REF-2 | Referrer Email | Referrer Email | `text_mm59tasb` | Text |
+| REF-3 | Referrer Order Item ID | Referrer Order Item ID | `text_mm597ngj` | Text |
+| REF-4 | Referrer Order Record Link | Referrer Order Record Link | `link_mm59wm1q` | Link |
+| REF-5 | Referred Friend Name | Referred Friend Name | `text_mm59ev00` | Text |
+| REF-6 | Referred Friend Email | Referred Friend Email | `text_mm59gert` | Text |
+| REF-7 | Referred Friend Phone | Referred Friend Phone | `text_mm59v1f2` | Text |
+| REF-8 | Message (optional) | Message | `long_text_mm592qp0` | Long text |
+| REF-9 | Submitted Date | Submitted Date | `date_mm59a5gn` | Date |
+| REF-10 | Referred Order Value | Referred Order Value | `numeric_mm59x511` | Number *(staff-managed, not written by app)* |
+| REF-11 | Reward Amount | Reward Amount | `formula_mm59bmwg` | Formula *(auto-computes 2% of REF-10, $25 floor/$500 cap)* |
+| REF-12 | Reward Type | Reward Type | `color_mm59j1g8` | Status — Account Credit / Gift Card *(staff-managed)* |
+| REF-13 | Referral Status | Referral Status | `color_mm59a5h4` | Status — New Lead / Contacted / Converted / Not Interested / Reward Issued *(staff-managed)* |
+
+Written by `lib/monday.js` → `createReferralItem()`, called from EP-24 (`/api/referral/submit`). Board and column IDs are hardcoded defaults in `lib/monday.js` (same pattern as `ACCESSORY_BOARD_ID`/`DELIVERY_BOARD_ID`), overridable via env vars. See PLAN-9.
 
 ### 2a-1. Delivery & Site Details Submissions board `[LIVE]`
 
@@ -182,14 +212,16 @@ The portal reads these per order and passes **slug + tracking number** to AfterS
 | EP-13 | `/api/monday/boards` | GET | staff | List boards (settings) |
 | EP-14 | `/api/monday/update-webhook` | POST | Monday | Fires on new Monday update; emails customer if a staff member replied (EM-11) |
 | EP-15 | `/api/fedex/track?number=` | GET | mixed | Live FedEx tracking for a number (SYS-4) |
-| EP-16 | `/api/jotform/webhook` | POST | secret | Jotform submission → match order → tag complete (EM-10 to team) |
+| EP-16 | `/api/jotform/webhook` | POST | secret | Jotform submission → match order → tag complete (EM-10 to team). **Extended 2026-07-15:** dispatches on `formConfig.tab` (`color` / `showcase` / default `documents`); the `showcase` branch scans `rawRequest` for URL-like strings (classified image vs. video by file extension, not by Jotform field key names) and routes to the UGC pipeline (DS-48…53) instead of the one-time checklist path — see PLAN-9. |
 | EP-17 | `/api/cron/reminders` | GET | CRON_SECRET | Scheduled reminders (SYS-7) |
 | EP-18 | `/api/admin/notify-installation` | POST | staff | Send "installation ready" email (EM-07) |
 | EP-19 | `/api/settings/forms` | GET/POST | staff | Manage Jotform form mapping |
 | EP-20 | `/api/aftership/track?slug=&number=` | GET | customer (ownership-checked) / staff | Live AfterShip status for a tracking number — Frame/Mats/accessory items (DS-29…32, DS-46/44) |
-| EP-21 | `/api/aftership/webhook` | POST | AfterShip (`x-webhook-secret` custom header, HMAC fallback) | `[LIVE]` Receives AfterShip tracking-update events; matches by slug+tracking# to an accessory subitem (DS-44) and writes the live status onto DS-45. **Setup note (2026-07-14):** AfterShip's current webhook UI has no plain secret field — auth uses a custom header. In AfterShip: Developers → Webhooks → Create, URL `https://portal.summitsensory.com/api/aftership/webhook`, Events → Product = Tracking, then add a custom header named `x-webhook-secret` whose value matches `AFTERSHIP_WEBHOOK_SECRET` in Vercel. Older accounts that sign with HMAC-SHA256 (`aftership-hmac-sha256` header) are also supported as a fallback. |
+| EP-21 | `/api/aftership/webhook` | POST | AfterShip (`x-webhook-secret` custom header, HMAC fallback) | `[LIVE, CONFIRMED 2026-07-14]` Receives AfterShip tracking-update events; matches by slug+tracking# to an accessory subitem (DS-44) and writes the live status onto DS-45. Registered under AfterShip's **Notifications → Webhooks** page (NOT Developers → Webhooks, which only covers Returns/Protection/Warranty) at `https://admin.aftership.com/notifications/webhooks` — URL `https://portal.summitsensory.com/api/aftership/webhook` + custom header `x-webhook-secret` matching `AFTERSHIP_WEBHOOK_SECRET` in Vercel. Test webhook confirmed a successful signature/auth check end-to-end. |
 | EP-22 | `/api/monday/accessory-webhook` | POST | Monday (query-param secret) | `[BLOCKED]` Built to push the instant DS-44/46 change — Monday's API rejects webhook registration on a subitems board ("Creating webhook on subitems board isn't allowed"), and the documented workaround (`change_subitem_column_value` on the parent board) errored server-side on retry. Code is in place and harmless if Monday ever fixes this; EP-23 is the working mechanism today. |
 | EP-23 | `/api/cron/accessory-tracking-sync` | GET | `CRON_SECRET` (Vercel Cron) | `[LIVE]` Every 15 min (vercel.json), scans all accessory items with both DS-46 (Carrier Code) + DS-44 (Tracking ID) set, onboards each into AfterShip (idempotent) and writes the current status to DS-45 if changed. Requires a Vercel plan supporting sub-daily cron frequency — Hobby tier runs this only once/day. **Post-mortem (2026-07-14):** this file's original header comment wrote the cron schedule literally as `"*/15 * * * *"` inside a `/** ... */` block comment — the embedded `*/` terminated the comment early, causing a webpack syntax error on every build that included this file. Every accessories-feature commit after this file was added therefore failed to build in production, even though GitHub had the correct code and Vercel's Git integration was healthy — it looked exactly like a stuck/broken deploy pipeline. Fixed by converting the header to `//` line comments (no terminator ambiguity). Lesson: never embed a literal `*/` inside a JS block comment. |
+| EP-24 | `/api/referral/submit` | POST | customer | `[LIVE]` Validates friend name/email, calls `createReferralItem()` → REF-1…9 on the Referrals board (§2a-0), emails team (EM-15). |
+| EP-25 | `/api/portal/email-upload-link` | POST | customer | `[LIVE]` Emails the signed-in customer a direct link (`https://form.jotform.com/{DS-47}`) to the Photo & Video Showcase form (EM-17), so they can open it on their phone without re-logging into the portal — the near-term alternative to SMS (no SMS provider is integrated). |
 
 ---
 
@@ -213,6 +245,9 @@ From: `portal@updates.summitsensory.com` · Team inbox: `orders@summitsensorygym
 | EM-12 | Incoming customer message | Customer posts in Messages (EP-12) | Team |
 | EM-13 | Contact info changed (⚠️ verify before shipment) | Customer edits contact/delivery | Team |
 | EM-14 | Tax exemption certificate submitted | Customer uploads cert on SCR-9 | Team | `[PLANNED]` see PLAN-8 |
+| EM-15 | New referral submitted | Customer submits Refer a Friend form (EP-24) | Team | `[LIVE]` |
+| EM-16 | Photo/video reward tier reached | `incrementUgcCounts()` detects a new tier crossed (EP-16 showcase branch) | Team | `[LIVE]` Prompts staff's 30-second quality check (angles, usage, video length) before manually approving the reward |
+| EM-17 | Photo/video upload link | Customer clicks "Email Me This Link" on the Showcase tab (EP-25) | Customer | `[LIVE]` |
 
 ---
 
@@ -306,6 +341,8 @@ The portal shows a 5-step setup checklist. Completing each one: (a) posts a tagg
 | SCR-8 | Files & Documents | Shared files | DS-05, EP-11 |
 | SCR-9 | Invoice & Payment | Invoice link, balance, tax exemption cert upload `[PLANNED, see PLAN-8]` | DS-06, DS-07, DS-23, DS-33, DS-34 |
 | SCR-10 | Messages | Two-way messaging | EP-12, EM-11/EM-12 |
+| SCR-12 | Refer a Friend | `[LIVE]` Native form (name/email/phone/message) → EP-24 → REF board; positioned in the lower half of the "My Order" nav group | EP-24, §2a-0 |
+| SCR-13 | Photo & Video Showcase | `[LIVE, awaiting the Jotform form itself]` Jotform embed (form ID from DS-47) + "Email Me This Link" button (EP-25); marketing copy covers the $25/10-credit reward and video requirements (≥20s, different angles, people using the frame) | EP-16 (showcase branch), EP-25, DS-47…53 |
 | SCR-11 | Contact Us | Support info | static |
 
 **Admin portal (`/admin`, staff):** orders table with inline edit + **✉️ Invite** (EP-7/EP-9), file manager (EP-11), messages (EP-12), and settings for column mapping (EP-10), Jotform forms (EP-19), and boards (EP-13).
@@ -326,6 +363,7 @@ The portal shows a 5-step setup checklist. Completing each one: (a) posts a tagg
 | PLAN-8 | **Tax Exemption Certificate upload (SCR-9)** | `[PLANNED]` | Add a "Tax Exemption Certificate" module to the Invoice & Payment tab. Customer uploads via a file control → writes DS-33 (file) and posts tagged update `[PORTAL: Tax Exemption Certificate Uploaded]` + EM-14 to team. Staff reviews and sets DS-34 (status: No Certificate / Pending Review / Approved / Expired) in Monday. Portal shows the current status back to the customer plus a plain-language disclosure: without an **Approved** certificate on file, sales tax is applied to the invoice. Reuse EP-11's file-upload pattern for the endpoint; new Monday column IDs needed for DS-33/DS-34 (fetch via EP-10 `/api/monday/debug-columns` once columns are created). Secondary touchpoint: surface a short prompt/deep-link to this section during Billing Information (S-2.2) setup so tax-exempt customers are prompted before their first invoice, not after. |
 | OPEN-1 | Status/balance emails only fire from the admin portal | `[GAP]` | EM-04 and EM-09 are triggered by EP-9 (admin order edit) only. If staff change **Manufacturing Phase (DS-02)** or balance **directly in Monday.com**, no customer email is sent. Fix: add a Monday automation → webhook that fires EM-04 on DS-02 change regardless of where it's edited. |
 | OPEN-2 | EM-05 / EM-06 defined but not wired | `[GAP]` | Both emails exist in `lib/email.js` but have no trigger. Decide whether to wire them (EM-05 on color-form assignment; EM-06 for ad-hoc tasks) or remove. |
+| PLAN-9 | **Refer a Friend + Photo/Video Showcase tabs** | `[LIVE 2026-07-15 — awaiting Bryan's manual Jotform build]` | Two new "My Order" tabs (SCR-12/13). **Referral:** native form → EP-24 → `createReferralItem()` → standalone Referrals board (§2a-0); reward = 2% of the referred order, $25 floor/$500 cap, computed by a Monday Formula column (staff-managed), defaulting to account credit for large/institutional referrals (kickback-perception risk) with gift cards still fine for smaller individual referrals at Bryan's discretion; EM-15 notifies the team. **Showcase:** Jotform embed (form ID DS-47) + EP-25 "email me this link" button; submissions flow through the extended EP-16 webhook, which scans `rawRequest` for URL-like strings (classified image vs. video by extension, since Jotform field key names aren't known until Bryan builds the form) and calls `attachUgcFile()` (DS-48/49, kept in **separate** photo/video Files columns per requirement) + `incrementUgcCounts()` (DS-50…52) — reward is **$25 per 10 credits** (1 photo = 1 credit, 1 video = 2 credits, so "10 photos or 5 videos"), repeatable, with EM-16 flagging staff only when a new tier is crossed so a submission doesn't need review unless it's reward-eligible; staff does a manual ~30-second quality check (video ≥20s, different angles, ideally shows people using the frame) before approving — the app never auto-approves. Monday doesn't support counting Files-column attachments natively (confirmed: Files columns are incompatible with Formula columns), so all counting happens in `lib/monday.js`, not in Monday itself. Referrals board (`18422254966`) and the 7 DS-47…53 columns on the Manufacturing Process board were created 2026-07-15 via the monday.com MCP connector; their column IDs are hardcoded as defaults in `lib/monday.js` (same pattern as `ACCESSORY_BOARD_ID`), so no env vars need to be set in Vercel. **Remaining before launch:** Bryan builds the "Share Your Gym" Jotform form himself (no Jotform connector available), pastes its URL into the "Photo/Video Showcase Form URL" column (DS-47) on the relevant order(s), and adds a `JOTFORM_FORM_MAP` entry for that form ID with `"tab": "showcase"`. All application code and Monday-side structures are in place — this is the only remaining step. |
 
 ---
 

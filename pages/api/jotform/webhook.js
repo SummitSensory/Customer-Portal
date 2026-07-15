@@ -8,11 +8,13 @@
  *
  * The webhook secret (JOTFORM_WEBHOOK_SECRET) is used to verify requests.
  * Form-to-checklist mapping is read from JOTFORM_FORM_MAP (JSON env var):
- *   {"formId": {"name": "Site Assessment", "checklistIndex": 1}}
+ *   {"formId": {"name": "Site Assessment", "checklistIndex": 1, "tab": "documents"}}
+ *   "tab" may be "color" / "color_selection", "showcase", or omitted (defaults
+ *   to the Documents checklist).
  */
 
-import { getOrderByEmail, postTaggedUpdate, markSectionComplete } from '../../../lib/monday';
-import { notifyTeamFormCompleted } from '../../../lib/email';
+import { getOrderByEmail, postTaggedUpdate, markSectionComplete, attachUgcFile, incrementUgcCounts } from '../../../lib/monday';
+import { notifyTeamFormCompleted, notifyTeamUgcThreshold } from '../../../lib/email';
 
 // Parse the form→checklist map from env
 function getFormMap() {
@@ -21,6 +23,57 @@ function getFormMap() {
   } catch {
     return {};
   }
+}
+
+const IMAGE_EXT = /\.(jpe?g|png|gif|heic|heif|webp|bmp|tiff?)(\?|$)/i;
+const VIDEO_EXT = /\.(mp4|mov|m4v|avi|webm|mkv|wmv|3gp|quicktime)(\?|$)/i;
+
+/**
+ * Jotform's rawRequest is pre-parsed JSON, but file-upload field answers can
+ * arrive as: a single URL string, a JSON-stringified array of URL strings
+ * (Jotform's most common file-upload format), a real array, or wrapped in
+ * {answer: ...}. Rather than depend on Jotform's internal field key names
+ * (which would require inspecting the form after Bryan builds it), scan every
+ * value for URL-like strings and classify each by file extension.
+ */
+function extractShowcaseFiles(data) {
+  const photos = [];
+  const videos = [];
+
+  const classify = (url) => {
+    if (typeof url !== 'string') return;
+    const trimmed = url.trim();
+    if (!trimmed.startsWith('http')) return;
+    if (IMAGE_EXT.test(trimmed)) photos.push(trimmed);
+    else if (VIDEO_EXT.test(trimmed)) videos.push(trimmed);
+  };
+
+  const visit = (val) => {
+    if (val == null) return;
+    if (typeof val === 'string') {
+      const s = val.trim();
+      // JSON-stringified array of URLs — Jotform's typical file-upload format
+      if (s.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(s);
+          if (Array.isArray(parsed)) { parsed.forEach(visit); return; }
+        } catch { /* not JSON — fall through and treat as a plain string */ }
+      }
+      classify(s);
+      return;
+    }
+    if (Array.isArray(val)) { val.forEach(visit); return; }
+    if (typeof val === 'object') {
+      if (val.answer !== undefined) { visit(val.answer); return; }
+      // Some Jotform formats nest file arrays under { url: [...] } or similar
+      Object.values(val).forEach(visit);
+    }
+  };
+
+  Object.values(data || {}).forEach(visit);
+
+  // De-dupe in case a URL got scanned twice via nested structures
+  return { photos: [...new Set(photos)], videos: [...new Set(videos)] };
 }
 
 export default async function handler(req, res) {
@@ -75,8 +128,42 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, note: 'No order found for email.' });
   }
 
+  // Dispatch by form type — color selections, required documents, or the
+  // repeatable Photo & Video Showcase (not a one-time checklist item).
+  const tabType = formConfig.tab === 'color' || formConfig.tab === 'color_selection'
+    ? 'color'
+    : formConfig.tab === 'showcase'
+      ? 'showcase'
+      : 'documents';
+
+  if (tabType === 'showcase') {
+    const { photos, videos } = extractShowcaseFiles(submissionData);
+
+    for (const url of photos) {
+      await attachUgcFile(order.id, url, 'photo').catch(err => console.error('attachUgcFile (photo) failed:', err.message));
+    }
+    for (const url of videos) {
+      await attachUgcFile(order.id, url, 'video').catch(err => console.error('attachUgcFile (video) failed:', err.message));
+    }
+
+    await postTaggedUpdate(
+      order.id,
+      'PORTAL: Photo/Video Submitted',
+      `Customer submitted ${photos.length} photo(s) and ${videos.length} video(s) via the Photo & Video Showcase form on ${new Date().toLocaleDateString()}. Submitted by: ${email}`
+    ).catch(console.error);
+
+    const result = await incrementUgcCounts(order.id, photos.length, videos.length)
+      .catch(err => { console.error('incrementUgcCounts failed:', err.message); return null; });
+
+    if (result?.crossedNewTier) {
+      await notifyTeamUgcThreshold(order.name, email, result.photoCount, result.videoCount, result.credits).catch(console.error);
+    }
+
+    return res.status(200).json({ ok: true, orderName: order.name, form: formConfig.name, photos: photos.length, videos: videos.length });
+  }
+
   // Record completion in Monday.com as a tagged update so the cron can detect it
-  const isColor = formConfig.tab === 'color' || formConfig.tab === 'color_selection';
+  const isColor = tabType === 'color';
   const tag = isColor ? 'PORTAL: Color Selections' : 'PORTAL: Documents Submitted';
 
   await postTaggedUpdate(

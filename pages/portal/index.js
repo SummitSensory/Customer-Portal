@@ -26,6 +26,8 @@ const ORDER_TABS = [
   { id: 'files',        label: 'Files & Documents',  icon: '📄' },
   { id: 'invoice',      label: 'Invoice & Payment',  icon: '💰' },
   { id: 'messages',     label: 'Messages',           icon: '💬' },
+  { id: 'referral',     label: 'Refer a Friend',     icon: '🎁' },
+  { id: 'showcase',     label: 'Photo & Video Showcase', icon: '📸' },
   { id: 'contact_us',   label: 'Contact Us',         icon: '📞' },
 ];
 
@@ -252,6 +254,8 @@ export default function CustomerPortal() {
             {activeTab === 'files'        && <FilesTab        files={files} />}
             {activeTab === 'invoice'      && <InvoiceTab      order={order} />}
             {activeTab === 'messages'     && <MessagesTab     order={order} messages={messages} onRefresh={loadMessages} showToast={showToast} />}
+            {activeTab === 'referral'     && <ReferralTab     order={order} showToast={showToast} />}
+            {activeTab === 'showcase'     && <ShowcaseTab     order={order} />}
             {activeTab === 'contact_us'   && <ContactUsTab    onNav={setActiveTab} />}
           </main>
         </div>
@@ -2126,6 +2130,217 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
           </form>
         </div>
       </div>
+    </>
+  );
+}
+
+// ── Tab: Refer a Friend ────────────────────────────────────────────────────────
+
+function ReferralTab({ order, showToast }) {
+  const [friendName, setFriendName] = useState('');
+  const [friendEmail, setFriendEmail] = useState('');
+  const [friendPhone, setFriendPhone] = useState('');
+  const [message, setMessage] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
+  const [submitted, setSubmitted] = useState(false);
+
+  function validate() {
+    const e = {};
+    if (!friendName.trim()) e.friendName = 'Required';
+    if (!friendEmail.trim()) e.friendEmail = 'Required';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(friendEmail.trim())) e.friendEmail = 'Enter a valid email address';
+    return e;
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    const errs = validate();
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      showToast('Please complete the required fields.');
+      return;
+    }
+    setErrors({});
+    setSaving(true);
+    try {
+      const res = await fetch('/api/referral/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ friendName, friendEmail, friendPhone, message }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'Referral submission failed.');
+      }
+      setSubmitted(true);
+      setFriendName(''); setFriendEmail(''); setFriendPhone(''); setMessage('');
+      showToast('Thanks for the referral!');
+    } catch (err) {
+      showToast(err.message || 'Something went wrong. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="ph">
+        <h2>Refer a Friend</h2>
+        <p>Know a clinic, school, or family who could use a sensory therapy gym? Send us their info and we'll take it from there.</p>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--moss)' }}>
+        <div className="ch"><h3>🎁 How It Works</h3></div>
+        <p style={{ fontSize: 13.5, lineHeight: 1.65, marginBottom: 10 }}>
+          Refer someone to Summit Sensory Gym, and once they place an order, you'll receive a reward based on their purchase — <strong>2% of their order value</strong>, with a <strong>$25 minimum</strong> and up to <strong>$500</strong>. Rewards are typically issued as account credit toward your own future orders or accessories; for smaller individual referrals, we're happy to discuss a gift card instead.
+        </p>
+        <p style={{ fontSize: 13, color: 'var(--mut)', margin: 0 }}>
+          We'll reach out to your friend directly and keep you posted on where things stand.
+        </p>
+      </div>
+
+      {submitted && (
+        <div className="alert success" style={{ marginBottom: 16 }}>✅ Referral submitted — thank you! We'll be in touch with them soon.</div>
+      )}
+
+      <form onSubmit={submit}>
+        <div className="card">
+          <div className="ch"><h3>Referral Details</h3></div>
+          <div className="row">
+            <div className="field">
+              <label><span style={{ color: 'var(--rose)' }}>*</span> Friend's Name</label>
+              <input type="text" value={friendName} onChange={e => { setFriendName(e.target.value); setErrors(v => ({ ...v, friendName: '' })); }} style={{ borderColor: errors.friendName ? 'var(--rose)' : '' }} />
+              {errors.friendName && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.friendName}</div>}
+            </div>
+            <div className="field">
+              <label><span style={{ color: 'var(--rose)' }}>*</span> Friend's Email</label>
+              <input type="email" value={friendEmail} onChange={e => { setFriendEmail(e.target.value); setErrors(v => ({ ...v, friendEmail: '' })); }} style={{ borderColor: errors.friendEmail ? 'var(--rose)' : '' }} />
+              {errors.friendEmail && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.friendEmail}</div>}
+            </div>
+          </div>
+          <div className="field">
+            <label>Friend's Phone <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(optional)</span></label>
+            <input type="tel" value={friendPhone} onChange={e => setFriendPhone(e.target.value)} placeholder="+1 303 555 0100" />
+          </div>
+          <div className="field">
+            <label>Note to Our Team <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(optional)</span></label>
+            <textarea value={message} onChange={e => setMessage(e.target.value)} placeholder="Anything helpful for us to know — their organization, timeline, etc." />
+          </div>
+          <button className="btn btn-moss" disabled={saving}>{saving ? 'Submitting…' : 'Submit Referral →'}</button>
+        </div>
+      </form>
+    </>
+  );
+}
+
+// ── Tab: Photo & Video Showcase ─────────────────────────────────────────────────
+
+function ShowcaseTab({ order }) {
+  const [formSubmitted, setFormSubmitted] = useState(false);
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
+  const rawFormId = order?.showcaseFormId;
+  const formId = typeof rawFormId === 'string' ? rawFormId.trim() : '';
+  const iframeId = formId ? `JotFormIFrame-${formId}` : null;
+
+  useEffect(() => {
+    if (!formId || !iframeId) return;
+
+    function initHandler() {
+      if (window.jotformEmbedHandler) {
+        window.jotformEmbedHandler(`iframe[id='${iframeId}']`, 'https://form.jotform.com/');
+      }
+    }
+    if (window.jotformEmbedHandler) {
+      initHandler();
+    } else {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jotfor.ms/s/umd/latest/for-form-embed-handler.js';
+      script.onload = initHandler;
+      document.body.appendChild(script);
+    }
+
+    function onMessage(e) {
+      const raw = e.data;
+      const data = typeof raw === 'string' ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : raw;
+      if (data?.action === 'submission-completed') setFormSubmitted(true);
+      if (typeof raw === 'string' && raw.includes('formSubmitted')) setFormSubmitted(true);
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [formId, iframeId]);
+
+  async function emailMeLink() {
+    setEmailSending(true);
+    try {
+      const res = await fetch('/api/portal/email-upload-link', { method: 'POST' });
+      if (!res.ok) throw new Error();
+      setEmailSent(true);
+    } catch {
+      setEmailSent(false);
+    } finally {
+      setEmailSending(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="ph">
+        <h2>Photo & Video Showcase</h2>
+        <p>Show off your new sensory gym — and earn rewards for sharing it.</p>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--moss)' }}>
+        <div className="ch"><h3>📸 Share Your Gym, Earn Rewards</h3></div>
+        <p style={{ fontSize: 13.5, lineHeight: 1.65, marginBottom: 10 }}>
+          We love seeing your space in action — and your photos and videos help other clinics, schools, and families picture what's possible. Submit <strong>10 photos or videos</strong> (1 video counts as 2) and we'll send you a <strong>$25 gift card</strong>. Keep sharing — the reward repeats every 10 submissions.
+        </p>
+        <p style={{ fontSize: 13.5, lineHeight: 1.65, marginBottom: 10, color: 'var(--mut)' }}>
+          For videos: please film for at least <strong>20 seconds</strong>, capture <strong>different angles</strong>, and if possible, show <strong>people using the frame</strong> — these submit for review fastest.
+        </p>
+        <p style={{ fontSize: 13, color: 'var(--mut)', margin: 0 }}>
+          Our team gives every batch a quick look before rewards go out, just to confirm the basics above.
+        </p>
+      </div>
+
+      {formSubmitted && <div className="alert success" style={{ marginBottom: 16 }}>✅ Thanks for sharing! We'll review your submission shortly.</div>}
+
+      <div className="card" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <h3 style={{ margin: '0 0 4px', fontSize: 15 }}>Uploading from your phone?</h3>
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--mut)' }}>Email yourself this upload link so you can snap and upload photos right from your camera roll.</p>
+        </div>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={emailMeLink} disabled={emailSending || emailSent || !formId}>
+          {emailSent ? '✅ Sent!' : emailSending ? 'Sending…' : 'Email Me This Link'}
+        </button>
+      </div>
+
+      {formId ? (
+        <div
+          key={formId}
+          dangerouslySetInnerHTML={{
+            __html: `<iframe
+              id="${iframeId}"
+              title="Photo & Video Showcase Form"
+              allowtransparency="true"
+              allow="geolocation; microphone; camera; fullscreen; payment"
+              src="https://form.jotform.com/${formId}"
+              frameborder="0"
+              style="min-width:100%;max-width:100%;height:539px;border:none;display:block;margin-bottom:16px;"
+              scrolling="no"
+            ></iframe>`,
+          }}
+        />
+      ) : (
+        <div className="card">
+          <div className="empty">
+            <div className="ei">📸</div>
+            <h3>Upload form not yet available</h3>
+            <p>We're setting this up — check back soon, or contact us directly if you'd like to share photos or videos now.</p>
+          </div>
+        </div>
+      )}
     </>
   );
 }

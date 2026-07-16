@@ -481,32 +481,49 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
   const autocompleteRef = useRef(null);
 
   // Google Places autocomplete on street address
+  // The Maps script (loaded in _app.js) fires 'google-maps-loaded' once ready — it may
+  // load before or after this component mounts, so we handle both orders.
   useEffect(() => {
-    if (!streetRef.current || typeof window === 'undefined' || !window.google?.maps?.places) return;
-    autocompleteRef.current = new window.google.maps.places.Autocomplete(streetRef.current, {
-      types: ['address'],
-      fields: ['address_components'],
-    });
-    const listener = autocompleteRef.current.addListener('place_changed', () => {
-      const place = autocompleteRef.current.getPlace();
-      if (!place.address_components) return;
-      let street = '', city = '', state = '', zip = '', country = '';
-      for (const c of place.address_components) {
-        const t = c.types[0];
-        if (t === 'street_number') street = c.long_name + ' ';
-        if (t === 'route') street += c.long_name;
-        if (t === 'locality' || t === 'postal_town') city = city || c.long_name;
-        if (t === 'administrative_area_level_1') state = c.short_name;
-        if (t === 'postal_code') zip = c.long_name;
-        if (t === 'country') country = c.long_name;
-      }
-      setBillingAddress(street.trim());
-      setBillingCity(city);
-      setBillingState(state);
-      setBillingZip(zip);
-      setBillingCountry(country);
-    });
-    return () => { if (listener) window.google.maps.event.removeListener(listener); };
+    if (typeof window === 'undefined') return;
+    let listener;
+
+    function initAutocomplete() {
+      if (!streetRef.current || autocompleteRef.current || !window.google?.maps?.places) return;
+      autocompleteRef.current = new window.google.maps.places.Autocomplete(streetRef.current, {
+        types: ['address'],
+        fields: ['address_components'],
+      });
+      listener = autocompleteRef.current.addListener('place_changed', () => {
+        const place = autocompleteRef.current.getPlace();
+        if (!place.address_components) return;
+        let street = '', city = '', state = '', zip = '', country = '';
+        for (const c of place.address_components) {
+          const t = c.types[0];
+          if (t === 'street_number') street = c.long_name + ' ';
+          if (t === 'route') street += c.long_name;
+          if (t === 'locality' || t === 'postal_town') city = city || c.long_name;
+          if (t === 'administrative_area_level_1') state = c.short_name;
+          if (t === 'postal_code') zip = c.long_name;
+          if (t === 'country') country = c.long_name;
+        }
+        setBillingAddress(street.trim());
+        setBillingCity(city);
+        setBillingState(state);
+        setBillingZip(zip);
+        setBillingCountry(country);
+      });
+    }
+
+    if (window.google?.maps?.places) {
+      initAutocomplete();
+    } else {
+      window.addEventListener('google-maps-loaded', initAutocomplete);
+    }
+
+    return () => {
+      window.removeEventListener('google-maps-loaded', initAutocomplete);
+      if (listener) window.google.maps.event.removeListener(listener);
+    };
   }, []);
 
   async function submit(e) {

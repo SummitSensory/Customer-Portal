@@ -283,7 +283,8 @@ tr:hover td { background: #fcfbf7; }
 
 .top {
   height: 52px; display: flex; align-items: center; gap: 14px;
-  padding: 0 20px; background: #fff; border-bottom: 1px solid var(--line);
+  padding: 0 max(20px, env(safe-area-inset-right)) 0 max(20px, env(safe-area-inset-left));
+  background: #fff; border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: 30; flex: none;
 }
 .brand { display: flex; align-items: center; gap: 10px; }
@@ -302,7 +303,7 @@ tr:hover td { background: #fcfbf7; }
 .nav { padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
 .nav button {
   display: flex; align-items: center; gap: 9px;
-  padding: 9px 10px; border-radius: 9px;
+  padding: 9px 10px; border-radius: 9px; min-height: 40px;
   font-size: 13.5px; font-weight: 500; color: var(--ink);
   cursor: pointer; border: none; background: none;
   text-align: left; width: 100%; transition: background .12s;
@@ -315,6 +316,18 @@ tr:hover td { background: #fcfbf7; }
   text-transform: uppercase; color: var(--mut);
   padding: 14px 10px 4px;
 }
+
+/* ── Reward nav items (Refer a Friend / Showcase) ── */
+.lab.reward-lab { color: var(--ok); display: flex; align-items: center; gap: 5px; }
+.nav button.reward {
+  background: var(--ok-lt);
+  border-left: 3px solid var(--ok);
+  border-radius: 0 9px 9px 0;
+  color: #14532d;
+  font-weight: 600;
+}
+.nav button.reward:hover { background: #c7f0d5; }
+.nav button.reward.on { background: var(--ok); border-left-color: var(--ok); color: #fff; }
 .badge {
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--sun); color: #fff;
@@ -610,7 +623,7 @@ tr:hover td { background: #fcfbf7; }
 
 .mob-drawer-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 16px 12px;
+  padding: max(14px, env(safe-area-inset-top)) 16px 12px;
   border-bottom: 1px solid var(--line);
   position: sticky; top: 0; background: #fff; z-index: 1;
   flex: none;
@@ -643,6 +656,14 @@ tr:hover td { background: #fcfbf7; }
   .side { display: none; }
   .main { padding: 16px; }
   .toast { bottom: 16px; }
+  /* Larger tap targets in the mobile drawer — easier to hit with a thumb */
+  .mob-drawer .nav button { min-height: 46px; padding: 11px 12px; font-size: 14px; }
+  .mob-drawer .ni { font-size: 17px; }
+  .mob-drawer .nav button.reward { border-radius: 0 10px 10px 0; }
+  .mob-close, .mob-menu-btn { min-width: 40px; min-height: 40px; }
+  /* Jotform / invoice embeds — fixed pixel heights don't fit small screens */
+  .jf-embed { height: min(75vh, 620px) !important; min-height: 380px !important; }
+  .mob-drawer { padding-bottom: env(safe-area-inset-bottom, 0px); }
 }
 @media (max-width: 560px) {
   .row { flex-direction: column; }
@@ -652,4 +673,5 @@ tr:hover td { background: #fcfbf7; }
   .card { padding: 14px; }
   .main { padding: 12px; }
   .who > span { max-width: 110px; }
+  .jf-embed { height: 65vh !important; min-height: 340px !important; }
 }

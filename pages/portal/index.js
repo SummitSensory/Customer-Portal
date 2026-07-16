@@ -26,9 +26,9 @@ const ORDER_TABS = [
   { id: 'files',        label: 'Files & Documents',  icon: '📄' },
   { id: 'invoice',      label: 'Invoice & Payment',  icon: '💰' },
   { id: 'messages',     label: 'Messages',           icon: '💬' },
-  { id: 'referral',     label: 'Refer a Friend',     icon: '🎁' },
-  { id: 'showcase',     label: 'Photo & Video Showcase', icon: '📸' },
   { id: 'contact_us',   label: 'Contact Us',         icon: '📞' },
+  { id: 'referral',     label: 'Refer a Friend',     icon: '🎁', reward: true },
+  { id: 'showcase',     label: 'Photo & Video Showcase', icon: '📸', reward: true },
 ];
 
 // ── Main portal ───────────────────────────────────────────────────────────────
@@ -225,18 +225,22 @@ export default function CustomerPortal() {
 
               <div className="lab">My Order</div>
 
-              {ORDER_TABS.map(tab => (
-                <button
-                  key={tab.id}
-                  className={activeTab === tab.id ? 'on' : ''}
-                  onClick={() => setActiveTab(tab.id)}
-                >
-                  <span className="ni">{tab.icon}</span>
-                  {tab.label}
-                  {tab.id === 'messages' && unreadMessages > 0 && (
-                    <span className="badge">{unreadMessages}</span>
+              {ORDER_TABS.map((tab, i) => (
+                <Fragment key={tab.id}>
+                  {tab.reward && !ORDER_TABS[i - 1]?.reward && (
+                    <div className="lab reward-lab">🌟 Earn Rewards</div>
                   )}
-                </button>
+                  <button
+                    className={`${activeTab === tab.id ? 'on' : ''}${tab.reward ? ' reward' : ''}`}
+                    onClick={() => setActiveTab(tab.id)}
+                  >
+                    <span className="ni">{tab.icon}</span>
+                    {tab.label}
+                    {tab.id === 'messages' && unreadMessages > 0 && (
+                      <span className="badge">{unreadMessages}</span>
+                    )}
+                  </button>
+                </Fragment>
               ))}
             </div>
           </nav>
@@ -301,18 +305,22 @@ export default function CustomerPortal() {
               );
             })}
             <div className="lab">My Order</div>
-            {ORDER_TABS.map(tab => (
-              <button
-                key={tab.id}
-                className={activeTab === tab.id ? 'on' : ''}
-                onClick={() => { setActiveTab(tab.id); setMobileNavOpen(false); }}
-              >
-                <span className="ni">{tab.icon}</span>
-                {tab.label}
-                {tab.id === 'messages' && unreadMessages > 0 && (
-                  <span className="badge">{unreadMessages}</span>
+            {ORDER_TABS.map((tab, i) => (
+              <Fragment key={tab.id}>
+                {tab.reward && !ORDER_TABS[i - 1]?.reward && (
+                  <div className="lab reward-lab">🌟 Earn Rewards</div>
                 )}
-              </button>
+                <button
+                  className={`${activeTab === tab.id ? 'on' : ''}${tab.reward ? ' reward' : ''}`}
+                  onClick={() => { setActiveTab(tab.id); setMobileNavOpen(false); }}
+                >
+                  <span className="ni">{tab.icon}</span>
+                  {tab.label}
+                  {tab.id === 'messages' && unreadMessages > 0 && (
+                    <span className="badge">{unreadMessages}</span>
+                  )}
+                </button>
+              </Fragment>
             ))}
           </div>
         </div>
@@ -1216,6 +1224,7 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
               allow="geolocation; microphone; camera; fullscreen; payment"
               src="https://form.jotform.com/${formId}"
               frameborder="0"
+              class="jf-embed"
               style="min-width:100%;max-width:100%;height:539px;border:none;display:block;margin-bottom:16px;"
               scrolling="no"
             ></iframe>`,
@@ -2016,6 +2025,7 @@ function InvoiceTab({ order }) {
             <iframe
               src={order.invoiceLink}
               title="Invoice"
+              className="jf-embed"
               style={{ width: '100%', height: 700, border: 'none', display: 'block' }}
               allow="fullscreen"
             />
@@ -2327,6 +2337,7 @@ function ShowcaseTab({ order }) {
               allow="geolocation; microphone; camera; fullscreen; payment"
               src="https://form.jotform.com/${formId}"
               frameborder="0"
+              class="jf-embed"
               style="min-width:100%;max-width:100%;height:539px;border:none;display:block;margin-bottom:16px;"
               scrolling="no"
             ></iframe>`,

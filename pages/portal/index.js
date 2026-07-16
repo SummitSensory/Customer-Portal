@@ -1770,11 +1770,50 @@ function StatusTab({ order }) {
 // ── Tab: Installation ─────────────────────────────────────────────────────────
 
 function InstallationTab({ order, onNav }) {
-  function getEmbedUrl(url) {
-    const ytMatch = url.match(/(?:youtu\.be\/|youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{11})/);
-    if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}?rel=0`;
-    const vimeoMatch = url.match(/vimeo\.com\/(\d+)/);
-    if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[1]}`;
+  /**
+   * Returns { type: 'iframe'|'video', src } for any URL we can embed
+   * inline, or null if it has to stay an external link. Covers YouTube
+   * (watch/short/shorts/already-embed links), Vimeo (public + private
+   * "unlisted" links with a hash), Loom, Google Drive, Dropbox, and
+   * direct video files (served straight from Monday or anywhere else).
+   */
+  function getEmbed(url) {
+    if (!url) return null;
+
+    // YouTube — watch, youtu.be, shorts, or an already-embed URL
+    const yt = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|shorts\/|embed\/))([a-zA-Z0-9_-]{11})/);
+    if (yt) return { type: 'iframe', src: `https://www.youtube.com/embed/${yt[1]}?rel=0` };
+
+    // Vimeo — public (vimeo.com/12345) or private/unlisted, which carries a
+    // share hash either as a path segment (vimeo.com/12345/abcdef1234) or a
+    // query param (player.vimeo.com/video/12345?h=abcdef1234)
+    const vimeoId = url.match(/vimeo\.com\/(?:video\/)?(\d+)/i);
+    if (vimeoId) {
+      const pathHash = url.match(/vimeo\.com\/\d+\/([a-z0-9]+)/i)?.[1];
+      const queryHash = url.match(/[?&]h=([a-z0-9]+)/i)?.[1];
+      const hash = pathHash || queryHash;
+      return { type: 'iframe', src: `https://player.vimeo.com/video/${vimeoId[1]}${hash ? `?h=${hash}` : ''}` };
+    }
+
+    // Loom
+    const loom = url.match(/loom\.com\/share\/([a-zA-Z0-9]+)/);
+    if (loom) return { type: 'iframe', src: `https://www.loom.com/embed/${loom[1]}` };
+
+    // Google Drive shared file
+    const drive = url.match(/drive\.google\.com\/file\/d\/([^/]+)/);
+    if (drive) return { type: 'iframe', src: `https://drive.google.com/file/d/${drive[1]}/preview` };
+
+    // Dropbox share link — force a direct/raw stream instead of the preview page
+    if (url.includes('dropbox.com') && /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url)) {
+      const direct = url.replace('www.dropbox.com', 'dl.dropboxusercontent.com').replace(/[?&]dl=0/, '');
+      return { type: 'video', src: direct };
+    }
+
+    // A direct video file — Monday-hosted assets, S3, etc.
+    if (/\.(mp4|mov|webm|m4v|ogg)(\?|$)/i.test(url)) {
+      return { type: 'video', src: url };
+    }
+
     return null;
   }
 
@@ -1871,22 +1910,37 @@ function InstallationTab({ order, onNav }) {
                 Watch these before your delivery to familiarize yourself with the installation process.
               </p>
               {videos.map((url, i) => {
-                const embedUrl = getEmbedUrl(url);
-                return embedUrl ? (
+                const embed = getEmbed(url);
+                if (!embed) {
+                  return (
+                    <div key={i} style={{ marginBottom: 10 }}>
+                      <a href={url} target="_blank" rel="noreferrer" className="btn btn-ghost">▶ View Video →</a>
+                    </div>
+                  );
+                }
+                if (embed.type === 'video') {
+                  return (
+                    <div key={i} style={{ marginBottom: i < videos.length - 1 ? 20 : 0 }}>
+                      <video
+                        src={embed.src}
+                        controls
+                        playsInline
+                        style={{ width: '100%', maxHeight: 480, borderRadius: 10, background: '#000', display: 'block' }}
+                      />
+                    </div>
+                  );
+                }
+                return (
                   <div key={i} style={{ marginBottom: i < videos.length - 1 ? 20 : 0 }}>
                     <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0, borderRadius: 10, overflow: 'hidden', background: '#000' }}>
                       <iframe
-                        src={embedUrl}
+                        src={embed.src}
                         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                         allowFullScreen
                         title={`Installation Video ${i + 1}`}
                       />
                     </div>
-                  </div>
-                ) : (
-                  <div key={i} style={{ marginBottom: 10 }}>
-                    <a href={url} target="_blank" rel="noreferrer" className="btn btn-ghost">▶ View Video →</a>
                   </div>
                 );
               })}

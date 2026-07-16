@@ -94,6 +94,11 @@ export default async function handler(req, res) {
           ? `Same as primary contact`
           : `${billingName} | ${billingPhone} | ${billingEmail}`;
 
+        // Write the confirmed address immediately (no staff review step) so it's
+        // reflected right away as the Billing tab's "on file" address and as the
+        // default ship-to address on the Delivery Logistics tab.
+        await updateOrderColumn(order.id, COLS.billingAddressConfirmed, addressText);
+
         await postTaggedUpdate(order.id, 'PORTAL: Billing Information',
           `Billing Address: ${addressText}\nBilling Contact: ${contactText}\nSubmitted: ${new Date().toLocaleDateString()}`
         );

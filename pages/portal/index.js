@@ -248,7 +248,7 @@ export default function CustomerPortal() {
           {/* Main content */}
           <main className="main">
             {activeTab === 'contact'      && <ContactTab      order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('billing')} />}
-            {activeTab === 'billing'      && <BillingTab      order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('delivery')} onBack={() => setActiveTab('contact')} />}
+            {activeTab === 'billing'      && <BillingTab      order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('delivery')} onBack={() => setActiveTab('contact')} onOrderRefresh={loadOrder} />}
             {activeTab === 'delivery'     && <DeliveryTab     order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('color')} onBack={() => setActiveTab('billing')} />}
             {activeTab === 'color'        && <ColorTab        order={order} completions={completions} markComplete={markComplete} showToast={showToast} colorForms={colorForms} onNext={() => setActiveTab('documents')} onBack={() => setActiveTab('delivery')} />}
             {activeTab === 'documents'    && <DocumentsTab    order={order} completions={completions} markComplete={markComplete} showToast={showToast} docForms={docForms} onNext={() => setActiveTab('dashboard')} onBack={() => setActiveTab('color')} />}
@@ -464,7 +464,7 @@ function ContactTab({ order, completions, markComplete, showToast, onNext }) {
 
 // ── Tab: Billing Information ──────────────────────────────────────────────────
 
-function BillingTab({ order, completions, markComplete, showToast, onNext, onBack }) {
+function BillingTab({ order, completions, markComplete, showToast, onNext, onBack, onOrderRefresh }) {
   // Bill-to address is pre-filled from Monday.com (Manufacturing Process board) — editable, no toggle
   const [billingAddress, setBillingAddress] = useState(order.billingAddressOnFile || '');
   const [billingAddressSuite, setBillingAddressSuite] = useState('');
@@ -545,6 +545,9 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
       });
       markComplete('billing');
       showToast('Billing information saved.');
+      // Refresh the order from Monday so the just-confirmed address is picked up
+      // immediately as the Delivery Logistics tab's default ship-to address.
+      await onOrderRefresh?.();
       onNext();
     } catch { showToast('Error saving. Please try again.'); }
     finally { setSaving(false); }

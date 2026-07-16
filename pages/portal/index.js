@@ -2300,6 +2300,22 @@ function ReferralTab({ order, showToast }) {
 
 // ── Tab: Photo & Video Showcase ─────────────────────────────────────────────────
 
+// Jotform query-param keys that prefill the Showcase form's Full Name,
+// Organization, and Email Address fields (confirmed against the live form —
+// Jotform's internal field "name" attributes don't always match what it
+// actually reads for URL prefill, so these were verified empirically).
+const SHOWCASE_PREFILL_KEYS = { fullName: 'q2_textbox0', organization: 'yourName', email: 'q3_email1' };
+
+function buildShowcaseFormUrl(formId, order) {
+  const params = new URLSearchParams();
+  const orgName = order?.name ? order.name.split(' - ')[0].trim() : '';
+  if (order?.contactName) params.set(SHOWCASE_PREFILL_KEYS.fullName, order.contactName);
+  if (orgName) params.set(SHOWCASE_PREFILL_KEYS.organization, orgName);
+  if (order?.contactEmail) params.set(SHOWCASE_PREFILL_KEYS.email, order.contactEmail);
+  const qs = params.toString();
+  return `https://form.jotform.com/${formId}${qs ? `?${qs}` : ''}`;
+}
+
 function ShowcaseTab({ order }) {
   const [formSubmitted, setFormSubmitted] = useState(false);
   const [emailSending, setEmailSending] = useState(false);
@@ -2307,6 +2323,7 @@ function ShowcaseTab({ order }) {
   const rawFormId = order?.showcaseFormId;
   const formId = typeof rawFormId === 'string' ? rawFormId.trim() : '';
   const iframeId = formId ? `JotFormIFrame-${formId}` : null;
+  const formSrc = formId ? buildShowcaseFormUrl(formId, order) : '';
 
   useEffect(() => {
     if (!formId || !iframeId) return;
@@ -2389,7 +2406,7 @@ function ShowcaseTab({ order }) {
               title="Photo & Video Showcase Form"
               allowtransparency="true"
               allow="geolocation; microphone; camera; fullscreen; payment"
-              src="https://form.jotform.com/${formId}"
+              src="${formSrc}"
               frameborder="0"
               class="jf-embed"
               style="min-width:100%;max-width:100%;height:539px;border:none;display:block;margin-bottom:16px;"

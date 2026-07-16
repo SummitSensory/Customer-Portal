@@ -30,7 +30,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Upload form is not set up yet. Please contact us directly.' });
   }
 
-  const uploadUrl = `https://form.jotform.com/${order.showcaseFormId}`;
+  // Prefill Full Name / Organization / Email — same param keys used by the
+  // embedded form in ShowcaseTab (verified against the live Jotform form;
+  // its internal field names don't match what it actually reads for prefill).
+  const prefill = new URLSearchParams();
+  const orgName = order.name ? order.name.split(' - ')[0].trim() : '';
+  if (order.contactName) prefill.set('q2_textbox0', order.contactName);
+  if (orgName) prefill.set('yourName', orgName);
+  if (order.contactEmail) prefill.set('q3_email1', order.contactEmail);
+  const prefillQs = prefill.toString();
+  const uploadUrl = `https://form.jotform.com/${order.showcaseFormId}${prefillQs ? `?${prefillQs}` : ''}`;
 
   try {
     await sendUploadLinkEmail(session.email, order.contactName || order.firstName || '', uploadUrl);

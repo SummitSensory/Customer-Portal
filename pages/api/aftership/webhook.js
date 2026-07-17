@@ -1,11 +1,18 @@
 /**
  * POST /api/aftership/webhook
  *
- * Receives AfterShip tracking-update webhooks and mirrors the live carrier
- * status onto the matching Therapy Equipment & Accessories subitem's
- * "Carrier Status" column on Monday — so staff see In Transit / Out for
- * Delivery / Delivered / Exception on the board itself, not just in the
- * portal (which already shows live status on demand via /api/aftership/track).
+ * Receives AfterShip tracking-update webhooks and handles two boards:
+ *
+ * 1. Therapy Equipment & Accessories — mirrors the live carrier status onto
+ *    the matching subitem's "Carrier Status" column on Monday (staff-facing
+ *    only, no customer email).
+ *
+ * 2. Sensory Gym Frame / Therapy Mats & Padding (main Manufacturing Process
+ *    board) — if the customer has turned on "Freight Email Alerts" in their
+ *    portal, emails them on the meaningful status changes (In Transit, Out
+ *    for Delivery, Delivered, Exception). Deduped per shipment via the
+ *    "Frame/Mats Last Notified Status" columns so repeat checkpoints with the
+ *    same tag don't re-send.
  *
  * One-time setup required in the AfterShip dashboard (Developers → Webhooks):
  *   URL: https://portal.summitsensory.com/api/aftership/webhook
@@ -16,13 +23,22 @@
  * env vars; verified below (constant-time compare) before anything else runs.
  * Older AfterShip accounts that DO sign requests with HMAC-SHA256 in an
  * `aftership-hmac-sha256` header are also supported as a fallback.
- * Only shipments tracked via the Therapy Equipment & Accessories board are
- * acted on — Frame/Mats tracking numbers are safely ignored (no match found).
  */
 
 import crypto from 'crypto';
-import { findAccessorySubitemByTracking, updateAccessoryCarrierStatus } from '../../../lib/monday';
-import { labelForTag } from '../../../lib/aftership';
+import {
+  findAccessorySubitemByTracking,
+  updateAccessoryCarrierStatus,
+  findOrderByFreightTracking,
+  updateFreightNotifyTag,
+} from '../../../lib/monday';
+import { labelForTag, publicUrl } from '../../../lib/aftership';
+import { notifyCustomerFreightUpdate } from '../../../lib/email';
+
+// Only these carrier statuses are worth emailing a customer about — skip the
+// noisy/early ones (Pending, InfoReceived) that don't tell them anything new.
+const NOTIFY_WORTHY_TAGS = new Set(['InTransit', 'OutForDelivery', 'Delivered', 'Exception']);
+const SHIPMENT_LABELS = { frame: 'Sensory Gym Frame', mats: 'Therapy Mats & Padding' };
 
 // Needed for the HMAC fallback path, which must sign the exact raw bytes.
 export const config = {
@@ -105,13 +121,46 @@ export default async function handler(req, res) {
   }
 
   try {
+    // 1. Therapy Equipment & Accessories — Monday-board-only sync (no customer email).
     const subitem = await findAccessorySubitemByTracking(slug, trackingNumber);
-    if (!subitem) {
-      // Not one of ours (e.g. belongs to Frame/Mats) — nothing to sync.
+    if (subitem) {
+      await updateAccessoryCarrierStatus(subitem.id, labelForTag(tag));
+      return res.status(200).json({ ok: true, matched: true, board: 'accessories', subitemId: subitem.id });
+    }
+
+    // 2. Sensory Gym Frame / Therapy Mats & Padding — customer-facing email,
+    // gated on their opt-in preference and deduped against the last tag sent.
+    const order = await findOrderByFreightTracking(slug, trackingNumber);
+    if (!order) {
+      // Not one of ours at all.
       return res.status(200).json({ ok: true, matched: false });
     }
-    await updateAccessoryCarrierStatus(subitem.id, labelForTag(tag));
-    return res.status(200).json({ ok: true, matched: true, subitemId: subitem.id });
+
+    if (!NOTIFY_WORTHY_TAGS.has(tag)) {
+      return res.status(200).json({ ok: true, matched: true, board: 'freight', skipped: 'Tag not notify-worthy.' });
+    }
+    if (!order.freightNotifyEnabled) {
+      return res.status(200).json({ ok: true, matched: true, board: 'freight', skipped: 'Customer has not opted in.' });
+    }
+    if (!order.customerEmail) {
+      return res.status(200).json({ ok: true, matched: true, board: 'freight', skipped: 'No customer email on order.' });
+    }
+    const statusLabel = labelForTag(tag);
+    if (order.lastNotifiedTag === statusLabel) {
+      return res.status(200).json({ ok: true, matched: true, board: 'freight', skipped: 'Already notified for this status.' });
+    }
+
+    await notifyCustomerFreightUpdate(
+      order.customerEmail,
+      order.contactName,
+      order.orderName,
+      SHIPMENT_LABELS[order.shipmentKey] || 'Shipment',
+      statusLabel,
+      publicUrl(slug, trackingNumber)
+    );
+    await updateFreightNotifyTag(order.itemId, order.shipmentKey, statusLabel);
+
+    return res.status(200).json({ ok: true, matched: true, board: 'freight', notified: order.customerEmail });
   } catch (err) {
     console.error('AfterShip webhook processing error:', err.message);
     // Still 200 — a transient error on our side shouldn't make AfterShip retry

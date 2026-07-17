@@ -1633,6 +1633,27 @@ function StatusTab({ order }) {
   const [expandedTracking, setExpandedTracking] = useState({});
   const [trackingData, setTrackingData] = useState({});
   const [loadingTracking, setLoadingTracking] = useState({});
+  const [notifyEnabled, setNotifyEnabled] = useState(Boolean(order.freightNotifyEnabled));
+  const [notifySaving, setNotifySaving] = useState(false);
+
+  async function toggleFreightNotify() {
+    if (notifySaving) return;
+    const next = !notifyEnabled;
+    setNotifyEnabled(next); // optimistic
+    setNotifySaving(true);
+    try {
+      const res = await fetch('/api/portal/freight-notify-preference', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      setNotifyEnabled(!next); // revert on failure
+    } finally {
+      setNotifySaving(false);
+    }
+  }
 
   async function loadTracking(trackingNumber, slug) {
     if (trackingData[trackingNumber] || loadingTracking[trackingNumber]) return;
@@ -1721,6 +1742,19 @@ function StatusTab({ order }) {
             );
           })}
         </div>
+      </div>
+
+      {/* Freight email alerts opt-in */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <label className="sw" style={{ cursor: 'pointer' }}>
+          <div className={`toggle${notifyEnabled ? ' on' : ''}`} onClick={toggleFreightNotify} />
+          <span>
+            <strong>Email me when my shipment status changes</strong>
+            <div style={{ fontSize: 12.5, color: 'var(--mut)', marginTop: 2 }}>
+              We'll email you when your Frame or Mats shipment ships, goes out for delivery, is delivered, or hits an exception.
+            </div>
+          </span>
+        </label>
       </div>
 
       {/* Frame shipment */}

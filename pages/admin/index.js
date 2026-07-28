@@ -66,6 +66,7 @@ export default function AdminPortal() {
   const readyToShip = orders.filter(o =>
     o.stages?.[o.stageIndex]?.key === 'ready_to_ship'
   ).length;
+  const needsReply = orders.filter(o => o.messageStatus === 'Needs Reply').length;
 
   return (
     <>
@@ -100,6 +101,9 @@ export default function AdminPortal() {
                   {tab.label}
                   {tab.id === 'orders' && needsAttention > 0 && (
                     <span className="badge">{needsAttention}</span>
+                  )}
+                  {tab.id === 'messages' && needsReply > 0 && (
+                    <span className="badge" style={{ background: 'var(--rose)' }}>{needsReply}</span>
                   )}
                 </button>
               ))}
@@ -187,12 +191,23 @@ function DashboardTab({ orders, needsAttention, readyToShip, onNav }) {
 const FIXED_COLS = ['_name', '_actions'];
 
 // Default columns shown on first visit
-const DEFAULT_COL_IDS = ['_name', 'email__1', 'color_mkvw7b8', 'status__1', 'lookup_mm1kcbb5', '_balance', '_actions'];
+const DEFAULT_COL_IDS = ['_name', 'email__1', 'color_mkvw7b8', 'status__1', '_progress', 'lookup_mm1kcbb5', '_balance', '_actions'];
+
+// Setup-progress checklist — Contact/Billing/Delivery/Colors/Documents, so staff
+// can see at a glance what a customer still needs help finishing.
+const PROGRESS_STEPS = [
+  { key: 'contact',   label: 'Contact' },
+  { key: 'billing',   label: 'Billing' },
+  { key: 'delivery',  label: 'Delivery' },
+  { key: 'colors',    label: 'Colors' },
+  { key: 'documents', label: 'Documents' },
+];
 
 function getCellValue(order, colId) {
   // Special virtual columns
   if (colId === '_name') return { type: 'name', value: order.name };
   if (colId === '_balance') return { type: 'balance', value: order.balance };
+  if (colId === '_progress') return { type: 'progress', value: order.progress };
   if (colId === '_actions') return { type: 'actions' };
   // Known parsed fields
   const knownMap = {
@@ -239,6 +254,7 @@ function OrdersTab({ orders, onRefresh, showToast }) {
         const virtual = [
           { id: '_name', title: 'Order Name', type: 'name' },
           { id: '_balance', title: 'Balance Due', type: 'balance' },
+          { id: '_progress', title: 'Setup Progress', type: 'progress' },
           { id: '_actions', title: 'Actions', type: 'actions' },
         ];
         setAvailableCols([...virtual, ...(d.columns || [])]);
@@ -426,6 +442,10 @@ function OrdersTab({ orders, onRefresh, showToast }) {
                         </td>
                       );
 
+                      if (cell.type === 'progress') return (
+                        <td key={col.id}><ProgressDots progress={cell.value} /></td>
+                      );
+
                       if (cell.type === 'actions') return (
                         <td key={col.id}>
                           {ed ? (
@@ -514,7 +534,7 @@ function CustomersTab({ orders }) {
       <div className="card pad0">
         <table>
           <thead>
-            <tr><th>Customer</th><th>Order</th><th>Product</th><th>Balance</th><th>Status</th></tr>
+            <tr><th>Customer</th><th>Order</th><th>Product</th><th>Setup Progress</th><th>Balance</th><th>Status</th></tr>
           </thead>
           <tbody>
             {orders.map(order => (
@@ -525,6 +545,7 @@ function CustomersTab({ orders }) {
                 </td>
                 <td style={{ fontSize: 13 }}>{order.name}</td>
                 <td style={{ fontSize: 13, color: 'var(--mut)' }}>{order.productType || '—'}</td>
+                <td><ProgressDots progress={order.progress} /></td>
                 <td style={{ fontWeight: 600, color: order.balance > 0 ? 'var(--rose)' : 'var(--ok)' }}>
                   {order.balance > 0 ? `$${order.balance.toFixed(2)}` : 'Paid'}
                 </td>
@@ -686,15 +707,28 @@ function AdminMessagesTab({ orders, showToast }) {
     }
   }
 
+  // Needs-reply threads float to the top so staff can work the queue instead
+  // of hunting through every order for new customer messages.
+  const sortedOrders = [...orders].sort((a, b) => {
+    const aNeeds = a.messageStatus === 'Needs Reply' ? 1 : 0;
+    const bNeeds = b.messageStatus === 'Needs Reply' ? 1 : 0;
+    return bNeeds - aNeeds;
+  });
+
   return (
     <>
       <div className="ph"><h2>Messages</h2><p>Communicate with customers directly through their portal.</p></div>
       <div className="card pad0">
         <div className="msg-wrap">
           <div className="thr-list">
-            {orders.map(o => (
+            {sortedOrders.map(o => (
               <div key={o.id} className={`thr${selectedOrder?.id === o.id ? ' on' : ''}`} onClick={() => loadMessages(o)}>
-                <div className="n">{o.name}</div>
+                <div className="n" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {o.messageStatus === 'Needs Reply' && (
+                    <span title="Needs reply" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--rose)', flexShrink: 0, display: 'inline-block' }} />
+                  )}
+                  {o.name}
+                </div>
                 <div className="p">{o.customerEmail || 'No email'}</div>
               </div>
             ))}
@@ -984,6 +1018,37 @@ function UsersSettings() {
 }
 
 // ── Shared Components ─────────────────────────────────────────────────────────
+
+/**
+ * Compact 5-dot setup-progress readout (Contact/Billing/Delivery/Colors/
+ * Documents) so staff can tell what a customer still needs help completing
+ * without opening the order. Reads the same ✅/🚫/N/A labels the portal
+ * itself writes via markSectionComplete.
+ */
+function ProgressDots({ progress }) {
+  if (!progress) return <span style={{ color: 'var(--mut)' }}>—</span>;
+  return (
+    <div style={{ display: 'flex', gap: 5 }}>
+      {PROGRESS_STEPS.map(step => {
+        const label = progress[step.key];
+        const done = label === '✅';
+        const na = label === 'N/A' || label === '';
+        const color = done ? 'var(--ok)' : na ? 'var(--line)' : 'var(--rose)';
+        return (
+          <span
+            key={step.key}
+            title={`${step.label}: ${label || 'Not started'}`}
+            style={{
+              width: 9, height: 9, borderRadius: '50%',
+              background: color, display: 'inline-block',
+              flexShrink: 0,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
 
 function StatusPill({ status }) {
   if (!status) return <span style={{ color: 'var(--mut)' }}>—</span>;

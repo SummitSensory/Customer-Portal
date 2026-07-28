@@ -7,7 +7,7 @@ import { parse } from 'cookie';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { getOrderMessages, postOrderMessage, getOrderById } from '../../../lib/monday';
+import { getOrderMessages, postOrderMessage, getOrderById, setStatusLabel } from '../../../lib/monday';
 import { notifyTeamNewMessage } from '../../../lib/email';
 
 async function getIdentity(req, res) {
@@ -52,7 +52,7 @@ export default async function handler(req, res) {
       // Tag all portal messages so they can be isolated from internal Monday.com updates
       const message = await postOrderMessage(orderId, `[PORTAL]\n${body.trim()}`);
 
-      // Notify team when customer sends a message
+      // Notify team + flag the queue when a customer sends a message
       if (identity.role === 'customer') {
         const order = await getOrderById(orderId);
         await notifyTeamNewMessage(
@@ -60,6 +60,7 @@ export default async function handler(req, res) {
           identity.email,
           body.trim().slice(0, 100)
         ).catch(console.error);
+        await setStatusLabel(orderId, 'messageStatus', 'Needs Reply').catch(console.error);
       }
 
       return res.status(201).json({ message });

@@ -13,7 +13,7 @@
  * email the customer when the update comes from a staff email domain.
  */
 
-import { getOrderById, getOrderByEmail } from '../../../lib/monday';
+import { getOrderById, getOrderByEmail, setStatusLabel } from '../../../lib/monday';
 import { sendCustomerReplyNotification } from '../../../lib/email';
 
 const STAFF_DOMAIN = process.env.STAFF_EMAIL_DOMAIN || 'summitsensorygym.com';
@@ -34,6 +34,12 @@ export default async function handler(req, res) {
   if (!isStaff) return res.status(200).json({ skipped: 'Non-staff update, no notification sent.' });
 
   try {
+    // Staff replied — clear the messaging queue flag regardless of whether the
+    // update was on-topic (a message reply) or something else staff-only; keeps
+    // the "Message Status" column from getting stuck on "Needs Reply" if staff
+    // reply to something unrelated to the portal Messages thread.
+    await setStatusLabel(itemId, 'messageStatus', 'Replied').catch(() => {});
+
     const order = await getOrderById(itemId);
     if (!order?.customerEmail) return res.status(200).json({ skipped: 'No customer email on order.' });
 

@@ -256,7 +256,7 @@ export default function CustomerPortal() {
             {activeTab === 'status'       && <StatusTab       order={order} />}
             {activeTab === 'installation' && <InstallationTab order={order} onNav={setActiveTab} />}
             {activeTab === 'files'        && <FilesTab        files={files} />}
-            {activeTab === 'invoice'      && <InvoiceTab      order={order} />}
+            {activeTab === 'invoice'      && <InvoiceTab      order={order} showToast={showToast} onRefresh={loadOrder} />}
             {activeTab === 'messages'     && <MessagesTab     order={order} messages={messages} onRefresh={loadMessages} showToast={showToast} />}
             {activeTab === 'referral'     && <ReferralTab     order={order} showToast={showToast} />}
             {activeTab === 'showcase'     && <ShowcaseTab     order={order} />}
@@ -344,6 +344,18 @@ async function saveSetup(tab, data) {
     throw new Error(d.error || 'Save failed.');
   }
   return res.json();
+}
+
+/** Read a File object into a base64 string (stripped of the data: URL prefix) for
+ *  the tax exemption certificate upload — sent as JSON to /api/portal/setup,
+ *  which forwards it to Monday's multipart file-upload endpoint server-side. */
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 // ── Tab: Contact Information ──────────────────────────────────────────────────
@@ -2101,7 +2113,7 @@ function FilesTab({ files }) {
 
 // ── Tab: Invoice & Payment ────────────────────────────────────────────────────
 
-function InvoiceTab({ order }) {
+function InvoiceTab({ order, showToast, onRefresh }) {
   return (
     <>
       <div className="ph"><h2>Invoice & Payment</h2><p>View your current invoice and submit payment securely.</p></div>
@@ -2119,6 +2131,9 @@ function InvoiceTab({ order }) {
           Questions about your invoice? <a href="mailto:orders@summitsensory.com" style={{ color: 'var(--moss)' }}>orders@summitsensory.com</a>
         </p>
       </div>
+
+      {/* Tax exemption */}
+      <TaxExemptionCard order={order} showToast={showToast} onRefresh={onRefresh} />
 
       {order.invoiceLink ? (
         <>
@@ -2163,6 +2178,125 @@ function InvoiceTab({ order }) {
         </div>
       )}
     </>
+  );
+}
+
+// ── Card: Tax Exemption Certificate (within Invoice & Payment) ───────────────
+// Rebuilt 2026-07-28 — originally built 2026-07-11, accidentally dropped from
+// the codebase in a later commit. Recovered from git history (commit 45d47db)
+// since Monday still had live customer data tagged with this feature's exact
+// update tags ([PORTAL: Tax Exempt - No], [PORTAL: Tax Exemption Certificate
+// Uploaded]), confirming it worked before it disappeared.
+
+function TaxExemptionCard({ order, showToast, onRefresh }) {
+  // 'yes' | 'no' | null — tracks the selector's current on-screen state, seeded
+  // from whatever's already saved on the order (color_mm55tjn2).
+  const alreadyYes = order.taxExemptStatus === 'Yes';
+  const alreadyNo = order.taxExemptStatus === 'No';
+  const [choice, setChoice] = useState(alreadyYes ? 'yes' : alreadyNo ? 'no' : null);
+  const [file, setFile] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  async function chooseNo() {
+    setChoice('no');
+    setSaving(true);
+    try {
+      await saveSetup('tax_exemption', { taxExempt: false });
+      showToast('Got it — sales tax will apply to your invoice.');
+      onRefresh?.();
+    } catch {
+      showToast('Error saving. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function chooseYes() {
+    setChoice('yes');
+  }
+
+  async function submitCertificate(e) {
+    e.preventDefault();
+    if (!file) {
+      showToast('Please select your tax exemption certificate to upload.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const fileBase64 = await fileToBase64(file);
+      await saveSetup('tax_exemption', {
+        taxExempt: true,
+        fileBase64,
+        fileName: file.name,
+        mimeType: file.type,
+      });
+      showToast("Certificate uploaded — we'll review it and remove sales tax once approved.");
+      setFile(null);
+      onRefresh?.();
+    } catch {
+      showToast('Error uploading your certificate. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="ch"><h3>Tax Exemption Certificate</h3></div>
+      <p style={{ fontSize: 13.5, lineHeight: 1.65, marginBottom: 16 }}>
+        If your organization is tax-exempt, upload a current tax exemption certificate below. Once verified, sales tax will be removed from your invoice. <strong>Without an approved certificate on file, applicable sales tax will be included on your invoice.</strong>
+      </p>
+
+      {alreadyYes && choice === 'yes' && !file && (
+        <div className="alert success" style={{ marginBottom: 16 }}>✅ Certificate on file. Upload a new file below only if you need to replace it.</div>
+      )}
+      {alreadyNo && choice === 'no' && (
+        <div style={{ padding: '10px 14px', background: 'var(--paper)', borderRadius: 8, fontSize: 13.5, color: 'var(--mut)', border: '1px solid var(--line)', marginBottom: 16 }}>
+          You've indicated your organization is not tax-exempt. Sales tax will apply to your invoice.
+        </div>
+      )}
+
+      {choice !== 'yes' ? (
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className={`btn ${choice === 'no' ? 'btn-moss' : 'btn-ghost'}`}
+            onClick={chooseNo}
+            disabled={saving}
+          >
+            No, we are not tax-exempt
+          </button>
+          <button type="button" className="btn btn-ghost" onClick={chooseYes} disabled={saving}>
+            Yes, we are tax-exempt
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={submitCertificate}>
+          <div className="field">
+            <label><span style={{ color: 'var(--rose)' }}>*</span> Upload Tax Exemption Certificate</label>
+            <input
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png"
+              onChange={e => setFile(e.target.files?.[0] || null)}
+              required
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+            <button type="submit" className="btn btn-moss" disabled={saving}>
+              {saving ? 'Uploading…' : 'Upload Certificate'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => { setChoice(alreadyNo ? 'no' : null); setFile(null); }}
+              disabled={saving}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
   );
 }
 

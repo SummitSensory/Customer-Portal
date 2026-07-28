@@ -2172,6 +2172,14 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
 
+  // Staff reply in Monday (or in the Admin Messages tab) doesn't push to the
+  // customer in real time — poll while this tab is open so a staff reply shows
+  // up without the customer needing to reload the whole page.
+  useEffect(() => {
+    const interval = setInterval(() => { onRefresh(); }, 15000);
+    return () => clearInterval(interval);
+  }, [onRefresh]);
+
   async function send(e) {
     e.preventDefault();
     if (!body.trim()) return;

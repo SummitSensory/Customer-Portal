@@ -477,12 +477,24 @@ function ContactTab({ order, completions, markComplete, showToast, onNext }) {
 // ── Tab: Billing Information ──────────────────────────────────────────────────
 
 function BillingTab({ order, completions, markComplete, showToast, onNext, onBack, onOrderRefresh }) {
-  // Bill-to address is pre-filled from Monday.com (Manufacturing Process board) — editable, no toggle
-  const [billingAddress, setBillingAddress] = useState(order.billingAddressOnFile || '');
+  // Bill-to address pre-fill: order.billingAddressOnFile is a *single combined string*
+  // once the customer has already confirmed a billing address once (see lib/monday.js
+  // parseOrderItem comment) — street, city, state, zip, and country all joined together.
+  // The form below has separate street/city/state/zip/country inputs, so dumping that
+  // combined string into just the Street Address field would garble it there while
+  // leaving City/Country blank (both required) — and resaving would then re-concatenate
+  // the new city/country onto the old jumbled string. Only prefill the decomposed inputs
+  // from the raw, still-separate mirror fields (street-only + zip-only, before any
+  // confirmation); once a confirmed combined address exists, show it as read-only
+  // reference text instead and let the customer re-enter the components fresh.
+  // Found 2026-07-28 during full QA pass — same address-handling area as the long_text
+  // column bug fixed the same day.
+  const previouslyConfirmedAddress = order.billingAddressConfirmed || '';
+  const [billingAddress, setBillingAddress] = useState(previouslyConfirmedAddress ? '' : (order.billingAddressOnFile || ''));
   const [billingAddressSuite, setBillingAddressSuite] = useState('');
   const [billingCity, setBillingCity] = useState('');
   const [billingState, setBillingState] = useState('');
-  const [billingZip, setBillingZip] = useState(order.billingZipOnFile || '');
+  const [billingZip, setBillingZip] = useState(previouslyConfirmedAddress ? '' : (order.billingZipOnFile || ''));
   const [billingCountry, setBillingCountry] = useState('');
   const [sameContact, setSameContact] = useState(false);
   const [billingName, setBillingName] = useState('');
@@ -572,7 +584,9 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
       <form onSubmit={submit}>
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="ch"><h3>Bill-To Address <span style={{ color: 'var(--rose)', fontWeight: 400 }}>*</span></h3></div>
-          {(order.billingAddressOnFile || order.billingZipOnFile) && (
+          {previouslyConfirmedAddress ? (
+            <p style={{ fontSize: 13, color: 'var(--mut)', marginBottom: 16 }}>On file from your last submission: <b>{previouslyConfirmedAddress}</b>. Please re-enter below if anything has changed, or confirm it again.</p>
+          ) : (order.billingAddressOnFile || order.billingZipOnFile) && (
             <p style={{ fontSize: 13, color: 'var(--mut)', marginBottom: 16 }}>Pre-filled from your record on file — update below if anything is incorrect.</p>
           )}
           <div className="field">

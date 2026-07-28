@@ -110,7 +110,10 @@ export default async function handler(req, res) {
         // Write the confirmed address immediately (no staff review step) so it's
         // reflected right away as the Billing tab's "on file" address and as the
         // default ship-to address on the Delivery Logistics tab.
-        await updateOrderColumn(order.id, COLS.billingAddressConfirmed, addressText);
+        // long_text columns require the complex value wrapped as {text: "..."} —
+        // a bare string throws "invalid value" (same bug class fixed 2026-07-28
+        // on COLS.address and the Delivery/Referral long_text writes).
+        await updateOrderColumn(order.id, COLS.billingAddressConfirmed, { text: addressText });
 
         await postTaggedUpdate(order.id, 'PORTAL: Billing Information',
           `Billing Address: ${addressText}\nBilling Contact: ${contactText}\nSubmitted: ${new Date().toLocaleDateString()}`
@@ -135,9 +138,12 @@ export default async function handler(req, res) {
         } = data;
 
         // Save the confirmed/updated ship-to address on the order record if the
-        // customer entered a new one (long-text "Confirmed Delivery Address" column)
+        // customer entered a new one (long-text "Confirmed Delivery Address" column).
+        // Monday's long_text columns require the complex value wrapped as
+        // {text: "..."} — a bare string throws "invalid value" (confirmed
+        // 2026-07-28 via a live GraphQL error on this exact call).
         if (addressConfirmed === false && formattedAddress) {
-          await updateOrderColumn(order.id, COLS.address, formattedAddress);
+          await updateOrderColumn(order.id, COLS.address, { text: formattedAddress });
         }
 
         // Log the full delivery submission as a tagged update on the order (quick read for staff in Monday updates)

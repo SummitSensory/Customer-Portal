@@ -15,8 +15,7 @@
 
 import { getOrderById, getOrderByEmail, setStatusLabel } from '../../../lib/monday';
 import { sendCustomerReplyNotification } from '../../../lib/email';
-
-const STAFF_DOMAIN = process.env.STAFF_EMAIL_DOMAIN || 'summitsensorygym.com';
+import { isStaffEmail } from '../../../lib/auth';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -29,8 +28,15 @@ export default async function handler(req, res) {
   const { itemId, updateBody, creatorEmail } = req.body || {};
   if (!itemId || !creatorEmail) return res.status(400).json({ error: 'Missing fields.' });
 
-  // Only notify customer when a staff member replied
-  const isStaff = creatorEmail.toLowerCase().endsWith(`@${STAFF_DOMAIN}`);
+  // Only notify customer when a staff member replied. Uses the shared
+  // isStaffEmail() helper (lib/auth.js) rather than a locally duplicated
+  // domain check — this file previously hardcoded a single fallback domain
+  // (summitsensorygym.com) that didn't include summitsensory.com, so a staff
+  // reply from an @summitsensory.com address (e.g. bryan@summitsensory.com)
+  // would have been misclassified as a non-staff update whenever
+  // STAFF_EMAIL_DOMAIN wasn't set in Vercel — found 2026-07-28 during a full
+  // QA pass, alongside the Message Status automation gap (OPEN-3).
+  const isStaff = isStaffEmail(creatorEmail);
   if (!isStaff) return res.status(200).json({ skipped: 'Non-staff update, no notification sent.' });
 
   try {

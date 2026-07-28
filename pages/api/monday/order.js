@@ -50,9 +50,11 @@ export default async function handler(req, res) {
     const changed = [];
 
     try {
-      // address — long_text column expects a plain string, not an object
+      // address — long_text columns require the complex value wrapped as
+      // {text: "..."} in Monday's API; a bare string throws "invalid value"
+      // (confirmed 2026-07-28 via a live GraphQL error on this exact call).
       if (address !== undefined && address !== order.address) {
-        await updateOrderColumn(order.id, COLS.address, address);
+        await updateOrderColumn(order.id, COLS.address, { text: address });
         changed.push('Ship-to address');
       }
 

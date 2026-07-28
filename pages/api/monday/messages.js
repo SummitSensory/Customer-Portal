@@ -63,6 +63,14 @@ export default async function handler(req, res) {
         await setStatusLabel(orderId, 'messageStatus', 'Needs Reply').catch(console.error);
       }
 
+      // Staff replying from the Admin Portal should clear the queue flag too —
+      // this is the one reply path that doesn't depend on the Monday.com
+      // "update created" webhook (see update-webhook.js), so it must set this
+      // directly rather than relying on that automation firing.
+      if (identity.role === 'staff') {
+        await setStatusLabel(orderId, 'messageStatus', 'Replied').catch(console.error);
+      }
+
       return res.status(201).json({ message });
     } catch (err) {
       return res.status(500).json({ error: 'Failed to send message.' });

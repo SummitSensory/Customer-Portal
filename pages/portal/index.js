@@ -45,6 +45,11 @@ export default function CustomerPortal() {
   const [completions, setCompletions] = useState({});
   const [toast, setToast] = useState('');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [impersonatedBy, setImpersonatedBy] = useState(null); // staff email, when set via /api/admin/impersonate
+
+  async function exitImpersonation() {
+    try { await fetch('/api/auth/signout-customer').catch(() => {}); } finally { router.push('/admin'); }
+  }
 
   function showToast(msg) {
     setToast(msg);
@@ -66,6 +71,8 @@ export default function CustomerPortal() {
       const res = await fetch('/api/monday/order');
       if (res.status === 401) { router.replace('/'); return; }
       const data = await res.json();
+
+      setImpersonatedBy(data.impersonatedBy || null);
 
       if (data.orders && data.orders.length > 1) {
         // Multiple orders — show picker
@@ -161,6 +168,26 @@ export default function CustomerPortal() {
     <>
       <Head><title>{order.name} — Summit Portal</title></Head>
       <div id="app" style={{ display: 'block' }}>
+
+        {/* Staff impersonation banner — persistent and unmissable so it's never
+            mistaken for the customer's own session (see /api/admin/impersonate). */}
+        {impersonatedBy && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center',
+            background: 'var(--sun-lt, #FEE2E2)', color: 'var(--sun, #DC2626)',
+            fontSize: 13, fontWeight: 600, padding: '10px 16px', textAlign: 'center',
+            borderBottom: '1px solid var(--sun, #DC2626)',
+          }}>
+            <span>👁️ Viewing as staff ({impersonatedBy}) — on behalf of {order.contactName || order.name}</span>
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ borderColor: 'currentColor', color: 'inherit' }}
+              onClick={exitImpersonation}
+            >
+              Exit to Admin
+            </button>
+          </div>
+        )}
 
         {/* Top Bar */}
         <div className="top">

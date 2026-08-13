@@ -28,14 +28,16 @@ export default async function handler(req, res) {
     if (session.orderId) {
       const order = await getOrderById(session.orderId);
       if (!order) return res.status(404).json({ error: 'Order not found.' });
-      return res.status(200).json({ order });
+      // impersonatedBy is only set on sessions minted by /api/admin/impersonate —
+      // surfaced here so the portal UI can show its "viewing as staff" banner.
+      return res.status(200).json({ order, impersonatedBy: session.impersonatedBy || null });
     }
 
     // Otherwise look up all orders for this email (repeat customer support)
     const orders = await getOrdersByEmail(session.email);
     if (!orders.length) return res.status(404).json({ error: 'No orders found.' });
-    if (orders.length === 1) return res.status(200).json({ order: orders[0] });
-    return res.status(200).json({ orders }); // portal shows order picker
+    if (orders.length === 1) return res.status(200).json({ order: orders[0], impersonatedBy: session.impersonatedBy || null });
+    return res.status(200).json({ orders, impersonatedBy: session.impersonatedBy || null }); // portal shows order picker
   }
 
   // For write operations, require a specific order

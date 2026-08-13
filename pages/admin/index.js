@@ -303,6 +303,58 @@ function OrdersTab({ orders, onRefresh, showToast }) {
     }
   }
 
+  // Three notification templates that existed in lib/email.js but had no way
+  // for staff to actually trigger them from the admin UI — notify-installation.js
+  // (EM-07) was a live endpoint nobody could reach, and EM-05/EM-06 were fully
+  // built but literally unwired to any trigger at all (Customer-Portal-Process-Flow.md
+  // OPEN-2). All three now share one small "Notify…" control below.
+  async function notifyByEmail(order, endpoint, label, extraBody) {
+    if (!order.customerEmail) { showToast('This order has no customer email.'); return; }
+    if (!confirm(`Send "${label}" email to ${order.customerEmail}?`)) return;
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: order.id, ...extraBody }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Send failed.');
+      showToast(`✅ ${label} sent to ${order.customerEmail}`);
+    } catch (err) {
+      showToast(err.message || 'Failed to send. Please try again.');
+    }
+  }
+
+  function handleNotifyChoice(order, action) {
+    if (action === 'installation') {
+      notifyByEmail(order, '/api/admin/notify-installation', 'Installation Materials Ready');
+    } else if (action === 'color') {
+      notifyByEmail(order, '/api/admin/notify-color-form', 'Color Selection Form Ready');
+    } else if (action === 'task') {
+      const taskName = prompt('What does the customer need to do? (e.g. "Sign the updated freight quote")');
+      if (taskName && taskName.trim()) {
+        notifyByEmail(order, '/api/admin/notify-task', `Action Required: ${taskName.trim()}`, { taskName: taskName.trim() });
+      }
+    }
+  }
+
+  async function viewAsCustomer(order) {
+    if (!order.customerEmail) { showToast('This order has no customer email — nothing to view as.'); return; }
+    if (!confirm(`View the portal as ${order.customerEmail} for "${order.name}"? This starts a 2-hour session logged to the order.`)) return;
+    try {
+      const res = await fetch('/api/admin/impersonate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: order.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to start session.');
+      window.location.href = data.redirectTo || '/portal';
+    } catch (err) {
+      showToast(err.message || 'Failed to start viewing session. Please try again.');
+    }
+  }
+
   async function saveOrder(orderId) {
     const changes = editing[orderId];
     if (!changes) return;
@@ -463,6 +515,21 @@ function OrdersTab({ orders, onRefresh, showToast }) {
                               <button className="btn btn-ghost btn-sm" title="Send portal invitation" onClick={() => sendInvite(order)} style={{ whiteSpace: 'nowrap' }}>
                                 ✉️ Invite
                               </button>
+                              <button className="btn btn-ghost btn-sm" title="View/act in this customer's portal to help them complete a step or troubleshoot an issue" onClick={() => viewAsCustomer(order)} style={{ whiteSpace: 'nowrap' }}>
+                                👁️ View as Customer
+                              </button>
+                              <select
+                                className="btn btn-ghost btn-sm"
+                                value=""
+                                title="Send a one-off customer notification"
+                                style={{ whiteSpace: 'nowrap' }}
+                                onChange={e => { const action = e.target.value; e.target.value = ''; if (action) handleNotifyChoice(order, action); }}
+                              >
+                                <option value="" disabled>✉️ Notify…</option>
+                                <option value="installation">Installation Ready</option>
+                                <option value="color">Color Form Ready</option>
+                                <option value="task">Task Due…</option>
+                              </select>
                             </div>
                           )}
                         </td>
@@ -985,6 +1052,18 @@ function AuthSettings() {
 }
 
 function BrandingSettings() {
+  const [mossColor, setMossColor] = useState(null);
+
+  useEffect(() => {
+    // Read the LIVE CSS variable instead of a hardcoded snapshot. The previous
+    // version of this component hardcoded "#2f5d50" directly in JSX — when
+    // --moss was later changed to #475569 in globals.css, this display silently
+    // went stale and kept showing the old color forever. Reading it via
+    // getComputedStyle means it can never drift out of sync again.
+    const value = getComputedStyle(document.documentElement).getPropertyValue('--moss').trim();
+    setMossColor(value || null);
+  }, []);
+
   return (
     <div className="card">
       <div className="ch"><h3>Branding</h3></div>
@@ -992,10 +1071,14 @@ function BrandingSettings() {
       <div className="field">
         <label>Primary Color</label>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: '#2f5d50', border: '2px solid var(--ink)' }} />
-          <code style={{ fontSize: 12 }}>--moss: #2f5d50</code>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--moss)', border: '2px solid var(--ink)' }} />
+          <code style={{ fontSize: 12 }}>--moss: {mossColor || '…'}</code>
         </div>
-        <div className="hint">Update the <code>--moss</code> variable in globals.css to change the primary brand color.</div>
+        <div className="hint">Update the <code>--moss</code> variable in globals.css to change the primary brand color — this swatch always reflects the live value, it can't go stale.</div>
+      </div>
+      <div className="alert info" style={{ marginTop: 16 }}>
+        <span>ℹ️</span>
+        <span>Email templates (<code>lib/email.js</code>) currently keep their own separate, hardcoded copy of this palette — changing <code>--moss</code> here does not change the color used in emails yet. The Email Templates system will centralize this.</span>
       </div>
     </div>
   );

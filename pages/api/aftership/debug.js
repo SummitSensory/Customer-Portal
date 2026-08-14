@@ -52,6 +52,18 @@ export default async function handler(req, res) {
       result.createBodyPreview = clip(cBody);              // helps confirm the response shape
     }
 
+    // Optional: ?id=...&updateName=... — test PUT-updating customer_name on an existing tracking.
+    if (req.query.id && req.query.updateName) {
+      const ur = await fetch(`${base}/trackings/${encodeURIComponent(req.query.id)}`, {
+        method: 'PUT', headers, body: JSON.stringify({ customer_name: String(req.query.updateName) }),
+      });
+      const uText = await ur.text();
+      let uBody; try { uBody = JSON.parse(uText); } catch { uBody = uText; }
+      result.updateHttpStatus = ur.status;                 // 200 = updated
+      result.updateMeta = uBody?.meta ?? null;
+      result.updateBodyPreview = clip(uBody);
+    }
+
     const getUrl = req.query.id
       ? `${base}/trackings/${encodeURIComponent(req.query.id)}`                       // current API: fetch by id
       : `${base}/trackings/${encodeURIComponent(slug)}/${encodeURIComponent(number)}`; // legacy: slug+number
@@ -64,6 +76,7 @@ export default async function handler(req, res) {
     result.getMeta = body?.meta ?? null;
     result.trackingTag = t?.tag ?? null;
     result.trackingSlug = t?.slug ?? null;
+    result.customerName = t?.customer_name ?? null;
     result.checkpointCount = Array.isArray(t?.checkpoints) ? t.checkpoints.length : null;
     return res.status(200).json(result);
   } catch (err) {

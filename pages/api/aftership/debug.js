@@ -78,6 +78,11 @@ export default async function handler(req, res) {
     result.trackingSlug = t?.slug ?? null;
     result.customerName = t?.customer_name ?? null;
     result.checkpointCount = Array.isArray(t?.checkpoints) ? t.checkpoints.length : null;
+    // Full tracking object (minus bulky checkpoints) so we can see the exact field names.
+    if (req.query.raw && t) {
+      const { checkpoints, ...rest } = t;
+      result.rawTracking = rest;
+    }
     return res.status(200).json(result);
   } catch (err) {
     return res.status(200).json({ ...result, fetchError: err.message });

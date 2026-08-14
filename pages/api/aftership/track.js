@@ -52,6 +52,7 @@ export default async function handler(req, res) {
     const tracking = await trackShipment(slug, number, {
       title: order?.name,
       orderId: order?.id,
+      customerName: order?.name,
     });
     if (!tracking) return res.status(404).json({ error: 'Tracking info not available.' });
     return res.status(200).json({ tracking });

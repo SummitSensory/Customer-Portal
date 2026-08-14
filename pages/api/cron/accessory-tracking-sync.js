@@ -25,8 +25,8 @@
 // this job only affects how quickly a brand-new item gets its first
 // onboarding.
 
-import { getAllAccessoryItems, updateAccessoryCarrierStatus } from '../../../lib/monday';
-import { trackShipment } from '../../../lib/aftership';
+import { getAllAccessoryItems, updateAccessoryCarrierStatus, getAllOrders } from '../../../lib/monday';
+import { trackShipment, onboardShipment } from '../../../lib/aftership';
 
 export default async function handler(req, res) {
   const authHeader = req.headers['authorization'];
@@ -44,6 +44,7 @@ export default async function handler(req, res) {
         const tracking = await trackShipment(item.carrierSlug, item.trackingNumber, {
           title: item.name,
           orderId: item.id,
+          customerName: item.name,
         });
         if (tracking?.status && tracking.status !== item.carrierStatus) {
           await updateAccessoryCarrierStatus(item.id, tracking.status);
@@ -54,7 +55,28 @@ export default async function handler(req, res) {
       }
     }
 
-    return res.status(200).json({ ok: true, checked: candidates.length, updated });
+    // Proactively onboard parent-level Frame + Mats shipments too, so they appear
+    // in AfterShip without waiting for a customer to open the portal (the loop
+    // above only covers accessory subitems). Frame: text_mm538vtm/text_mm53p3b2;
+    // Mats: text_mm51pap1/text_mm51wdm5.
+    let framesMatsOnboarded = 0;
+    try {
+      const orders = await getAllOrders(500);
+      for (const order of orders) {
+        const shipments = [
+          { slug: order.frameCarrierSlug, number: order.frameTrackingId },
+          { slug: order.matsCarrierSlug, number: order.matsTrackingId },
+        ].filter((s) => s.slug && s.number);
+        for (const s of shipments) {
+          const id = await onboardShipment(s.slug, s.number, { title: order.name, orderId: order.id, customerName: order.name });
+          if (id) framesMatsOnboarded++;
+        }
+      }
+    } catch (err) {
+      console.error('Frame/Mats onboarding error:', err.message);
+    }
+
+    return res.status(200).json({ ok: true, checked: candidates.length, updated, framesMatsOnboarded });
   } catch (err) {
     console.error('Accessory tracking sync error:', err.message);
     return res.status(500).json({ error: 'Sync failed.' });

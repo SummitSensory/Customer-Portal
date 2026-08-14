@@ -55,7 +55,7 @@ export default async function handler(req, res) {
     // Optional: ?id=...&updateName=... — test PUT-updating customer_name on an existing tracking.
     if (req.query.id && req.query.updateName) {
       const ur = await fetch(`${base}/trackings/${encodeURIComponent(req.query.id)}`, {
-        method: 'PUT', headers, body: JSON.stringify({ customer_name: String(req.query.updateName) }),
+        method: 'PUT', headers, body: JSON.stringify({ customers: [{ name: String(req.query.updateName) }] }),
       });
       const uText = await ur.text();
       let uBody; try { uBody = JSON.parse(uText); } catch { uBody = uText; }
@@ -77,6 +77,7 @@ export default async function handler(req, res) {
     result.trackingTag = t?.tag ?? null;
     result.trackingSlug = t?.slug ?? null;
     result.customerName = t?.customer_name ?? null;
+    result.customers = t?.customers ?? null;
     result.checkpointCount = Array.isArray(t?.checkpoints) ? t.checkpoints.length : null;
     // Full tracking object (minus bulky checkpoints) so we can see the exact field names.
     if (req.query.raw && t) {

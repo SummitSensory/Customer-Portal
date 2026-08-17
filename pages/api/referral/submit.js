@@ -39,8 +39,9 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to load order.' });
   }
 
+  let referralItemId;
   try {
-    await createReferralItem(order, {
+    referralItemId = await createReferralItem(order, {
       referrerName: order.name,
       referrerEmail: session.email,
       friendName,
@@ -53,7 +54,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to submit referral. Please try again or contact us directly.' });
   }
 
-  notifyTeamNewReferral(order.name, session.email, friendName, friendEmail).catch(console.error);
+  notifyTeamNewReferral(order.name, session.email, friendName, friendEmail, referralItemId).catch(console.error);
 
   return res.status(200).json({ ok: true });
 }

@@ -29,14 +29,22 @@ const SETUP_TABS = [
   { key: 'documents', label: 'Required Documents' },
 ];
 
-// Tagged update bodies that signal a tab is complete
-const COMPLETION_TAGS = {
-  contact:   '[PORTAL: Contact Confirmed]',
-  billing:   '[PORTAL: Billing Information]',
-  delivery:  '[PORTAL: Delivery Details]',
-  color:     '[PORTAL: Color Selections]',
-  documents: '[PORTAL: Documents Submitted]',
-};
+// Maps each reminder tab key to its key in order.progress (lib/monday.js's
+// parseOrderItem — sourced from the durable Portal: Contact/Billing/Delivery/
+// Colors/Documents status columns, flipped by markSectionComplete whenever a
+// tab's setup POST succeeds). Previously this cron scanned tagged-update
+// bodies for one specific legacy phrase per tab (e.g. exactly
+// "[PORTAL: Contact Confirmed]") — but a customer who used the "edit and
+// submit changes" path on the Contact tab instead posts
+// "[PORTAL: Contact Update Requested]", which never matched, even though
+// markSectionComplete had already flipped the real status column to ✅. That
+// mismatch is confirmed on Kalen Siddens' order: Monday shows Portal: Contact
+// ✅ since 2026-08-13, but this cron told him on 2026-08-17 that Contact
+// Information was still incomplete. Reading order.progress directly — the
+// same source of truth the portal UI itself now uses (see mergeProgress in
+// pages/portal/index.js) — instead of re-deriving completion from free-text
+// logs, fixes this for good and can't drift out of sync again.
+const PROGRESS_KEYS = { contact: 'contact', billing: 'billing', delivery: 'delivery', color: 'colors', documents: 'documents' };
 
 export default async function handler(req, res) {
   const authHeader = req.headers['authorization'];
@@ -51,7 +59,7 @@ export default async function handler(req, res) {
   const results = { checked: 0, reminded: 0, skipped: 0, errors: 0 };
 
   try {
-    const orders = await getAllOrders(200);
+    const orders = await getAllOrders();
 
     for (const order of orders) {
       if (!order.customerEmail) continue;
@@ -68,10 +76,12 @@ export default async function handler(req, res) {
         const inviteDate = new Date(inviteUpdate.created_at);
         const daysSinceInvite = Math.floor((now - inviteDate) / (1000 * 60 * 60 * 24));
 
-        // Determine which tabs are still incomplete
+        // Determine which tabs are still incomplete — read directly from the
+        // durable Portal:* status columns (order.progress), not from
+        // free-text update history (see PROGRESS_KEYS comment above).
         const incompleteTabs = SETUP_TABS.filter(tab => {
-          const tag = COMPLETION_TAGS[tab.key];
-          return !bodies.some(b => b.includes(tag));
+          const progressKey = PROGRESS_KEYS[tab.key];
+          return order.progress?.[progressKey] !== '✅';
         });
 
         // All done — no reminder needed

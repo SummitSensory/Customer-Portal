@@ -109,15 +109,29 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Invalid JSON.' });
   }
 
-  // AfterShip's tracking-update payload nests the shipment under `msg`.
-  const t = payload?.msg || payload?.data?.tracking || payload;
+  // AfterShip's tracking-update payload nests the shipment under `msg`
+  // (current format). `data.tracking` is an older/alternate shape kept as a
+  // fallback — it's unconfirmed whether any currently-active AfterShip
+  // account still sends it. If neither matches we fall back to the raw
+  // payload itself; log which shape we actually used so a genuinely new
+  // AfterShip payload format shows up in logs instead of silently no-op'ing.
+  let t;
+  let shapeUsed;
+  if (payload?.msg) { t = payload.msg; shapeUsed = 'msg'; }
+  else if (payload?.data?.tracking) { t = payload.data.tracking; shapeUsed = 'data.tracking'; }
+  else { t = payload; shapeUsed = 'raw'; }
+
   const slug = t?.slug;
   const trackingNumber = t?.tracking_number;
   const tag = t?.tag;
 
   if (!slug || !trackingNumber || !tag) {
+    console.warn(`AfterShip webhook: could not extract slug/tracking_number/tag (shape tried: ${shapeUsed}). Top-level payload keys: ${Object.keys(payload || {}).join(', ') || '(none)'}`);
     // Not a shipment status event — acknowledge so AfterShip doesn't retry.
     return res.status(200).json({ ok: true, skipped: true });
+  }
+  if (shapeUsed === 'raw') {
+    console.warn('AfterShip webhook: payload matched neither the "msg" nor "data.tracking" shape, but slug/tracking_number/tag were present at the top level — verify this really is a shipment-update event.');
   }
 
   try {
@@ -150,15 +164,34 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, matched: true, board: 'freight', skipped: 'Already notified for this status.' });
     }
 
-    await notifyCustomerFreightUpdate(
-      order.customerEmail,
-      order.contactName,
-      order.orderName,
-      SHIPMENT_LABELS[order.shipmentKey] || 'Shipment',
-      statusLabel,
-      publicUrl(slug, trackingNumber)
-    );
-    await updateFreightNotifyTag(order.itemId, order.shipmentKey, statusLabel);
+    // Send + dedupe-tag-write are handled as two distinct steps (not both
+    // inside one try/catch) so a failure in one can't be silently confused
+    // with the other. If the email send itself fails, skip the tag write —
+    // we want the next checkpoint/retry to try sending again rather than
+    // mark this status "notified" when the customer never got it. If the
+    // tag write fails AFTER a successful send, that's a different, less bad
+    // failure (worst case: one duplicate email on the next matching
+    // checkpoint) — log it loudly rather than let the outer catch (which
+    // still returns 200) swallow it silently.
+    try {
+      await notifyCustomerFreightUpdate(
+        order.customerEmail,
+        order.contactName,
+        order.orderName,
+        SHIPMENT_LABELS[order.shipmentKey] || 'Shipment',
+        statusLabel,
+        publicUrl(slug, trackingNumber)
+      );
+    } catch (err) {
+      console.error(`AfterShip webhook: failed to send freight update email for order ${order.itemId} (${order.shipmentKey} -> "${statusLabel}"):`, err.message);
+      return res.status(200).json({ ok: false, matched: true, board: 'freight', error: 'Failed to send customer email.' });
+    }
+
+    try {
+      await updateFreightNotifyTag(order.itemId, order.shipmentKey, statusLabel);
+    } catch (err) {
+      console.error(`AfterShip webhook: email sent but the dedupe tag write FAILED for order ${order.itemId} (${order.shipmentKey} -> "${statusLabel}") — set "${order.shipmentKey === 'frame' ? 'Frame' : 'Mats'} Last Notified Status" manually in Monday to prevent a duplicate email on the next matching checkpoint:`, err.message);
+    }
 
     return res.status(200).json({ ok: true, matched: true, board: 'freight', notified: order.customerEmail });
   } catch (err) {

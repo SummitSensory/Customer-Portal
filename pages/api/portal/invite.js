@@ -33,24 +33,35 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Order has no customer email address.' });
   }
 
+  // Email send and Monday log write are handled as two distinct steps, not
+  // one try/catch, so a log-write failure AFTER a successful send can't be
+  // reported to staff as "Failed to send invitation." — that false negative
+  // would prompt a resend, duplicating the customer email. The reminders
+  // cron also starts its clock from this exact "PORTAL: Invitation Sent" tag
+  // (see cron/reminders.js), so a failed log write is flagged loudly rather
+  // than silently dropped.
   try {
-    // Send the invitation email
     await sendPortalInvitation(
       order.customerEmail,
       order.pocName || order.firstName || '',
       order.name
     );
+  } catch (err) {
+    console.error('Invitation email error:', err);
+    return res.status(500).json({ error: 'Failed to send invitation.' });
+  }
 
+  try {
     // Log invite timestamp to Monday.com for reminder tracking
     await postTaggedUpdate(
       orderId,
       'PORTAL: Invitation Sent',
       `Portal invitation sent to ${order.customerEmail} by ${staffSession.user?.email || 'staff'} on ${new Date().toLocaleDateString()}.`
     );
-
-    return res.status(200).json({ ok: true });
   } catch (err) {
-    console.error('Invitation error:', err);
-    return res.status(500).json({ error: 'Failed to send invitation.' });
+    console.error(`Invitation email sent to ${order.customerEmail}, but the "PORTAL: Invitation Sent" log write FAILED for order ${orderId} — add it manually in Monday so the reminder cron's clock starts correctly:`, err.message);
+    return res.status(200).json({ ok: true, warning: 'Invitation sent, but the internal log entry failed — reminder tracking may be affected.' });
   }
+
+  return res.status(200).json({ ok: true });
 }

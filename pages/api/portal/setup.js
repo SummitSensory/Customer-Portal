@@ -115,6 +115,18 @@ export default async function handler(req, res) {
         // on COLS.address and the Delivery/Referral long_text writes).
         await updateOrderColumn(order.id, COLS.billingAddressConfirmed, { text: addressText });
 
+        // Also snapshot every field the customer actually typed — including the
+        // decomposed address components and billing POC, none of which had any
+        // other home in Monday before this — so the Billing tab can restore
+        // exactly what was submitted the next time this customer opens it,
+        // instead of showing blank fields with only the combined address text
+        // above. This write is NOT best-effort: if it fails, the whole request
+        // fails and the customer sees an error rather than a false "saved".
+        await updateOrderColumn(order.id, COLS.billingSnapshot, { text: JSON.stringify({
+          billingAddress, billingAddressSuite, billingCity, billingState, billingZip, billingCountry,
+          billingContactSameAsPrimary, billingName, billingPhone, billingEmail,
+        }) });
+
         await postTaggedUpdate(order.id, 'PORTAL: Billing Information',
           `Billing Address: ${addressText}\nBilling Contact: ${contactText}\nSubmitted: ${new Date().toLocaleDateString()}`
         );
@@ -133,9 +145,33 @@ export default async function handler(req, res) {
           addressConfirmed, addressLine1, addressLine2, addressCity, addressState, addressZip, addressCountry,
           formattedAddress,
           loadingDock, deliveryTiming, preferredDeliveryDate,
+          // Raw form-control values (as opposed to the human-readable labels
+          // above, e.g. loadingDock/deliveryTiming) — sent solely so this
+          // snapshot can restore the form's actual controls on the next
+          // visit. See pages/portal/index.js DeliveryTab.
+          hasLoadingDock, deliveryTimingOption, ackRead,
           changedRestricted,
           freightAckBy, freightAckDate,
         } = data;
+
+        // Snapshot every field exactly as submitted (including the raw
+        // yes/no + asap/scheduled control values, not just the human-readable
+        // labels above) so the Delivery tab can restore what the customer
+        // actually entered on their next visit — previously these ~20 fields
+        // existed only in this component's local React state and reset to
+        // blank every time the tab unmounted (switching tabs, reloading, or
+        // logging in from a different device), even though Monday had a full
+        // record of the submission elsewhere. This write is NOT best-effort:
+        // a failure here fails the whole request so the customer sees a real
+        // error instead of a false "saved" confirmation.
+        await updateOrderColumn(order.id, COLS.deliverySnapshot, { text: JSON.stringify({
+          pocName, pocPhone, phoneCanText, pocEmail, specialInstructions,
+          hasSecondaryPoc, secondaryPocName, secondaryPocPhone, secondaryPhoneCanText, secondaryPocEmail,
+          primaryCommMethods, primaryMobilePhone, secondaryCommMethods, secondaryMobilePhone,
+          addressConfirmed, addressLine1, addressLine2, addressCity, addressState, addressZip, addressCountry,
+          hasLoadingDock, deliveryTimingOption, preferredDeliveryDate,
+          ackRead, ackName: freightAckBy,
+        }) });
 
         // Save the confirmed/updated ship-to address on the order record if the
         // customer entered a new one (long-text "Confirmed Delivery Address" column).

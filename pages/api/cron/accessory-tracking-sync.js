@@ -61,7 +61,7 @@ export default async function handler(req, res) {
     // Mats: text_mm51pap1/text_mm51wdm5.
     let framesMatsOnboarded = 0;
     try {
-      const orders = await getAllOrders(500);
+      const orders = await getAllOrders();
       for (const order of orders) {
         const shipments = [
           { slug: order.frameCarrierSlug, number: order.frameTrackingId },

@@ -34,8 +34,15 @@ export default async function handler(req, res) {
     return res.status(200).json({ challenge: req.body.challenge });
   }
 
+  // Fails CLOSED: if the secret isn't configured, the request is rejected
+  // rather than let through. The previous check (`if (secret && ...)`) did
+  // the opposite — with no MONDAY_ACCESSORY_WEBHOOK_SECRET set in Vercel,
+  // authorization was skipped entirely and this endpoint accepted requests
+  // from anyone. Mirrors the fail-closed pattern already used by the
+  // AfterShip webhook's isAuthorized().
   const secret = process.env.MONDAY_ACCESSORY_WEBHOOK_SECRET;
-  if (secret && req.query.secret !== secret) {
+  if (!secret || req.query.secret !== secret) {
+    console.error('Monday accessory-webhook: authorization failed (missing or mismatched secret).');
     return res.status(401).json({ error: 'Invalid secret.' });
   }
 

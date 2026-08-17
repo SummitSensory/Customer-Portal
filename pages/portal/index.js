@@ -31,6 +31,23 @@ const ORDER_TABS = [
   { id: 'showcase',     label: 'Photo & Video Showcase', icon: '📸', reward: true },
 ];
 
+// Monday's create_update API always attributes an update to whoever owns the
+// MONDAY_API_TOKEN, regardless of whether a customer or a staff member
+// actually composed it through the portal — so creator.email alone can never
+// reliably tell "me" from "them". Confirmed 2026-08-17 against Kalen Siddens'
+// order: every one of his own portal messages showed up with creator "Bryan
+// Shepherd" (bryan@summitsensory.com), which made his own sent messages
+// render as if they'd come from staff, and permanently stuck the unread-reply
+// badge at 0 since nothing ever looked "not staff". /api/monday/messages now
+// stamps the true origin into the body itself ([PORTAL:CUSTOMER] /
+// [PORTAL:STAFF]); fall back to the old email guess only for messages sent
+// before this fix existed.
+function messageIsStaff(msg) {
+  if (msg.body?.includes('[PORTAL:STAFF]')) return true;
+  if (msg.body?.includes('[PORTAL:CUSTOMER]')) return false;
+  return Boolean(msg.creator?.email?.includes('summitsensory') || msg.creator?.email?.includes('summitsensorygym'));
+}
+
 // ── Main portal ───────────────────────────────────────────────────────────────
 
 export default function CustomerPortal() {
@@ -66,6 +83,42 @@ export default function CustomerPortal() {
     });
   }
 
+  // Monday's Portal: Contact/Billing/Delivery/Colors/Documents status columns
+  // (flipped server-side by markSectionComplete once a tab's setup POST
+  // succeeds) are the real, durable, cross-device record of what's complete —
+  // order.progress already surfaces them. Merge them into `completions` on
+  // every load so a customer's progress survives a page reload, a different
+  // browser, clearing cookies, or staff opening the portal on another
+  // machine. localStorage is kept only as a fast same-browser cache layered
+  // on top — it must never be trusted alone. Before this fix the portal only
+  // ever read localStorage, so any of the above would make a customer's
+  // already-completed steps look like they'd vanished (confirmed 2026-08-17
+  // against Kalen Siddens' order — Monday showed Contact/Billing/Delivery all
+  // ✅, but nothing in the app read that).
+  function mergeProgress(resolvedOrder, localCompletions) {
+    const p = resolvedOrder?.progress || {};
+    const fromMonday = {};
+    if (p.contact === '✅')   fromMonday.contact = true;
+    if (p.billing === '✅')   fromMonday.billing = true;
+    if (p.delivery === '✅')  fromMonday.delivery = true;
+    if (p.colors === '✅')    fromMonday.color = true;
+    if (p.documents === '✅') fromMonday.documents = true;
+    return { ...localCompletions, ...fromMonday };
+  }
+
+  function loadLocalCompletions(orderId) {
+    try {
+      const saved = localStorage.getItem(`summit_setup_${orderId}`);
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  }
+
+  function applyCompletions(resolvedOrder) {
+    const merged = mergeProgress(resolvedOrder, loadLocalCompletions(resolvedOrder?.id));
+    setCompletions(merged);
+    try { localStorage.setItem(`summit_setup_${resolvedOrder?.id}`, JSON.stringify(merged)); } catch {}
+  }
+
   const loadOrder = useCallback(async () => {
     try {
       const res = await fetch('/api/monday/order');
@@ -80,12 +133,7 @@ export default function CustomerPortal() {
       } else {
         const resolvedOrder = data.order || data.orders?.[0] || null;
         setOrder(resolvedOrder);
-
-        // Load saved completions from localStorage
-        try {
-          const saved = localStorage.getItem(`summit_setup_${resolvedOrder?.id}`);
-          if (saved) setCompletions(JSON.parse(saved));
-        } catch {}
+        applyCompletions(resolvedOrder);
       }
 
       // Load form map
@@ -132,10 +180,7 @@ export default function CustomerPortal() {
   if (orders && !order) return <OrderPicker orders={orders} onSelect={o => {
     setOrder(o);
     setOrders(null);
-    try {
-      const saved = localStorage.getItem(`summit_setup_${o?.id}`);
-      if (saved) setCompletions(JSON.parse(saved));
-    } catch {}
+    applyCompletions(o);
   }} />;
 
   if (!order) return (
@@ -153,9 +198,13 @@ export default function CustomerPortal() {
   const setupComplete = SETUP_TABS.every(t => completions[t.id]);
   const setupCount = SETUP_TABS.filter(t => completions[t.id]).length;
   const setupTotal = SETUP_TABS.length;
-  const unreadMessages = messages.filter(m =>
-    !m.creator?.email?.includes('summitsensory') && !m.creator?.email?.includes('summitsensorygym')
-  ).length;
+  // Badge should flag messages FROM staff (a reply the customer may not have
+  // seen yet) — not the customer's own sent messages. Before the identity-tag
+  // fix above, isStaff() always returned true for every portal message (see
+  // messageIsStaff), so this filter's polarity never mattered in practice —
+  // it always evaluated to "not staff" = false = 0, permanently hiding the
+  // badge. Corrected polarity here now that origin can actually be trusted.
+  const unreadMessages = messages.filter(m => messageIsStaff(m)).length;
 
   // Forms for this customer's product type
   const productForms = Object.entries(formMap).filter(([, f]) =>
@@ -388,13 +437,38 @@ function fileToBase64(file) {
 // ── Tab: Contact Information ──────────────────────────────────────────────────
 
 function ContactTab({ order, completions, markComplete, showToast, onNext }) {
+  // contact_update only posts a note for staff to review — it never writes
+  // to a column the portal reads back (contactName/Phone/Email are read-only
+  // Monday mirrors from a connected board, by design). That's fine for staff
+  // review, but without this, a customer who corrected a wrong phone number
+  // saw a toast, then the tab went right back to showing the OLD wrong number
+  // with no sign anything had happened — indistinguishable from the fix
+  // having silently failed. Persist the pending correction locally so the
+  // tab keeps showing it (with a "pending review" note) until Monday's
+  // mirror actually catches up to match. Fixed 2026-08-17.
+  const pendingKey = `summit_contact_pending_${order?.id}`;
+  const [pendingUpdate, setPendingUpdate] = useState(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem(pendingKey) : null;
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  });
+  // Once staff applies the correction in Monday, the mirror fields will match
+  // what was pending — clear the local flag so we don't show a stale "pending" banner forever.
+  useEffect(() => {
+    if (pendingUpdate && order.contactName === pendingUpdate.name && order.contactPhone === pendingUpdate.phone && order.contactEmail === pendingUpdate.email) {
+      setPendingUpdate(null);
+      try { localStorage.removeItem(pendingKey); } catch {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order.contactName, order.contactPhone, order.contactEmail]);
+
   // Name, Email, and Phone are all required — auto-open editing if Monday is missing any of them
   const [editing, setEditing] = useState(!(order.contactName?.trim() && order.contactPhone?.trim() && order.contactEmail?.trim()));
-  const [name, setName] = useState(order.contactName || '');
-  const [phone, setPhone] = useState(order.contactPhone || '');
-  const [email, setEmail] = useState(order.contactEmail || '');
+  const [name, setName] = useState(pendingUpdate?.name || order.contactName || '');
+  const [phone, setPhone] = useState(pendingUpdate?.phone || order.contactPhone || '');
+  const [email, setEmail] = useState(pendingUpdate?.email || order.contactEmail || '');
   const [saving, setSaving] = useState(false);
-  const [updateSubmitted, setUpdateSubmitted] = useState(false);
   const [errors, setErrors] = useState({});
 
   function validate() {
@@ -417,7 +491,9 @@ function ContactTab({ order, completions, markComplete, showToast, onNext }) {
     setSaving(true);
     try {
       await saveSetup('contact_update', { name, phone, email });
-      setUpdateSubmitted(true);
+      const pending = { name, phone, email };
+      setPendingUpdate(pending);
+      try { localStorage.setItem(pendingKey, JSON.stringify(pending)); } catch {}
       setEditing(false);
       showToast('Contact update submitted — our team will confirm within 1 business day.');
     } catch { showToast('Error saving. Please try again.'); }
@@ -444,7 +520,7 @@ function ContactTab({ order, completions, markComplete, showToast, onNext }) {
     <>
       <div className="ph"><h2>Contact Information</h2><p>Review and confirm the primary contact details for your order. If anything is incorrect, you can submit an update.</p></div>
       {completions.contact && <div className="alert success" style={{ marginBottom: 16 }}>✅ Contact information confirmed.</div>}
-      {updateSubmitted && <div className="alert success" style={{ marginBottom: 16 }}>✅ Contact update submitted. Our team will review and confirm within 1 business day.</div>}
+      {pendingUpdate && <div className="alert info" style={{ marginBottom: 16 }}>⏳ Contact update pending review — our team will confirm within 1 business day. The details below reflect what you submitted.</div>}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="ch" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -488,9 +564,9 @@ function ContactTab({ order, completions, markComplete, showToast, onNext }) {
           </form>
         ) : (
           <div className="grid g2">
-            <ReadField label="Name *" value={order.contactName || '—'} />
-            <ReadField label="Email *" value={order.contactEmail || '—'} />
-            <ReadField label="Phone *" value={order.contactPhone || '—'} />
+            <ReadField label="Name *" value={pendingUpdate?.name || order.contactName || '—'} />
+            <ReadField label="Email *" value={pendingUpdate?.email || order.contactEmail || '—'} />
+            <ReadField label="Phone *" value={pendingUpdate?.phone || order.contactPhone || '—'} />
             <ReadField label="Organization" value={order.name ? order.name.split(' - ')[0] : '—'} />
           </div>
         )}
@@ -516,17 +592,25 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
   // reference text instead and let the customer re-enter the components fresh.
   // Found 2026-07-28 during full QA pass — same address-handling area as the long_text
   // column bug fixed the same day.
+  // Decomposed address + billing POC, restored from the last-submitted
+  // snapshot (COLS.billingSnapshot — see lib/monday.js) when one exists.
+  // Before this fix these fields had no server-side home at all beyond a
+  // free-text tagged update, so every revisit to this tab showed them blank
+  // regardless of what the customer had already submitted. Fixed 2026-08-17.
+  const savedBilling = order.billingSnapshot || null;
   const previouslyConfirmedAddress = order.billingAddressConfirmed || '';
-  const [billingAddress, setBillingAddress] = useState(previouslyConfirmedAddress ? '' : (order.billingAddressOnFile || ''));
-  const [billingAddressSuite, setBillingAddressSuite] = useState('');
-  const [billingCity, setBillingCity] = useState('');
-  const [billingState, setBillingState] = useState('');
-  const [billingZip, setBillingZip] = useState(previouslyConfirmedAddress ? '' : (order.billingZipOnFile || ''));
-  const [billingCountry, setBillingCountry] = useState('');
-  const [sameContact, setSameContact] = useState(false);
-  const [billingName, setBillingName] = useState('');
-  const [billingPhone, setBillingPhone] = useState('');
-  const [billingEmail, setBillingEmail] = useState('');
+  const [billingAddress, setBillingAddress] = useState(
+    savedBilling?.billingAddress || (previouslyConfirmedAddress ? '' : (order.billingAddressOnFile || ''))
+  );
+  const [billingAddressSuite, setBillingAddressSuite] = useState(savedBilling?.billingAddressSuite || '');
+  const [billingCity, setBillingCity] = useState(savedBilling?.billingCity || '');
+  const [billingState, setBillingState] = useState(savedBilling?.billingState || '');
+  const [billingZip, setBillingZip] = useState(savedBilling?.billingZip || (previouslyConfirmedAddress ? '' : (order.billingZipOnFile || '')));
+  const [billingCountry, setBillingCountry] = useState(savedBilling?.billingCountry || '');
+  const [sameContact, setSameContact] = useState(savedBilling?.billingContactSameAsPrimary || false);
+  const [billingName, setBillingName] = useState(savedBilling?.billingName || '');
+  const [billingPhone, setBillingPhone] = useState(savedBilling?.billingPhone || '');
+  const [billingEmail, setBillingEmail] = useState(savedBilling?.billingEmail || '');
   const [saving, setSaving] = useState(false);
   const streetRef = useRef(null);
   const autocompleteRef = useRef(null);
@@ -696,47 +780,57 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
   const shippedIdx = order.stages?.findIndex(s => s.key === 'shipped') ?? 3;
   const isShipped = order.stageIndex >= shippedIdx;
 
-  const [pocName, setPocName] = useState(order.pocName || '');
-  const [pocPhone, setPocPhone] = useState(order.phone || '');
-  const [phoneCanText, setPhoneCanText] = useState(false);
-  const [pocEmail, setPocEmail] = useState(order.pocEmail || '');
-  const [specialInstructions, setSpecialInstructions] = useState(order.deliveryInstructions || '');
+  // Last-submitted delivery answers, restored from the snapshot Monday now
+  // stores (COLS.deliverySnapshot — see lib/monday.js). Before this fix these
+  // ~20 fields existed only in this component's local state and were written
+  // ONLY to a free-text tagged update + the separate Delivery & Site Details
+  // Submissions board — never back onto this order — so every time this tab
+  // unmounted (switching tabs, reloading, logging in from another device)
+  // everything reset to blank even though the customer had already submitted
+  // it. This is the change that fixes that. Fixed 2026-08-17.
+  const saved = order.deliverySnapshot || null;
+
+  const [pocName, setPocName] = useState(saved?.pocName || order.pocName || '');
+  const [pocPhone, setPocPhone] = useState(saved?.pocPhone || order.phone || '');
+  const [phoneCanText, setPhoneCanText] = useState(saved?.phoneCanText || false);
+  const [pocEmail, setPocEmail] = useState(saved?.pocEmail || order.pocEmail || '');
+  const [specialInstructions, setSpecialInstructions] = useState(saved?.specialInstructions || order.deliveryInstructions || '');
 
   // Secondary delivery point of contact (optional, expands when enabled)
-  const [hasSecondaryPoc, setHasSecondaryPoc] = useState(false);
-  const [secondaryPocName, setSecondaryPocName] = useState('');
-  const [secondaryPocPhone, setSecondaryPocPhone] = useState('');
-  const [secondaryPhoneCanText, setSecondaryPhoneCanText] = useState(false);
-  const [secondaryPocEmail, setSecondaryPocEmail] = useState('');
+  const [hasSecondaryPoc, setHasSecondaryPoc] = useState(saved?.hasSecondaryPoc || false);
+  const [secondaryPocName, setSecondaryPocName] = useState(saved?.secondaryPocName || '');
+  const [secondaryPocPhone, setSecondaryPocPhone] = useState(saved?.secondaryPocPhone || '');
+  const [secondaryPhoneCanText, setSecondaryPhoneCanText] = useState(saved?.secondaryPhoneCanText || false);
+  const [secondaryPocEmail, setSecondaryPocEmail] = useState(saved?.secondaryPocEmail || '');
 
   // Ship-to address: confirm what's on file, or expand to enter a new one
-  const [addressConfirmed, setAddressConfirmed] = useState(null); // null = unanswered, true = yes, false = no
-  const [addressLine1, setAddressLine1] = useState('');
-  const [addressLine2, setAddressLine2] = useState('');
-  const [addressCity, setAddressCity] = useState('');
-  const [addressState, setAddressState] = useState('');
-  const [addressZip, setAddressZip] = useState('');
-  const [addressCountry, setAddressCountry] = useState('');
+  const [addressConfirmed, setAddressConfirmed] = useState(saved?.addressConfirmed ?? null); // null = unanswered, true = yes, false = no
+  const [addressLine1, setAddressLine1] = useState(saved?.addressLine1 || '');
+  const [addressLine2, setAddressLine2] = useState(saved?.addressLine2 || '');
+  const [addressCity, setAddressCity] = useState(saved?.addressCity || '');
+  const [addressState, setAddressState] = useState(saved?.addressState || '');
+  const [addressZip, setAddressZip] = useState(saved?.addressZip || '');
+  const [addressCountry, setAddressCountry] = useState(saved?.addressCountry || '');
 
   // Loading dock — required, defaults to "No" (liftgate delivery)
-  const [hasLoadingDock, setHasLoadingDock] = useState('no'); // 'yes' | 'no'
+  const [hasLoadingDock, setHasLoadingDock] = useState(saved?.hasLoadingDock || 'no'); // 'yes' | 'no'
 
   // Delivery timing — ship ASAP, or schedule on/after a preferred date
-  const [deliveryTiming, setDeliveryTiming] = useState(''); // 'asap' | 'scheduled'
-  const [preferredDeliveryDate, setPreferredDeliveryDate] = useState('');
+  const [deliveryTiming, setDeliveryTiming] = useState(saved?.deliveryTimingOption || ''); // 'asap' | 'scheduled'
+  const [preferredDeliveryDate, setPreferredDeliveryDate] = useState(saved?.preferredDeliveryDate || '');
 
   // Communication preferences — specific to each contact, not shared
-  const [primaryCommMethods, setPrimaryCommMethods] = useState(['Email']);
-  const [primaryMobilePhone, setPrimaryMobilePhone] = useState('');
-  const [secondaryCommMethods, setSecondaryCommMethods] = useState(['Email']);
-  const [secondaryMobilePhone, setSecondaryMobilePhone] = useState('');
-  const [ackRead, setAckRead] = useState(false);
-  const [ackName, setAckName] = useState('');
+  const [primaryCommMethods, setPrimaryCommMethods] = useState(saved?.primaryCommMethods || ['Email']);
+  const [primaryMobilePhone, setPrimaryMobilePhone] = useState(saved?.primaryMobilePhone || '');
+  const [secondaryCommMethods, setSecondaryCommMethods] = useState(saved?.secondaryCommMethods || ['Email']);
+  const [secondaryMobilePhone, setSecondaryMobilePhone] = useState(saved?.secondaryMobilePhone || '');
+  const [ackRead, setAckRead] = useState(saved?.ackRead || false);
+  const [ackName, setAckName] = useState(saved?.ackName || '');
   const [saving, setSaving] = useState(false);
   const [showRestrictionNote, setShowRestrictionNote] = useState(false);
   const [errors, setErrors] = useState({});
   // Edit mode: start in read-only if data is already populated
-  const [editingPoc, setEditingPoc] = useState(!(order.pocName || order.phone));
+  const [editingPoc, setEditingPoc] = useState(!(saved?.pocName || order.pocName || order.phone));
   // Logistics: show form fields if not yet completed, read-only after first submission
   const [editingLogistics, setEditingLogistics] = useState(!completions.delivery);
 
@@ -844,6 +938,10 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
         loadingDock: loadingDockLabel,
         deliveryTiming: deliveryTimingLabel,
         preferredDeliveryDate: deliveryTiming === 'scheduled' ? preferredDeliveryDate : '',
+        // Raw control values, sent alongside the human-readable labels above
+        // purely so the server can snapshot exactly what to restore into this
+        // form's controls next time — see COLS.deliverySnapshot.
+        hasLoadingDock, deliveryTimingOption: deliveryTiming, ackRead,
         changedRestricted,
         freightAckBy: ackName,
         freightAckDate: new Date().toISOString().split('T')[0],
@@ -1239,6 +1337,27 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
 
 function ColorTab({ order, completions, markComplete, showToast, colorForms, onNext, onBack }) {
   const [formSubmitted, setFormSubmitted] = useState(false);
+  // "Mark as Complete" previously only touched local component state/localStorage
+  // and never told the server anything happened — meaning Monday's "Portal:
+  // Color" status column (and therefore order.progress, reminders, and staff's
+  // admin view) never flipped, even though the customer saw a success toast.
+  // If localStorage was ever cleared, that "completion" vanished with no server
+  // record to recover it from. Fixed 2026-08-17 — now calls the same
+  // /api/portal/setup endpoint every other tab already uses.
+  const [saving, setSaving] = useState(false);
+  async function complete() {
+    setSaving(true);
+    try {
+      await saveSetup('color', {});
+      markComplete('color');
+      showToast('Color selections marked complete.');
+      onNext();
+    } catch {
+      showToast('Error saving. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
   const rawFormId = order?.colorFormId;
   const formId = typeof rawFormId === 'string' ? rawFormId.trim() : '';
   const iframeId = formId ? `JotFormIFrame-${formId}` : null;
@@ -1340,9 +1459,10 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
         <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back</button>
         <button
           className="btn btn-moss"
-          onClick={() => { markComplete('color'); showToast('Color selections marked complete.'); onNext(); }}
+          onClick={complete}
+          disabled={saving}
         >
-          Mark as Complete & Continue →
+          {saving ? 'Saving…' : 'Mark as Complete & Continue →'}
         </button>
       </div>
     </>
@@ -1352,6 +1472,23 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
 // ── Tab: Required Documents ───────────────────────────────────────────────────
 
 function DocumentsTab({ order, completions, markComplete, showToast, docForms, onNext, onBack }) {
+  // See ColorTab above — same fix: this button previously never told the
+  // server anything happened, so Monday's "Portal: Required" status column
+  // never flipped and the "completion" only ever existed in localStorage.
+  const [saving, setSaving] = useState(false);
+  async function complete() {
+    setSaving(true);
+    try {
+      await saveSetup('documents', {});
+      markComplete('documents');
+      showToast('Documents marked complete.');
+      onNext();
+    } catch {
+      showToast('Error saving. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
   return (
     <>
       <div className="ph"><h2>Required Documents</h2><p>Complete the required forms below before your order can be processed.</p></div>
@@ -1389,9 +1526,10 @@ function DocumentsTab({ order, completions, markComplete, showToast, docForms, o
         <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back</button>
         <button
           className="btn btn-moss"
-          onClick={() => { markComplete('documents'); showToast('Documents marked complete.'); onNext(); }}
+          onClick={complete}
+          disabled={saving}
         >
-          Mark as Complete & Continue →
+          {saving ? 'Saving…' : 'Mark as Complete & Continue →'}
         </button>
       </div>
     </>
@@ -2373,15 +2511,13 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
     finally { setSending(false); }
   }
 
-  function isStaff(email) {
-    return email?.includes('summitsensory') || email?.includes('summitsensorygym');
-  }
-
-  // Only show messages sent through the portal (tagged [PORTAL])
+  // Only show messages sent through the portal (tagged [PORTAL]) — origin
+  // (customer vs. staff) is determined by the module-level messageIsStaff()
+  // helper above, not creator.email; see its comment for why.
   const portalMessages = messages.filter(m => m.body?.startsWith('[PORTAL]'));
 
   function stripTag(body) {
-    return (body || '').replace(/^\[PORTAL\]\n?/, '');
+    return (body || '').replace(/^\[PORTAL\](\[PORTAL:(?:STAFF|CUSTOMER)\])?\n?/, '');
   }
 
   return (
@@ -2399,7 +2535,7 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
               </div>
             )}
             {portalMessages.map(msg => {
-              const staff = isStaff(msg.creator?.email);
+              const staff = messageIsStaff(msg);
               return (
                 <Fragment key={msg.id}>
                   <div className={`bub ${staff ? 'them' : 'me'}`}>
@@ -2410,7 +2546,11 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
                     <div className="ts">{new Date(msg.created_at).toLocaleString()}</div>
                   </div>
                   {(msg.replies || []).map(reply => {
-                    const replyStaff = isStaff(reply.creator?.email);
+                    // Threaded replies have no [PORTAL:*] origin tag of their own
+                    // (only top-level messages get one — see messageIsStaff above)
+                    // and in practice are only ever posted by staff, so the
+                    // legacy email guess is a reasonable signal here.
+                    const replyStaff = Boolean(reply.creator?.email?.includes('summitsensory') || reply.creator?.email?.includes('summitsensorygym'));
                     return (
                       <div key={reply.id} className={`bub ${replyStaff ? 'them' : 'me'}`}>
                         {replyStaff && reply.creator && (

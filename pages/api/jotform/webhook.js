@@ -13,7 +13,7 @@
  *   to the Documents checklist).
  */
 
-import { getOrderByEmail, postTaggedUpdate, markSectionComplete, attachUgcFile, incrementUgcCounts } from '../../../lib/monday';
+import { getOrderByEmail, getOrderMessages, postTaggedUpdate, markSectionComplete, attachUgcFile, incrementUgcCounts } from '../../../lib/monday';
 import { notifyTeamFormCompleted, notifyTeamUgcThreshold } from '../../../lib/email';
 
 // Parse the form→checklist map from env
@@ -23,6 +23,25 @@ function getFormMap() {
   } catch {
     return {};
   }
+}
+
+/** Resolve a form's configured "tab" string to the actual tabType used below. */
+function resolveTabType(formConfig) {
+  return formConfig.tab === 'color' || formConfig.tab === 'color_selection'
+    ? 'color'
+    : formConfig.tab === 'showcase'
+      ? 'showcase'
+      : 'documents';
+}
+
+/**
+ * Every formID in JOTFORM_FORM_MAP that resolves to the same tabType. Used so
+ * a tab backed by multiple Jotform forms (e.g. several Required Documents
+ * forms) only reports complete once every one of them has actually been
+ * submitted, instead of flipping ✅ the instant any single one arrives.
+ */
+function formsForTab(formMap, tabType) {
+  return Object.keys(formMap).filter((id) => resolveTabType(formMap[id]) === tabType);
 }
 
 const IMAGE_EXT = /\.(jpe?g|png|gif|heic|heif|webp|bmp|tiff?)(\?|$)/i;
@@ -130,68 +149,141 @@ export default async function handler(req, res) {
 
   // Dispatch by form type — color selections, required documents, or the
   // repeatable Photo & Video Showcase (not a one-time checklist item).
-  const tabType = formConfig.tab === 'color' || formConfig.tab === 'color_selection'
-    ? 'color'
-    : formConfig.tab === 'showcase'
-      ? 'showcase'
-      : 'documents';
+  const tabType = resolveTabType(formConfig);
 
   if (tabType === 'showcase') {
     const { photos, videos } = extractShowcaseFiles(submissionData);
 
+    // Track actual successes, not attempts — previously every attach was
+    // fire-and-forget (errors only logged), so postTaggedUpdate/
+    // incrementUgcCounts/notifyTeamUgcThreshold ran with the ORIGINAL
+    // photos.length/videos.length even if every single attach had thrown,
+    // recording a submission (and crediting toward the reward) that never
+    // actually landed on the order.
+    let photosOk = 0;
+    let videosOk = 0;
     for (const url of photos) {
-      await attachUgcFile(order.id, url, 'photo').catch(err => console.error('attachUgcFile (photo) failed:', err.message));
+      const ok = await attachUgcFile(order.id, url, 'photo')
+        .then(() => true)
+        .catch(err => { console.error('attachUgcFile (photo) failed:', err.message); return false; });
+      if (ok) photosOk++;
     }
     for (const url of videos) {
-      await attachUgcFile(order.id, url, 'video').catch(err => console.error('attachUgcFile (video) failed:', err.message));
+      const ok = await attachUgcFile(order.id, url, 'video')
+        .then(() => true)
+        .catch(err => { console.error('attachUgcFile (video) failed:', err.message); return false; });
+      if (ok) videosOk++;
     }
+
+    const attemptedTotal = photos.length + videos.length;
+    if (attemptedTotal > 0 && photosOk === 0 && videosOk === 0) {
+      // Every attach attempt failed — don't log a false "submitted" update
+      // or credit the reward tally for files that were never attached.
+      console.error(`Jotform webhook: all ${attemptedTotal} UGC attach attempt(s) failed for order ${order.id}.`);
+      return res.status(502).json({ error: 'Failed to attach submitted photos/videos.' });
+    }
+
+    const partialFailureNote = (photosOk < photos.length || videosOk < videos.length)
+      ? ` (${(photos.length - photosOk) + (videos.length - videosOk)} of ${attemptedTotal} file(s) failed to attach — check server logs.)`
+      : '';
 
     await postTaggedUpdate(
       order.id,
       'PORTAL: Photo/Video Submitted',
-      `Customer submitted ${photos.length} photo(s) and ${videos.length} video(s) via the Photo & Video Showcase form on ${new Date().toLocaleDateString()}. Submitted by: ${email}`
+      `Customer submitted ${photosOk} photo(s) and ${videosOk} video(s) via the Photo & Video Showcase form on ${new Date().toLocaleDateString()}.${partialFailureNote} Submitted by: ${email}`
     ).catch(console.error);
 
-    const result = await incrementUgcCounts(order.id, photos.length, videos.length)
+    const result = await incrementUgcCounts(order.id, photosOk, videosOk)
       .catch(err => { console.error('incrementUgcCounts failed:', err.message); return null; });
 
     if (result?.crossedNewTier) {
-      await notifyTeamUgcThreshold(order.name, email, result.photoCount, result.videoCount, result.credits).catch(console.error);
+      await notifyTeamUgcThreshold(order.name, email, result.photoCount, result.videoCount, result.credits, order.id).catch(console.error);
     }
 
-    return res.status(200).json({ ok: true, orderName: order.name, form: formConfig.name, photos: photos.length, videos: videos.length });
+    return res.status(200).json({
+      ok: true,
+      orderName: order.name,
+      form: formConfig.name,
+      photos: photosOk,
+      videos: videosOk,
+      photosAttempted: photos.length,
+      videosAttempted: videos.length,
+    });
   }
 
-  // Record completion in Monday.com as a tagged update so the cron can detect it
+  // Record completion in Monday.com as a tagged update so the cron can detect it.
+  // The form ID is embedded in the tag so a tab backed by multiple forms
+  // (see formsForTab above) can be verified as fully complete rather than
+  // flipped ✅ the instant any single one of its forms arrives — previously
+  // ANY form mapped to "documents" (or "color") completed the whole tab,
+  // even if the checklist had several required forms and only one had come in.
   const isColor = tabType === 'color';
   const tag = isColor ? 'PORTAL: Color Selections' : 'PORTAL: Documents Submitted';
 
   await postTaggedUpdate(
     order.id,
-    tag,
+    `${tag} (form:${formID})`,
     `Jotform submission received for "${formConfig.name}" on ${new Date().toLocaleDateString()}. Submitted by: ${email}`
   ).catch(console.error);
 
-  // Flip the matching portal checklist column (Portal: Color Selections / Portal: Documents) to ✅
-  await markSectionComplete(order.id, isColor ? 'portalColors' : 'portalDocuments').catch(console.error);
+  const requiredFormIds = formsForTab(formMap, tabType);
+  let tabComplete = true;
+  if (requiredFormIds.length > 1) {
+    try {
+      const updates = await getOrderMessages(order.id);
+      const bodies = updates.map(u => u.body || '');
+      tabComplete = requiredFormIds.every((id) =>
+        id === formID || bodies.some((b) => b.includes(tag) && b.includes(`(form:${id})`))
+      );
+    } catch (err) {
+      console.error('Jotform webhook: failed to check other forms mapped to this tab — marking complete based on this submission alone:', err.message);
+    }
+  }
+
+  // Flip the matching portal checklist column (Portal: Color Selections / Portal: Documents)
+  // to ✅ — only once every form mapped to this tab has been submitted.
+  if (tabComplete) {
+    await markSectionComplete(order.id, isColor ? 'portalColors' : 'portalDocuments').catch(console.error);
+  }
 
   // Notify team
   await notifyTeamFormCompleted(order.name, email, formConfig.name).catch(console.error);
 
-  return res.status(200).json({ ok: true, orderName: order.name, form: formConfig.name });
+  return res.status(200).json({ ok: true, orderName: order.name, form: formConfig.name, tabComplete });
 }
 
+// A real (if not fully RFC 5322) email-format check — the previous version
+// only required a value to contain BOTH "@" and "." anywhere in the string,
+// which could false-match on unrelated free-text fields (e.g. a notes field
+// mentioning a file like "photo1.jpg" next to an "@" reference).
+const EMAIL_RE = /[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+/;
+
+/**
+ * Find the first email-shaped value anywhere in the submission, recursing
+ * into nested objects/arrays the same way extractShowcaseFiles does — the
+ * old version only checked top-level string values or a one-level-deep
+ * {answer: "..."} shape, and would silently return null (routing the
+ * submission nowhere, per the "no order found for email" branch above) for
+ * any Jotform field shape nested any deeper than that.
+ */
 function extractEmail(data) {
-  for (const key of Object.keys(data)) {
-    const val = data[key];
-    if (typeof val === 'string' && val.includes('@') && val.includes('.')) {
-      return val;
+  let found = null;
+
+  const visit = (val) => {
+    if (found || val == null) return;
+    if (typeof val === 'string') {
+      const match = val.trim().match(EMAIL_RE);
+      if (match) found = match[0];
+      return;
     }
-    if (typeof val === 'object' && val?.answer) {
-      if (typeof val.answer === 'string' && val.answer.includes('@')) return val.answer;
+    if (Array.isArray(val)) { val.forEach(visit); return; }
+    if (typeof val === 'object') {
+      Object.values(val).forEach(visit);
     }
-  }
-  return null;
+  };
+
+  Object.values(data || {}).forEach(visit);
+  return found;
 }
 
 // Disable Next.js body parsing so we get the raw form data

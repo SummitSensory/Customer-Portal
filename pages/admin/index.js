@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
+import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
 
 const TABS = [
   { id: 'dashboard',  icon: '📊', label: 'Dashboard' },
@@ -488,6 +489,14 @@ function OrdersTab({ orders, onRefresh, showToast }) {
                         <td key={col.id} style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{order.name}</td>
                       );
 
+                      // PORTAL-004: order.balance is null when the balance column isn't
+                      // configured/populated in Monday, vs. a real 0 when it's genuinely
+                      // paid off. Both used to render as "Paid" — null now shows as a
+                      // neutral "—" so staff aren't told an unconfigured order is paid.
+                      if (cell.type === 'balance' && order.balance == null) return (
+                        <td key={col.id} style={{ whiteSpace: 'nowrap', color: 'var(--muted, #888)' }}>—</td>
+                      );
+
                       if (cell.type === 'balance') return (
                         <td key={col.id} style={{ fontWeight: 600, whiteSpace: 'nowrap', color: order.balance > 0 ? 'var(--rose)' : 'var(--ok)' }}>
                           {order.balance > 0 ? `$${order.balance.toFixed(2)}` : 'Paid'}
@@ -613,8 +622,9 @@ function CustomersTab({ orders }) {
                 <td style={{ fontSize: 13 }}>{order.name}</td>
                 <td style={{ fontSize: 13, color: 'var(--mut)' }}>{order.productType || '—'}</td>
                 <td><ProgressDots progress={order.progress} /></td>
-                <td style={{ fontWeight: 600, color: order.balance > 0 ? 'var(--rose)' : 'var(--ok)' }}>
-                  {order.balance > 0 ? `$${order.balance.toFixed(2)}` : 'Paid'}
+                {/* PORTAL-004: distinguish "no balance data" (null) from "$0 / paid" */}
+                <td style={{ fontWeight: 600, color: order.balance == null ? 'var(--mut)' : order.balance > 0 ? 'var(--rose)' : 'var(--ok)' }}>
+                  {order.balance == null ? '—' : order.balance > 0 ? `$${order.balance.toFixed(2)}` : 'Paid'}
                 </td>
                 <td><StatusPill status={order.status} /></td>
               </tr>
@@ -818,7 +828,8 @@ function AdminMessagesTab({ orders, showToast }) {
                     <div key={msg.id}>
                       <div className={`bub ${msg.creator?.email?.endsWith('summitsensorygym.com') ? 'me' : 'them'}`}>
                         <div style={{ fontSize: 11, opacity: .7, marginBottom: 3 }}>{msg.creator?.name}</div>
-                        <div dangerouslySetInnerHTML={{ __html: msg.body }} />
+                        {/* PORTAL-002: sanitized before injection — see lib/sanitizeHtml.js */}
+                        <div dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(msg.body) }} />
                         <div className="ts">{new Date(msg.created_at).toLocaleString()}</div>
                       </div>
                     </div>

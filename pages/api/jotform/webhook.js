@@ -13,7 +13,7 @@
  *   to the Documents checklist).
  */
 
-import { getOrderByEmail, getOrderMessages, postTaggedUpdate, markSectionComplete, attachUgcFile, incrementUgcCounts } from '../../../lib/monday';
+import { getOrderByEmail, getOrderMessages, postTaggedUpdate, markSectionCompleteSafe, attachUgcFile, incrementUgcCounts } from '../../../lib/monday';
 import { notifyTeamFormCompleted, notifyTeamUgcThreshold } from '../../../lib/email';
 
 // Parse the form→checklist map from env
@@ -98,13 +98,25 @@ function extractShowcaseFiles(data) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
-  // Optional: verify the secret header Jotform can send
+  // Verify the shared secret Jotform sends back (as a custom header configured
+  // in Jotform's webhook settings, or the "secret" field in the payload).
+  // PORTAL-011: this previously skipped verification entirely whenever
+  // JOTFORM_WEBHOOK_SECRET was unset, letting anyone who found this URL post
+  // fabricated submissions (including attacker-controlled file URLs — see
+  // PORTAL-006) as if they came from a real Jotform. Fails CLOSED now.
+  const configuredSecret = process.env.JOTFORM_WEBHOOK_SECRET;
   const secret = req.headers['x-jotform-secret'] || req.body?.secret;
-  if (process.env.JOTFORM_WEBHOOK_SECRET && secret !== process.env.JOTFORM_WEBHOOK_SECRET) {
+  if (!configuredSecret || secret !== configuredSecret) {
+    console.error('Jotform webhook: authorization failed (missing or mismatched secret).');
     return res.status(401).json({ error: 'Invalid webhook secret.' });
   }
 
-  const { formID, rawRequest } = req.body || {};
+  // PORTAL-013: Jotform (and Monday, generically) can legitimately redeliver
+  // a webhook on a timeout or non-200 response. submissionID uniquely
+  // identifies one Jotform submission — when present, it's used below to
+  // recognize and skip a redelivery instead of double-attaching UGC files
+  // or double-crediting the reward tally.
+  const { formID, rawRequest, submissionID } = req.body || {};
   if (!formID) return res.status(400).json({ error: 'formID required.' });
 
   // Parse the submission data
@@ -146,6 +158,26 @@ export default async function handler(req, res) {
     console.warn('Jotform webhook: no order for email', email);
     return res.status(200).json({ ok: true, note: 'No order found for email.' });
   }
+
+  // PORTAL-013: skip a redelivery of a submission we've already recorded.
+  // Marker is embedded in the tagged update posted below (both the showcase
+  // and the standard-tab paths), so this only works going forward for
+  // submissions processed after this fix — acceptable, since the goal is
+  // to stop future double-processing, not retroactively audit past ones.
+  if (submissionID) {
+    try {
+      const priorUpdates = await getOrderMessages(order.id);
+      const alreadyProcessed = priorUpdates.some((u) => (u.body || '').includes(`(submission:${submissionID})`));
+      if (alreadyProcessed) {
+        return res.status(200).json({ ok: true, duplicate: true, note: 'Submission already processed.' });
+      }
+    } catch (err) {
+      // Non-fatal — if the dedupe check itself fails, proceed rather than
+      // block a legitimate submission over it.
+      console.error('Jotform webhook: dedupe check failed (continuing anyway):', err.message);
+    }
+  }
+  const submissionTag = submissionID ? ` (submission:${submissionID})` : '';
 
   // Dispatch by form type — color selections, required documents, or the
   // repeatable Photo & Video Showcase (not a one-time checklist item).
@@ -190,7 +222,7 @@ export default async function handler(req, res) {
     await postTaggedUpdate(
       order.id,
       'PORTAL: Photo/Video Submitted',
-      `Customer submitted ${photosOk} photo(s) and ${videosOk} video(s) via the Photo & Video Showcase form on ${new Date().toLocaleDateString()}.${partialFailureNote} Submitted by: ${email}`
+      `Customer submitted ${photosOk} photo(s) and ${videosOk} video(s) via the Photo & Video Showcase form on ${new Date().toLocaleDateString()}.${partialFailureNote} Submitted by: ${email}${submissionTag}`
     ).catch(console.error);
 
     const result = await incrementUgcCounts(order.id, photosOk, videosOk)
@@ -223,7 +255,7 @@ export default async function handler(req, res) {
   await postTaggedUpdate(
     order.id,
     `${tag} (form:${formID})`,
-    `Jotform submission received for "${formConfig.name}" on ${new Date().toLocaleDateString()}. Submitted by: ${email}`
+    `Jotform submission received for "${formConfig.name}" on ${new Date().toLocaleDateString()}. Submitted by: ${email}${submissionTag}`
   ).catch(console.error);
 
   const requiredFormIds = formsForTab(formMap, tabType);
@@ -242,14 +274,17 @@ export default async function handler(req, res) {
 
   // Flip the matching portal checklist column (Portal: Color Selections / Portal: Documents)
   // to ✅ — only once every form mapped to this tab has been submitted.
+  // PORTAL-014: retried and reported honestly instead of silently swallowed —
+  // see markSectionCompleteSafe() in lib/monday.js.
+  let checklistSynced = true;
   if (tabComplete) {
-    await markSectionComplete(order.id, isColor ? 'portalColors' : 'portalDocuments').catch(console.error);
+    checklistSynced = await markSectionCompleteSafe(order.id, isColor ? 'portalColors' : 'portalDocuments');
   }
 
   // Notify team
   await notifyTeamFormCompleted(order.name, email, formConfig.name).catch(console.error);
 
-  return res.status(200).json({ ok: true, orderName: order.name, form: formConfig.name, tabComplete });
+  return res.status(200).json({ ok: true, orderName: order.name, form: formConfig.name, tabComplete, checklistSyncPending: !checklistSynced });
 }
 
 // A real (if not fully RFC 5322) email-format check — the previous version

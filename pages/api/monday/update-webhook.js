@@ -6,11 +6,18 @@
  *
  * Monday.com automation setup:
  *   Trigger: "When an update is created"
- *   Action:  "Send a webhook" → https://your-domain.vercel.app/api/monday/update-webhook
+ *   Action:  "Send a webhook" → https://your-domain.vercel.app/api/monday/update-webhook?secret=<MONDAY_UPDATE_WEBHOOK_SECRET>
  *   JSON body: { "itemId": "{itemId}", "updateBody": "{updateBody}", "creatorEmail": "{creatorEmail}" }
  *
  * The automation fires for ALL updates (including customer ones). We only
  * email the customer when the update comes from a staff email domain.
+ *
+ * PORTAL-003: this endpoint previously had no authentication of any kind —
+ * anyone who discovered the URL could POST an arbitrary itemId/creatorEmail
+ * and trigger a customer notification email (or probe which itemIds exist
+ * via the response). It now requires the same shared-secret query param
+ * pattern used by accessory-webhook.js, and fails CLOSED if the secret env
+ * var isn't configured.
  */
 
 import { getOrderById, getOrderByEmail, setStatusLabel } from '../../../lib/monday';
@@ -23,6 +30,14 @@ export default async function handler(req, res) {
   // Monday.com sends a challenge on first setup — respond to verify
   if (req.body?.challenge) {
     return res.status(200).json({ challenge: req.body.challenge });
+  }
+
+  // Fails CLOSED: if the secret isn't configured, reject rather than accept
+  // unauthenticated requests. Mirrors accessory-webhook.js.
+  const secret = process.env.MONDAY_UPDATE_WEBHOOK_SECRET;
+  if (!secret || req.query.secret !== secret) {
+    console.error('Monday update-webhook: authorization failed (missing or mismatched secret).');
+    return res.status(401).json({ error: 'Invalid secret.' });
   }
 
   const { itemId, updateBody, creatorEmail } = req.body || {};

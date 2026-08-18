@@ -15,13 +15,34 @@ import { authOptions } from '../auth/[...nextauth]';
 
 const DEFAULT_BASE = process.env.AFTERSHIP_API_BASE || 'https://api.aftership.com/tracking/2025-07';
 
+// PORTAL-020: `base` used to accept ANY value with no validation, so this
+// endpoint would send the live AFTERSHIP_API_KEY (as a request header) to
+// whatever host a caller specified. Exploiting it requires an authenticated
+// staff session (this route is gated below), but a compromised or overly
+// curious staff account could otherwise redirect the real API key to an
+// attacker-controlled host. Restrict to AfterShip's own known API hosts.
+// Includes DEFAULT_BASE's own host so a custom AFTERSHIP_API_BASE (set via
+// env var, under staff/deploy control) is still honored as a legitimate
+// override target, without opening this up to an arbitrary caller-supplied host.
+const ALLOWED_BASE_HOSTS = [...new Set(['api.aftership.com', new URL(DEFAULT_BASE).hostname])];
+function resolveBase(rawBase) {
+  if (!rawBase) return DEFAULT_BASE;
+  try {
+    const url = new URL(String(rawBase));
+    if (url.protocol === 'https:' && ALLOWED_BASE_HOSTS.includes(url.hostname)) {
+      return String(rawBase).replace(/\/+$/, '');
+    }
+  } catch { /* falls through to default below */ }
+  return DEFAULT_BASE;
+}
+
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
   if (!session) return res.status(401).json({ error: 'Staff sign-in required.' });
 
   const { slug, number } = req.query;
   const key = process.env.AFTERSHIP_API_KEY || '';
-  const base = String(req.query.base || DEFAULT_BASE).replace(/\/+$/, '');
+  const base = resolveBase(req.query.base);
   const flat = !!req.query.flat;
 
   const info = {

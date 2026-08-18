@@ -17,18 +17,94 @@ import {
   getOrderById,
   updateOrderColumn,
   postTaggedUpdate,
-  markSectionComplete,
+  markSectionCompleteSafe,
   createDeliverySubmissionItem,
   setStatusLabel,
   uploadFileToColumn,
   COLS,
+  STATUS_STAGES,
   TAX_EXEMPT_YES_LABEL,
   TAX_EXEMPT_NO_LABEL,
 } from '../../../lib/monday';
+import { allowRequest } from '../../../lib/rateLimit';
+
+// PORTAL-017: the Delivery tab's UI hides its form once an order has shipped
+// (order.stageIndex >= shippedIdx, see DeliveryTab in pages/portal/index.js),
+// but that was ONLY a client-side gate — this handler processed and saved
+// delivery/freight_ack submissions regardless of shipment stage. A stale
+// already-open tab, a replayed request, or a direct API call could silently
+// write a "new" delivery address for an order already in transit to the old
+// one. Mirrors the same shippedIdx logic server-side.
+const SHIPPED_STAGE_INDEX = STATUS_STAGES.findIndex(s => s.key === 'shipped');
+function isOrderShipped(order) {
+  return SHIPPED_STAGE_INDEX >= 0 && (order.stageIndex ?? 0) >= SHIPPED_STAGE_INDEX;
+}
 import { notifyTeamContactChange, notifyTeamFormCompleted } from '../../../lib/email';
 
 // Fields that require Summit confirmation when changed
 const RESTRICTED_FIELDS = ['deliveryAddress', 'liftgate', 'loadingDock', 'deliveryWindow'];
+
+// PORTAL-010: this handler previously did zero validation beyond "tab and
+// data required" — any authenticated session could POST empty strings or
+// malformed data for any tab and it would still write to Monday and mark
+// the section ✅ complete. Mirrors the required-field + email-format
+// checks pages/api/referral/submit.js already does correctly for its own
+// form. Returns a plain string error message, or null if valid.
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const isBlank = (v) => typeof v !== 'string' || !v.trim();
+
+function validateSetupData(tab, data) {
+  switch (tab) {
+    case 'contact_update': {
+      const { name, phone, email } = data;
+      if (!name && !phone && !email) return 'At least one field (name, phone, or email) is required.';
+      if (email && !EMAIL_PATTERN.test(email)) return 'Please enter a valid email address.';
+      return null;
+    }
+    case 'billing': {
+      const { billingAddress, billingCity, billingContactSameAsPrimary, billingName, billingPhone, billingEmail } = data;
+      if (isBlank(billingAddress)) return 'Billing address is required.';
+      if (isBlank(billingCity)) return 'Billing city is required.';
+      if (!billingContactSameAsPrimary) {
+        if (isBlank(billingName)) return 'Billing contact name is required.';
+        if (isBlank(billingPhone)) return 'Billing contact phone is required.';
+        if (isBlank(billingEmail) || !EMAIL_PATTERN.test(billingEmail)) return 'A valid billing contact email is required.';
+      }
+      return null;
+    }
+    case 'delivery': {
+      const { pocName, pocPhone, pocEmail, addressConfirmed, addressLine1, addressCity, addressState, addressZip,
+              hasSecondaryPoc, secondaryPocName, secondaryPocPhone } = data;
+      if (isBlank(pocName)) return 'Delivery point-of-contact name is required.';
+      if (isBlank(pocPhone)) return 'Delivery point-of-contact phone is required.';
+      if (isBlank(pocEmail) || !EMAIL_PATTERN.test(pocEmail)) return 'A valid delivery point-of-contact email is required.';
+      // A new/updated ship-to address is only required when the customer
+      // said the address on file is NOT correct (addressConfirmed === false).
+      if (addressConfirmed === false) {
+        if (isBlank(addressLine1)) return 'A delivery street address is required.';
+        if (isBlank(addressCity)) return 'A delivery city is required.';
+        if (isBlank(addressState)) return 'A delivery state is required.';
+        if (isBlank(addressZip)) return 'A delivery zip/postal code is required.';
+      }
+      if (hasSecondaryPoc) {
+        if (isBlank(secondaryPocName)) return 'A secondary contact name is required when a secondary contact is enabled.';
+        if (isBlank(secondaryPocPhone)) return 'A secondary contact phone is required when a secondary contact is enabled.';
+      }
+      return null;
+    }
+    case 'freight_ack': {
+      const { acknowledgedBy, acknowledgedAt } = data;
+      if (isBlank(acknowledgedBy)) return 'A name is required to acknowledge freight delivery requirements.';
+      if (isBlank(acknowledgedAt)) return 'An acknowledgment date is required.';
+      return null;
+    }
+    // 'contact' and 'color'/'documents' completion markers carry no
+    // customer-entered fields to validate; 'tax_exemption' already checks
+    // its own required fields (fileBase64/fileName) inline below.
+    default:
+      return null;
+  }
+}
 
 // Tax exemption certificate uploads arrive as base64 in the JSON body — raise
 // the default 1mb Next.js body limit so scanned PDFs/photos aren't rejected.
@@ -45,8 +121,17 @@ export default async function handler(req, res) {
   const session = await verifyCustomerSession(cookies[SESSION_COOKIE]);
   if (!session) return res.status(401).json({ error: 'Not authenticated.' });
 
+  // PORTAL-027: most tabs here trigger a team-notification email on every
+  // save. See lib/rateLimit.js for the in-memory limiter's scope/limitations.
+  if (!allowRequest(`portal-setup:${session.email}`, { maxRequests: 20, windowMs: 60_000 })) {
+    return res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' });
+  }
+
   const { tab, data } = req.body || {};
   if (!tab || !data) return res.status(400).json({ error: 'tab and data required.' });
+
+  const validationError = validateSetupData(tab, data);
+  if (validationError) return res.status(400).json({ error: validationError });
 
   let order;
   try {
@@ -65,8 +150,10 @@ export default async function handler(req, res) {
           `Customer confirmed contact information on ${new Date().toLocaleDateString()}.`
         );
         await notifyTeamContactChange(order.name, session.email, ['Contact Information Confirmed']).catch(console.error);
-        await markSectionComplete(order.id, 'portalContact').catch(console.error);
-        return res.status(200).json({ ok: true });
+        // PORTAL-014: retried and reported honestly instead of swallowed —
+        // see markSectionCompleteSafe() in lib/monday.js.
+        const contactSynced = await markSectionCompleteSafe(order.id, 'portalContact');
+        return res.status(200).json({ ok: true, checklistSyncPending: !contactSynced });
       }
 
       // ── Tab 1b: Contact — editable update ────────────────────────────────
@@ -84,8 +171,8 @@ export default async function handler(req, res) {
           session.email,
           [name && 'Name', phone && 'Phone', newEmail && 'Email'].filter(Boolean)
         ).catch(console.error);
-        await markSectionComplete(order.id, 'portalContact').catch(console.error);
-        return res.status(200).json({ ok: true });
+        const contactUpdateSynced = await markSectionCompleteSafe(order.id, 'portalContact');
+        return res.status(200).json({ ok: true, checklistSyncPending: !contactUpdateSynced });
       }
 
       // ── Tab 2: Billing ──────────────────────────────────────────────────
@@ -131,12 +218,16 @@ export default async function handler(req, res) {
           `Billing Address: ${addressText}\nBilling Contact: ${contactText}\nSubmitted: ${new Date().toLocaleDateString()}`
         );
         await notifyTeamContactChange(order.name, session.email, ['Billing Information']).catch(console.error);
-        await markSectionComplete(order.id, 'portalBilling').catch(console.error);
-        return res.status(200).json({ ok: true });
+        const billingSynced = await markSectionCompleteSafe(order.id, 'portalBilling');
+        return res.status(200).json({ ok: true, checklistSyncPending: !billingSynced });
       }
 
       // ── Tab 3: Delivery ─────────────────────────────────────────────────
       case 'delivery': {
+        // PORTAL-017: reject once the order has shipped — see isOrderShipped() above.
+        if (isOrderShipped(order)) {
+          return res.status(409).json({ error: 'This order has already shipped — delivery details can no longer be changed through the portal. Contact Summit Sensory Gym directly for any changes.' });
+        }
         const {
           pocName, pocPhone, phoneCanText, pocEmail, specialInstructions,
           hasSecondaryPoc, secondaryPocName, secondaryPocPhone, secondaryPhoneCanText, secondaryPocEmail,
@@ -204,6 +295,28 @@ export default async function handler(req, res) {
 
         await postTaggedUpdate(order.id, 'PORTAL: Delivery Details', lines.join('\n'));
 
+        // PORTAL-018: the freight acknowledgment used to be a SECOND,
+        // separate POST from the frontend (saveSetup('freight_ack', ...)
+        // fired right after this one). Two sequential HTTP requests for what
+        // is, from the customer's perspective, a single "Submit" click meant
+        // a failure between them (network blip, tab closed) left the
+        // delivery details saved but the acknowledgment missing, and a retry
+        // re-ran the first write again — duplicating the tagged update and
+        // the Delivery & Site Details Submissions board row. freightAckBy/
+        // freightAckDate are already required fields on this same form
+        // (see ackName/ackRead validation in DeliveryTab), so folding the
+        // acknowledgment into this single request makes the whole
+        // submission atomic — it either succeeds together or fails
+        // together, no partial state and no accidental double-submit. The
+        // separate 'freight_ack' case below is kept only for backward
+        // compatibility with any in-flight requests from an older
+        // deployed frontend.
+        if (freightAckBy && freightAckDate) {
+          await postTaggedUpdate(order.id, 'PORTAL: Freight Delivery Acknowledgment',
+            `Acknowledged by: ${freightAckBy}\nDate: ${freightAckDate}\nCustomer has read and agreed to all freight delivery requirements.`
+          );
+        }
+
         // Push the full structured submission to the standalone Delivery &
         // Site Details Submissions board in Monday (one row per submission)
         await createDeliverySubmissionItem(order, {
@@ -224,19 +337,23 @@ export default async function handler(req, res) {
           ? changedRestricted
           : ['Delivery Details'];
         await notifyTeamContactChange(order.name, session.email, notifyFields).catch(console.error);
-        await markSectionComplete(order.id, 'portalDelivery').catch(console.error);
+        const deliverySynced = await markSectionCompleteSafe(order.id, 'portalDelivery');
 
-        return res.status(200).json({ ok: true, requiresConfirmation: changedRestricted?.length > 0 });
+        return res.status(200).json({ ok: true, requiresConfirmation: changedRestricted?.length > 0, checklistSyncPending: !deliverySynced });
       }
 
       // ── Freight Acknowledgment ──────────────────────────────────────────
       case 'freight_ack': {
+        // PORTAL-017: same server-side shipped-stage gate as 'delivery' above.
+        if (isOrderShipped(order)) {
+          return res.status(409).json({ error: 'This order has already shipped — the freight acknowledgment can no longer be submitted through the portal.' });
+        }
         const { acknowledgedBy, acknowledgedAt } = data;
         await postTaggedUpdate(order.id, 'PORTAL: Freight Delivery Acknowledgment',
           `Acknowledged by: ${acknowledgedBy}\nDate: ${acknowledgedAt}\nCustomer has read and agreed to all freight delivery requirements.`
         );
-        await markSectionComplete(order.id, 'portalDelivery').catch(console.error);
-        return res.status(200).json({ ok: true });
+        const freightAckSynced = await markSectionCompleteSafe(order.id, 'portalDelivery');
+        return res.status(200).json({ ok: true, checklistSyncPending: !freightAckSynced });
       }
 
       // ── Tab 4: Color Selections ─────────────────────────────────────────
@@ -244,8 +361,8 @@ export default async function handler(req, res) {
         await postTaggedUpdate(order.id, 'PORTAL: Color Selections',
           `Customer marked color and product selections complete on ${new Date().toLocaleDateString()}.`
         );
-        await markSectionComplete(order.id, 'portalColors').catch(console.error);
-        return res.status(200).json({ ok: true });
+        const colorSynced = await markSectionCompleteSafe(order.id, 'portalColors');
+        return res.status(200).json({ ok: true, checklistSyncPending: !colorSynced });
       }
 
       // ── Tab 5: Required Documents ───────────────────────────────────────
@@ -253,8 +370,8 @@ export default async function handler(req, res) {
         await postTaggedUpdate(order.id, 'PORTAL: Documents Submitted',
           `Customer marked required documents complete on ${new Date().toLocaleDateString()}.`
         );
-        await markSectionComplete(order.id, 'portalDocuments').catch(console.error);
-        return res.status(200).json({ ok: true });
+        const documentsSynced = await markSectionCompleteSafe(order.id, 'portalDocuments');
+        return res.status(200).json({ ok: true, checklistSyncPending: !documentsSynced });
       }
 
       // ── Invoice & Payment: Tax Exemption ─────────────────────────────────

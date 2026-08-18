@@ -76,9 +76,14 @@ export default async function handler(req, res) {
       console.error('Frame/Mats onboarding error:', err.message);
     }
 
+    // PORTAL-022: log the run summary explicitly so a partial run (a hung
+    // outbound call mid-loop, see PORTAL-021) is visible in Vercel's function
+    // logs — previously this only went out in the HTTP response body, which
+    // nothing reads for a scheduled Cron invocation.
+    console.log(`Accessory tracking sync summary: checked=${candidates.length} updated=${updated} framesMatsOnboarded=${framesMatsOnboarded}`);
     return res.status(200).json({ ok: true, checked: candidates.length, updated, framesMatsOnboarded });
   } catch (err) {
-    console.error('Accessory tracking sync error:', err.message);
+    console.error('Accessory tracking sync error (run did not complete):', err.message);
     return res.status(500).json({ error: 'Sync failed.' });
   }
 }

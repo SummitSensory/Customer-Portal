@@ -8,6 +8,7 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
+import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
 
 // ── Navigation config ─────────────────────────────────────────────────────────
 
@@ -42,6 +43,18 @@ const ORDER_TABS = [
 // stamps the true origin into the body itself ([PORTAL:CUSTOMER] /
 // [PORTAL:STAFF]); fall back to the old email guess only for messages sent
 // before this fix existed.
+// PORTAL-024: colorFormId/showcaseFormId are staff-configured Monday.com
+// values, not raw customer input, but they still get string-interpolated
+// straight into an HTML template passed to dangerouslySetInnerHTML (needed
+// so the Jotform embed script can find/own the iframe — see comment above
+// each usage). A typo'd or corrupted column value would previously inject
+// directly into the DOM unescaped. Jotform form IDs are always numeric, so
+// validating that shape before interpolating closes the injection vector
+// without changing legitimate behavior.
+function isValidJotformId(id) {
+  return typeof id === 'string' && /^[0-9]{5,20}$/.test(id);
+}
+
 function messageIsStaff(msg) {
   if (msg.body?.includes('[PORTAL:STAFF]')) return true;
   if (msg.body?.includes('[PORTAL:CUSTOMER]')) return false;
@@ -177,7 +190,25 @@ export default function CustomerPortal() {
     </div>
   );
 
-  if (orders && !order) return <OrderPicker orders={orders} onSelect={o => {
+  // PORTAL-007: picking an order here must also re-bind the session cookie
+  // to that orderId via /api/auth/select-order, not just set local React
+  // state. Every write endpoint (messages, setup, files, etc.) authorizes
+  // by comparing the request's orderId against the session's bound
+  // orderId — if the cookie were left unbound, every one of those calls
+  // would be rejected (or worse, silently fall back to the wrong order)
+  // once the customer starts interacting with the picked order.
+  if (orders && !order) return <OrderPicker orders={orders} onSelect={async (o) => {
+    try {
+      const res = await fetch('/api/auth/select-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: o.id }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      showToast('Could not select that order. Please try again.');
+      return;
+    }
     setOrder(o);
     setOrders(null);
     applyCompletions(o);
@@ -944,11 +975,14 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
         hasLoadingDock, deliveryTimingOption: deliveryTiming, ackRead,
         changedRestricted,
         freightAckBy: ackName,
+        // PORTAL-018: previously a separate saveSetup('freight_ack', ...)
+        // call followed this one — two sequential POSTs for a single
+        // "Submit" click, so a failure between them could save delivery
+        // details without the acknowledgment and a retry would duplicate
+        // the first write. The 'delivery' handler now records the freight
+        // acknowledgment itself from these same fields in one atomic
+        // request — see pages/api/portal/setup.js.
         freightAckDate: new Date().toISOString().split('T')[0],
-      });
-      await saveSetup('freight_ack', {
-        acknowledgedBy: ackName,
-        acknowledgedAt: new Date().toLocaleDateString(),
       });
       markComplete('delivery');
       if (changedRestricted.length > 0) setShowRestrictionNote(true);
@@ -1359,7 +1393,8 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
     }
   }
   const rawFormId = order?.colorFormId;
-  const formId = typeof rawFormId === 'string' ? rawFormId.trim() : '';
+  const trimmedFormId = typeof rawFormId === 'string' ? rawFormId.trim() : '';
+  const formId = isValidJotformId(trimmedFormId) ? trimmedFormId : '';
   const iframeId = formId ? `JotFormIFrame-${formId}` : null;
 
   // Load Jotform embed handler script and wire it up after iframe mounts
@@ -2542,7 +2577,8 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
                     {staff && msg.creator && (
                       <div style={{ fontSize: 11, opacity: .7, marginBottom: 3 }}>{msg.creator.name}</div>
                     )}
-                    <div dangerouslySetInnerHTML={{ __html: stripTag(msg.body) }} />
+                    {/* PORTAL-002: sanitized before injection — see lib/sanitizeHtml.js */}
+                    <div dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(stripTag(msg.body)) }} />
                     <div className="ts">{new Date(msg.created_at).toLocaleString()}</div>
                   </div>
                   {(msg.replies || []).map(reply => {
@@ -2556,7 +2592,8 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
                         {replyStaff && reply.creator && (
                           <div style={{ fontSize: 11, opacity: .7, marginBottom: 3 }}>{reply.creator.name}</div>
                         )}
-                        <div dangerouslySetInnerHTML={{ __html: reply.body }} />
+                        {/* PORTAL-002: sanitized before injection — see lib/sanitizeHtml.js */}
+                        <div dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(reply.body) }} />
                         <div className="ts">{new Date(reply.created_at).toLocaleString()}</div>
                       </div>
                     );
@@ -2698,7 +2735,8 @@ function ShowcaseTab({ order }) {
   const [emailSending, setEmailSending] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const rawFormId = order?.showcaseFormId;
-  const formId = typeof rawFormId === 'string' ? rawFormId.trim() : '';
+  const trimmedFormId = typeof rawFormId === 'string' ? rawFormId.trim() : '';
+  const formId = isValidJotformId(trimmedFormId) ? trimmedFormId : '';
   const iframeId = formId ? `JotFormIFrame-${formId}` : null;
   const formSrc = formId ? buildShowcaseFormUrl(formId, order) : '';
 

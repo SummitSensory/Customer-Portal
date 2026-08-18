@@ -18,8 +18,15 @@
  * whether a prior invite update exists) so there's a visible history either way.
  *
  * Env:
- *   MONDAY_INVITE_SECRET   shared secret in the webhook URL (falls back to CRON_SECRET)
+ *   MONDAY_INVITE_SECRET   shared secret in the webhook URL — required, no fallback
  *   MONDAY_INVITE_SENT_LABEL   label to set after sending (default "Invite Sent")
+ *
+ * PORTAL-012: this used to fall back to CRON_SECRET when MONDAY_INVITE_SECRET
+ * was unset, and skipped verification entirely if BOTH were unset — either
+ * condition let anyone who found this URL trigger a real invitation email to
+ * a customer, or (with the CRON_SECRET fallback) meant compromising this
+ * endpoint's secret also compromised the unrelated cron-auth secret. This
+ * endpoint now requires its own dedicated secret and fails closed if unset.
  */
 
 import {
@@ -30,8 +37,6 @@ import {
 } from '../../../lib/monday';
 import { sendPortalInvitation } from '../../../lib/email';
 
-const SECRET = process.env.MONDAY_INVITE_SECRET || process.env.CRON_SECRET || '';
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
@@ -41,8 +46,12 @@ export default async function handler(req, res) {
   }
 
   // Verify the shared secret (from the URL ?secret= or an X-Webhook-Secret header).
+  // Fails CLOSED: if MONDAY_INVITE_SECRET isn't configured, reject rather
+  // than accept unauthenticated requests.
+  const secret = process.env.MONDAY_INVITE_SECRET;
   const provided = req.query.secret || req.headers['x-webhook-secret'];
-  if (SECRET && provided !== SECRET) {
+  if (!secret || provided !== secret) {
+    console.error('Monday invite-webhook: authorization failed (missing or mismatched secret).');
     return res.status(401).json({ error: 'Invalid webhook secret.' });
   }
 

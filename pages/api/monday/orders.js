@@ -57,11 +57,18 @@ export default async function handler(req, res) {
         await updateTrackingNumber(id, trackingNumber);
       }
 
-      if (balance !== undefined && balance !== order.balance) {
-        await updateBalance(id, balance);
+      // PORTAL-004: order.balance is now a real parsed number (or null) instead
+      // of always-undefined, but the incoming `balance` from the request body
+      // may still arrive as a string (e.g. "150.00" from a form input) — a
+      // strict !== against a number would treat that as "changed" every time
+      // and re-notify the customer on every save even when nothing changed.
+      // Compare numerically instead.
+      const nextBalance = balance !== undefined ? parseFloat(balance) : undefined;
+      if (nextBalance !== undefined && Number.isFinite(nextBalance) && nextBalance !== order.balance) {
+        await updateBalance(id, nextBalance);
         if (order.customerEmail) {
           await notifyCustomerBalanceChange(
-            order.customerEmail, order.contactName, order.name, parseFloat(balance)
+            order.customerEmail, order.contactName, order.name, nextBalance
           ).catch(console.error);
         }
       }

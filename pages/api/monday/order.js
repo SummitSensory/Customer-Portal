@@ -23,27 +23,45 @@ export default async function handler(req, res) {
   if (!session) return res.status(401).json({ error: 'Not authenticated.' });
 
   // ── GET — supports single order (by stored ID) or all orders for email ────
+  // PORTAL-015: this whole block previously had no try/catch — unlike every
+  // other handler in this codebase, a Monday API error here (timeout, rate
+  // limit, transient 5xx) would crash the request with an unhandled
+  // rejection / raw 500 instead of a clean error response.
   if (req.method === 'GET') {
-    // If session has a specific orderId (set at login), use it directly
-    if (session.orderId) {
-      const order = await getOrderById(session.orderId);
-      if (!order) return res.status(404).json({ error: 'Order not found.' });
-      // impersonatedBy is only set on sessions minted by /api/admin/impersonate —
-      // surfaced here so the portal UI can show its "viewing as staff" banner.
-      return res.status(200).json({ order, impersonatedBy: session.impersonatedBy || null });
-    }
+    try {
+      // If session has a specific orderId (set at login), use it directly
+      if (session.orderId) {
+        const order = await getOrderById(session.orderId);
+        if (!order) return res.status(404).json({ error: 'Order not found.' });
+        // impersonatedBy is only set on sessions minted by /api/admin/impersonate —
+        // surfaced here so the portal UI can show its "viewing as staff" banner.
+        return res.status(200).json({ order, impersonatedBy: session.impersonatedBy || null });
+      }
 
-    // Otherwise look up all orders for this email (repeat customer support)
-    const orders = await getOrdersByEmail(session.email);
-    if (!orders.length) return res.status(404).json({ error: 'No orders found.' });
-    if (orders.length === 1) return res.status(200).json({ order: orders[0], impersonatedBy: session.impersonatedBy || null });
-    return res.status(200).json({ orders, impersonatedBy: session.impersonatedBy || null }); // portal shows order picker
+      // Otherwise look up all orders for this email (repeat customer support)
+      const orders = await getOrdersByEmail(session.email);
+      if (!orders.length) return res.status(404).json({ error: 'No orders found.' });
+      if (orders.length === 1) return res.status(200).json({ order: orders[0], impersonatedBy: session.impersonatedBy || null });
+      return res.status(200).json({ orders, impersonatedBy: session.impersonatedBy || null }); // portal shows order picker
+    } catch (err) {
+      console.error('Order GET error:', err);
+      return res.status(500).json({ error: 'Failed to load order. Please try again.' });
+    }
   }
 
-  // For write operations, require a specific order
-  const order = session.orderId
-    ? await getOrderById(session.orderId)
-    : (await getOrdersByEmail(session.email))[0];
+  // For write operations, require a specific order.
+  // PORTAL-015 continuation: this lookup ran unguarded outside the PATCH
+  // handler's own try/catch below — a Monday error here threw before ever
+  // reaching that try block.
+  let order;
+  try {
+    order = session.orderId
+      ? await getOrderById(session.orderId)
+      : (await getOrdersByEmail(session.email))[0];
+  } catch (err) {
+    console.error('Order lookup error (write path):', err);
+    return res.status(500).json({ error: 'Failed to load order. Please try again.' });
+  }
   if (!order) return res.status(404).json({ error: 'Order not found.' });
 
   // ── PATCH — update contact info ───────────────────────────────────────────

@@ -124,9 +124,17 @@ export default async function handler(req, res) {
       }
     }
 
+    // PORTAL-022: this summary previously only went out in the HTTP response
+    // body, which nothing reads for a Vercel Cron invocation — a partial run
+    // (see PORTAL-021: any hung/failed outbound call mid-loop lands in
+    // results.errors, not a full stop) was only discoverable by comparing
+    // expected vs. actual outcomes in Monday, with no log line to grep for.
+    // Logging it explicitly makes every run's outcome visible in Vercel's
+    // function logs regardless of whether anyone is watching the response.
+    console.log(`Cron reminders summary: checked=${results.checked} reminded=${results.reminded} skipped=${results.skipped} errors=${results.errors}`);
     return res.status(200).json({ ok: true, intervalDays: INTERVAL_DAYS, maxReminders: MAX_REMINDERS, ...results });
   } catch (err) {
-    console.error('Cron reminders error:', err);
-    return res.status(500).json({ error: 'Cron job failed.' });
+    console.error(`Cron reminders FAILED before completing (checked=${results.checked} reminded=${results.reminded} skipped=${results.skipped} errors=${results.errors}):`, err);
+    return res.status(500).json({ error: 'Cron job failed.', ...results });
   }
 }

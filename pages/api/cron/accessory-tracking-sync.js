@@ -27,6 +27,7 @@
 
 import { getAllAccessoryItems, updateAccessoryCarrierStatus, getAllOrders } from '../../../lib/monday';
 import { trackShipment, onboardShipment } from '../../../lib/aftership';
+import { reportCriticalFailure } from '../../../lib/monitoring';
 
 export default async function handler(req, res) {
   const authHeader = req.headers['authorization'];
@@ -84,6 +85,13 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, checked: candidates.length, updated, framesMatsOnboarded });
   } catch (err) {
     console.error('Accessory tracking sync error (run did not complete):', err.message);
+    // PORTAL-023: same reasoning as cron/reminders — a run that never completes
+    // is otherwise only visible to someone who happens to check Vercel logs.
+    await reportCriticalFailure(
+      'cron/accessory-tracking-sync',
+      'Accessory tracking sync run failed before completing.',
+      { error: err.message }
+    );
     return res.status(500).json({ error: 'Sync failed.' });
   }
 }

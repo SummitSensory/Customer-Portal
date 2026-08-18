@@ -1,0 +1,174 @@
+// Email Template Management System — schema.
+// Scoped ONLY to email template content/versions/components/test-sends/audit/
+// permissions. Monday.com remains the system of record for orders/customers —
+// this database does not touch that data at all.
+// See Email-Template-System-Design.md for the full design rationale.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TemplateCategory {
+  ACCOUNT
+  QUOTES
+  ORDERS
+  PAYMENTS
+  SHIPPING
+  CUSTOMER_PORTAL
+  SUPPORT
+  INSTALLATION
+  FOLLOW_UP
+  MARKETING_EDUCATION
+  INTERNAL_NOTIFICATIONS
+}
+
+enum VersionStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AuditAction {
+  CREATED
+  EDITED
+  TESTED
+  PUBLISHED
+  DISABLED
+  RESTORED
+  DELETED
+}
+
+enum StaffPermissionKey {
+  EMAIL_TEMPLATES_VIEW
+  EMAIL_TEMPLATES_EDIT
+  EMAIL_TEMPLATES_PUBLISH
+  EMAIL_TEMPLATES_MANAGE_SYSTEM
+}
+
+model EmailTemplate {
+  id                 String            @id @default(cuid())
+  systemKey          String            @unique // immutable, e.g. "order_confirmation" — matches a triggerKey in lib/email-templates/triggers.js
+  name               String            // editable display name
+  description        String            @default("")
+  category           TemplateCategory
+  triggerKey         String            // validated against triggers.js at write time, not a DB-enforced FK
+  isSystemTemplate   Boolean           @default(false)
+  isActive           Boolean           @default(true)
+  publishedVersionId String?           @unique
+  draftVersionId     String?           @unique
+  createdBy          String
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  deletedAt          DateTime?
+
+  versions  EmailTemplateVersion[]  @relation("TemplateVersions")
+  published EmailTemplateVersion?   @relation("PublishedVersion", fields: [publishedVersionId], references: [id])
+  draft     EmailTemplateVersion?   @relation("DraftVersion", fields: [draftVersionId], references: [id])
+  testSends EmailTestSend[]
+  auditLogs EmailTemplateAuditLog[]
+
+  @@index([category])
+  @@index([triggerKey])
+  @@index([isActive])
+}
+
+model EmailTemplateVersion {
+  id                   String        @id @default(cuid())
+  templateId           String
+  versionNumber        Int
+  status               VersionStatus @default(DRAFT)
+  subject              String
+  preheader            String        @default("")
+  fromName             String        @default("Summit Sensory Gym")
+  replyTo              String?
+  bodyBlocks           Json          // typed block list — see lib/email-templates/blocks.js
+  renderedHtmlSnapshot String?       // cached compiled copy, for fast audit/inspection without recompiling
+  basedOnVersionId     String?       // self-referential — how rollback creates lineage instead of deleting history
+  publishedAt          DateTime?
+  publishedBy          String?
+  createdAt            DateTime      @default(now())
+  createdBy            String
+
+  template  EmailTemplate          @relation("TemplateVersions", fields: [templateId], references: [id])
+  basedOn   EmailTemplateVersion?  @relation("VersionLineage", fields: [basedOnVersionId], references: [id])
+  spawnedBy EmailTemplateVersion[] @relation("VersionLineage")
+  testSends EmailTestSend[]
+
+  @@unique([templateId, versionNumber])
+  @@index([templateId, status])
+}
+
+model EmailComponent {
+  id              String    @id @default(cuid())
+  key             String    @unique // e.g. "support_callout", "legal_notice"
+  name            String
+  category        String
+  contentBlocks   Json
+  isSystemManaged Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  revisions EmailComponentRevision[]
+}
+
+model EmailComponentRevision {
+  id            String   @id @default(cuid())
+  componentId   String
+  contentBlocks Json
+  editedBy      String
+  createdAt     DateTime @default(now())
+
+  component EmailComponent @relation(fields: [componentId], references: [id])
+
+  @@index([componentId])
+}
+
+model EmailTestSend {
+  id                String   @id @default(cuid())
+  templateId        String
+  templateVersionId String
+  sentBy            String
+  sentTo            String
+  sampleContext     Json
+  resendMessageId   String?
+  status            String   // "sent" | "failed"
+  errorMessage      String?
+  createdAt         DateTime @default(now())
+
+  template EmailTemplate        @relation(fields: [templateId], references: [id])
+  version  EmailTemplateVersion @relation(fields: [templateVersionId], references: [id])
+
+  @@index([templateId])
+}
+
+model EmailTemplateAuditLog {
+  id         String      @id @default(cuid())
+  templateId String?
+  versionId  String?
+  actorEmail String
+  action     AuditAction
+  metadata   Json?
+  createdAt  DateTime    @default(now())
+
+  template EmailTemplate? @relation(fields: [templateId], references: [id])
+
+  @@index([templateId])
+  @@index([actorEmail])
+}
+
+model StaffPermission {
+  id         String             @id @default(cuid())
+  staffEmail String
+  permission StaffPermissionKey
+  grantedBy  String
+  grantedAt  DateTime           @default(now())
+
+  @@unique([staffEmail, permission])
+  @@index([staffEmail])
+}

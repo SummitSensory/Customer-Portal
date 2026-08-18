@@ -19,6 +19,7 @@
 
 import { getAllOrders, getOrderMessages, postTaggedUpdate } from '../../../lib/monday';
 import { sendSetupReminder } from '../../../lib/email';
+import { reportCriticalFailure } from '../../../lib/monitoring';
 
 // Must match the tabs in the portal (site is merged into delivery)
 const SETUP_TABS = [
@@ -135,6 +136,14 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, intervalDays: INTERVAL_DAYS, maxReminders: MAX_REMINDERS, ...results });
   } catch (err) {
     console.error(`Cron reminders FAILED before completing (checked=${results.checked} reminded=${results.reminded} skipped=${results.skipped} errors=${results.errors}):`, err);
+    // PORTAL-023: a cron run that doesn't complete is exactly the silent-failure
+    // scenario the finding flagged — nobody watches Vercel's function logs in
+    // real time, so a broken run could go unnoticed for days. Alert a human.
+    await reportCriticalFailure(
+      'cron/reminders',
+      `Reminder cron run failed before completing (checked=${results.checked} reminded=${results.reminded} skipped=${results.skipped} errors=${results.errors}).`,
+      { error: err.message }
+    );
     return res.status(500).json({ error: 'Cron job failed.', ...results });
   }
 }

@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
+import { isStaffMessage, isStaffReply, stripPortalTags, STAFF_DISPLAY_NAME } from '../../lib/messageOrigin';
 
 // ── Navigation config ─────────────────────────────────────────────────────────
 
@@ -42,7 +43,10 @@ const ORDER_TABS = [
 // badge at 0 since nothing ever looked "not staff". /api/monday/messages now
 // stamps the true origin into the body itself ([PORTAL:CUSTOMER] /
 // [PORTAL:STAFF]); fall back to the old email guess only for messages sent
-// before this fix existed.
+// before this fix existed. See lib/messageOrigin.js — the shared helper both
+// this page and the Admin Messages tab now read, instead of each guessing
+// independently (2026-08-18: the admin side had drifted and wasn't reading
+// the tag at all — see Customer-Portal-Process-Flow.md PLAN-16).
 // PORTAL-024: colorFormId/showcaseFormId are staff-configured Monday.com
 // values, not raw customer input, but they still get string-interpolated
 // straight into an HTML template passed to dangerouslySetInnerHTML (needed
@@ -55,12 +59,6 @@ function isValidJotformId(id) {
   return typeof id === 'string' && /^[0-9]{5,20}$/.test(id);
 }
 
-function messageIsStaff(msg) {
-  if (msg.body?.includes('[PORTAL:STAFF]')) return true;
-  if (msg.body?.includes('[PORTAL:CUSTOMER]')) return false;
-  return Boolean(msg.creator?.email?.includes('summitsensory') || msg.creator?.email?.includes('summitsensorygym'));
-}
-
 // ── Main portal ───────────────────────────────────────────────────────────────
 
 export default function CustomerPortal() {
@@ -68,6 +66,14 @@ export default function CustomerPortal() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [order, setOrder] = useState(null);
   const [orders, setOrders] = useState(null);
+  // PLAN-17: the full list of every order tied to this customer's email —
+  // distinct from `orders` above, which only ever holds the one-time
+  // "you have several orders, pick one" list shown before any order is
+  // bound. `allOrders` is populated lazily (see the effect below) so the
+  // order switcher in the top bar can offer every order at any time,
+  // including after one is already selected/bound to the session.
+  const [allOrders, setAllOrders] = useState(null);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
   const [files, setFiles] = useState([]);
   const [messages, setMessages] = useState([]);
   const [formMap, setFormMap] = useState({});
@@ -175,6 +181,53 @@ export default function CustomerPortal() {
     } catch {}
   }, [order]);
 
+  // PLAN-17: fetch the customer's full order list (for the top-bar switcher)
+  // once an order is active. Fires in the background — never blocks the
+  // dashboard from rendering — and only runs once per session (skipped once
+  // allOrders is populated), including for the common single-order customer,
+  // for whom it resolves to a 1-item list and the switcher stays hidden.
+  useEffect(() => {
+    if (!order || allOrders) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/monday/order?all=1');
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          if (data.orders) setAllOrders(data.orders);
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [order, allOrders]);
+
+  // PLAN-17: switch the active order without signing out. Re-binds the
+  // session cookie server-side (same endpoint the initial OrderPicker uses,
+  // see /api/auth/select-order's comment for why that matters — every
+  // order-scoped endpoint authorizes against session.orderId) then swaps
+  // local state; the existing effects above pick up the new `order` and
+  // reload its files/messages, and applyCompletions re-reads that specific
+  // order's own localStorage cache key, so nothing from the previous order
+  // bleeds into the newly selected one.
+  async function switchOrder(o) {
+    if (!o || o.id === order?.id) { setSwitcherOpen(false); return; }
+    try {
+      const res = await fetch('/api/auth/select-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: o.id }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      showToast('Could not switch orders. Please try again.');
+      return;
+    }
+    setOrder(o);
+    applyCompletions(o);
+    setActiveTab('dashboard'); // land somewhere orienting, not a stale tab from the old order
+    setSwitcherOpen(false);
+  }
+
   useEffect(() => { loadOrder(); }, [loadOrder]);
   useEffect(() => {
     if (order) { loadFiles(); loadMessages(); }
@@ -211,6 +264,7 @@ export default function CustomerPortal() {
     }
     setOrder(o);
     setOrders(null);
+    setAllOrders(orders); // already have the full list in memory — no need for the switcher's background fetch to re-fetch it
     applyCompletions(o);
   }} />;
 
@@ -232,10 +286,11 @@ export default function CustomerPortal() {
   // Badge should flag messages FROM staff (a reply the customer may not have
   // seen yet) — not the customer's own sent messages. Before the identity-tag
   // fix above, isStaff() always returned true for every portal message (see
-  // messageIsStaff), so this filter's polarity never mattered in practice —
-  // it always evaluated to "not staff" = false = 0, permanently hiding the
-  // badge. Corrected polarity here now that origin can actually be trusted.
-  const unreadMessages = messages.filter(m => messageIsStaff(m)).length;
+  // lib/messageOrigin.js's isStaffMessage), so this filter's polarity never
+  // mattered in practice — it always evaluated to "not staff" = false = 0,
+  // permanently hiding the badge. Corrected polarity here now that origin can
+  // actually be trusted.
+  const unreadMessages = messages.filter(m => isStaffMessage(m)).length;
 
   // Forms for this customer's product type
   const productForms = Object.entries(formMap).filter(([, f]) =>
@@ -279,10 +334,37 @@ export default function CustomerPortal() {
           <span className="scope cust">Customer</span>
           <div style={{ flex: 1 }} />
           <div className="who">
-            <span style={{ fontSize: 12.5, color: 'var(--mut)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{order.name}</span>
+            {/* PLAN-17: a customer with more than one order gets a clickable
+                switcher instead of static text, so they always know which
+                order they're viewing and can jump to another without
+                signing out. Single-order customers (the common case) see
+                the exact same plain label as before — no extra affordance
+                for a choice they don't have. */}
+            {allOrders && allOrders.length > 1 ? (
+              <button
+                onClick={() => setSwitcherOpen(true)}
+                className="btn btn-ghost btn-sm"
+                style={{ fontSize: 12.5, maxWidth: 220, display: 'flex', alignItems: 'center', gap: 5 }}
+                title="Switch to a different order"
+              >
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{order.name}</span>
+                <span style={{ opacity: .6, fontSize: 10 }}>▾ {allOrders.length} orders</span>
+              </button>
+            ) : (
+              <span style={{ fontSize: 12.5, color: 'var(--mut)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{order.name}</span>
+            )}
             <a href="/api/auth/signout-customer" className="btn btn-ghost btn-sm">Sign out</a>
           </div>
         </div>
+
+        {switcherOpen && (
+          <OrderSwitcherModal
+            orders={allOrders || []}
+            currentOrderId={order.id}
+            onSelect={switchOrder}
+            onClose={() => setSwitcherOpen(false)}
+          />
+        )}
 
         {/* Layout */}
         <div className="lay">
@@ -2547,13 +2629,9 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
   }
 
   // Only show messages sent through the portal (tagged [PORTAL]) — origin
-  // (customer vs. staff) is determined by the module-level messageIsStaff()
-  // helper above, not creator.email; see its comment for why.
+  // (customer vs. staff) is determined by lib/messageOrigin.js's
+  // isStaffMessage(), not creator.email; see that file's comment for why.
   const portalMessages = messages.filter(m => m.body?.startsWith('[PORTAL]'));
-
-  function stripTag(body) {
-    return (body || '').replace(/^\[PORTAL\](\[PORTAL:(?:STAFF|CUSTOMER)\])?\n?/, '');
-  }
 
   return (
     <>
@@ -2570,27 +2648,29 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
               </div>
             )}
             {portalMessages.map(msg => {
-              const staff = messageIsStaff(msg);
+              const staff = isStaffMessage(msg);
               return (
                 <Fragment key={msg.id}>
                   <div className={`bub ${staff ? 'them' : 'me'}`}>
-                    {staff && msg.creator && (
-                      <div style={{ fontSize: 11, opacity: .7, marginBottom: 3 }}>{msg.creator.name}</div>
+                    {/* Staff messages always display as the company, never an
+                        individual staff member's name — see lib/messageOrigin.js. */}
+                    {staff && (
+                      <div style={{ fontSize: 11, opacity: .7, marginBottom: 3 }}>{STAFF_DISPLAY_NAME}</div>
                     )}
                     {/* PORTAL-002: sanitized before injection — see lib/sanitizeHtml.js */}
-                    <div dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(stripTag(msg.body)) }} />
+                    <div dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(stripPortalTags(msg.body)) }} />
                     <div className="ts">{new Date(msg.created_at).toLocaleString()}</div>
                   </div>
                   {(msg.replies || []).map(reply => {
                     // Threaded replies have no [PORTAL:*] origin tag of their own
-                    // (only top-level messages get one — see messageIsStaff above)
+                    // (only top-level messages get one — see lib/messageOrigin.js)
                     // and in practice are only ever posted by staff, so the
                     // legacy email guess is a reasonable signal here.
-                    const replyStaff = Boolean(reply.creator?.email?.includes('summitsensory') || reply.creator?.email?.includes('summitsensorygym'));
+                    const replyStaff = isStaffReply(reply);
                     return (
                       <div key={reply.id} className={`bub ${replyStaff ? 'them' : 'me'}`}>
-                        {replyStaff && reply.creator && (
-                          <div style={{ fontSize: 11, opacity: .7, marginBottom: 3 }}>{reply.creator.name}</div>
+                        {replyStaff && (
+                          <div style={{ fontSize: 11, opacity: .7, marginBottom: 3 }}>{STAFF_DISPLAY_NAME}</div>
                         )}
                         {/* PORTAL-002: sanitized before injection — see lib/sanitizeHtml.js */}
                         <div dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(reply.body) }} />
@@ -2933,6 +3013,66 @@ function OrderPicker({ orders, onSelect }) {
               </div>
             </button>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Order Switcher (PLAN-17) ────────────────────────────────────────────────────
+//
+// Same visual language as OrderPicker above (deliberately — a customer who
+// already knows that screen shouldn't have to learn a second one), but as a
+// dismissible overlay instead of taking over the whole screen, since here
+// the customer already has an active order and is just checking on/jumping
+// to another one rather than being blocked until they pick.
+
+function OrderSwitcherModal({ orders, currentOrderId, onSelect, onClose }) {
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: 'var(--paper)', borderRadius: 16, maxWidth: 520, width: '100%', maxHeight: '80vh', overflowY: 'auto', padding: 28, boxShadow: '0 20px 60px rgba(0,0,0,.25)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
+          <div>
+            <h2 style={{ fontSize: 20, marginBottom: 4 }}>Your Orders</h2>
+            <p style={{ color: 'var(--mut)', fontSize: 13.5 }}>Switch to a different order — your current one stays exactly as you left it.</p>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close" style={{ flexShrink: 0 }}>✕</button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {orders.map(o => {
+            const isCurrent = o.id === currentOrderId;
+            return (
+              <button key={o.id} onClick={() => onSelect(o)}
+                style={{
+                  background: isCurrent ? 'var(--moss-lt, #EEF3EC)' : '#fff',
+                  border: `1px solid ${isCurrent ? 'var(--moss)' : 'var(--line)'}`,
+                  borderRadius: 12, padding: '14px 18px', textAlign: 'left',
+                  cursor: isCurrent ? 'default' : 'pointer', transition: '.15s',
+                }}
+                onMouseEnter={e => { if (!isCurrent) e.currentTarget.style.borderColor = 'var(--moss)'; }}
+                onMouseLeave={e => { if (!isCurrent) e.currentTarget.style.borderColor = 'var(--line)'; }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>{o.name}</div>
+                  {isCurrent && (
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--moss)', background: '#fff', border: '1px solid var(--moss)', borderRadius: 20, padding: '2px 8px', textTransform: 'uppercase', letterSpacing: '.03em' }}>
+                      Currently viewing
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--mut)' }}>
+                  {o.productType && <span style={{ marginRight: 12 }}>📦 {o.productType}</span>}
+                  {o.status && <span>Status: {o.status}</span>}
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>

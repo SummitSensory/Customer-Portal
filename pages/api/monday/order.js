@@ -29,6 +29,26 @@ export default async function handler(req, res) {
   // rejection / raw 500 instead of a clean error response.
   if (req.method === 'GET') {
     try {
+      // PLAN-17: the order switcher (pages/portal/index.js) needs the FULL
+      // list of this customer's orders even after one is already bound to
+      // the session, so it can offer to switch to a different one — the
+      // default (no ?all=1) path below only ever returns the single bound
+      // order once session.orderId is set, which is exactly right for the
+      // common single-order case (one fast lookup, not a full email scan)
+      // but leaves a multi-order customer with no way to discover their
+      // other orders short of signing out and back in. Opt-in via a query
+      // param rather than changing the default response shape, so every
+      // other existing caller of this endpoint is unaffected.
+      if (req.query.all === '1') {
+        const orders = await getOrdersByEmail(session.email);
+        if (!orders.length) return res.status(404).json({ error: 'No orders found.' });
+        return res.status(200).json({
+          orders,
+          currentOrderId: session.orderId || orders[0].id,
+          impersonatedBy: session.impersonatedBy || null,
+        });
+      }
+
       // If session has a specific orderId (set at login), use it directly
       if (session.orderId) {
         const order = await getOrderById(session.orderId);

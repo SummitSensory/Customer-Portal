@@ -8,6 +8,7 @@ import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
+import { isStaffMessage, stripPortalTags, messageDisplayName } from '../../lib/messageOrigin';
 
 const TABS = [
   { id: 'dashboard',  icon: '📊', label: 'Dashboard' },
@@ -824,16 +825,30 @@ function AdminMessagesTab({ orders, showToast }) {
                       <div className="ei">💬</div><h3>No messages</h3><p>Start the conversation below.</p>
                     </div>
                   )}
-                  {messages.map(msg => (
-                    <div key={msg.id}>
-                      <div className={`bub ${msg.creator?.email?.endsWith('summitsensorygym.com') ? 'me' : 'them'}`}>
-                        <div style={{ fontSize: 11, opacity: .7, marginBottom: 3 }}>{msg.creator?.name}</div>
-                        {/* PORTAL-002: sanitized before injection — see lib/sanitizeHtml.js */}
-                        <div dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(msg.body) }} />
-                        <div className="ts">{new Date(msg.created_at).toLocaleString()}</div>
+                  {messages.map(msg => {
+                    // 2026-08-18: this used to read msg.creator?.email/.name
+                    // directly — but Monday's create_update API always
+                    // attributes the update to whoever owns MONDAY_API_TOKEN,
+                    // never to the actual sender, so every message (customer
+                    // or staff) showed up here as "Bryan Shepherd." Now reads
+                    // the same origin tag /api/monday/messages.js stamps into
+                    // the body, via the shared helper in lib/messageOrigin.js
+                    // (the same one pages/portal/index.js's Messages tab
+                    // uses) — and staff messages always display as the
+                    // company name, never an individual's name, per Bryan.
+                    const staff = isStaffMessage(msg);
+                    const displayName = messageDisplayName(staff, selectedOrder);
+                    return (
+                      <div key={msg.id}>
+                        <div className={`bub ${staff ? 'me' : 'them'}`}>
+                          <div style={{ fontSize: 11, opacity: .7, marginBottom: 3 }}>{displayName}</div>
+                          {/* PORTAL-002: sanitized before injection — see lib/sanitizeHtml.js */}
+                          <div dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(stripPortalTags(msg.body)) }} />
+                          <div className="ts">{new Date(msg.created_at).toLocaleString()}</div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <form className="chat-i" onSubmit={send}>
                   <input

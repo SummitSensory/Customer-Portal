@@ -12,10 +12,22 @@
  * checkpoint. AfterShip's webhook (EP-21) then keeps that column current as
  * the shipment actually moves through transit.
  *
- * One-time setup: this endpoint is registered as a Monday webhook subscribed
- * to board 6533701061 (change_column_value). A shared secret is passed as a
- * query param on the registered URL and checked below, since Monday's
- * classic webhook API doesn't sign requests the way AfterShip's does.
+ * One-time setup: this endpoint is registered as a Monday automation's
+ * outbound webhook action on board 6533701061 (change_column_value). The
+ * shared secret can be supplied THREE ways — accepted below, in this order:
+ *   1. `?secret=` query param on the registered URL (the original approach;
+ *      works fine for Monday's older/"classic" webhook recipes)
+ *   2. `Authorization: Bearer <secret>` header
+ *   3. `X-Webhook-Secret: <secret>` header
+ * The header options were added 2026-08-19 after Monday's newer automation
+ * builder rejected the query-param-only URL with "the webhook endpoint
+ * requires authentication — please update your webhook URL or
+ * authentication setting," which strongly implies that builder's own
+ * reachability check either drops query params or expects credentials via
+ * a dedicated auth field rather than embedded in the URL. Whichever of the
+ * three actually shows up in Monday's automation UI as an "Authentication"
+ * option, this endpoint now accepts it — pick whichever field Monday
+ * actually offers when configuring the action; you don't need all three.
  */
 
 import { getAccessorySubitemById, updateAccessoryCarrierStatus, ACCESSORY_COLS } from '../../../lib/monday';
@@ -24,6 +36,16 @@ import { trackShipment } from '../../../lib/aftership';
 // Columns that should trigger a push to AfterShip when they change. Anything
 // else (Order Status, Date Ordered, Carrier Status itself, etc.) is ignored.
 const TRIGGER_COLUMNS = new Set([ACCESSORY_COLS.carrier, ACCESSORY_COLS.trackingNumber]);
+
+// Accepts the shared secret from any of the three supported locations (see
+// file header comment) — returns null if none was supplied.
+function extractProvidedSecret(req) {
+  if (req.query.secret) return req.query.secret;
+  const authHeader = req.headers['authorization'];
+  if (authHeader?.startsWith('Bearer ')) return authHeader.slice('Bearer '.length).trim();
+  if (req.headers['x-webhook-secret']) return req.headers['x-webhook-secret'];
+  return null;
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -41,7 +63,8 @@ export default async function handler(req, res) {
   // from anyone. Mirrors the fail-closed pattern already used by the
   // AfterShip webhook's isAuthorized().
   const secret = process.env.MONDAY_ACCESSORY_WEBHOOK_SECRET;
-  if (!secret || req.query.secret !== secret) {
+  const provided = extractProvidedSecret(req);
+  if (!secret || provided !== secret) {
     console.error('Monday accessory-webhook: authorization failed (missing or mismatched secret).');
     return res.status(401).json({ error: 'Invalid secret.' });
   }

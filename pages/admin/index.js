@@ -3,7 +3,7 @@
  * Sections: Dashboard, Orders, Customers, Files, Messages, Settings
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
@@ -244,6 +244,12 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   const [editing, setEditing] = useState({});
   const [saving, setSaving] = useState(null);
   const [showPicker, setShowPicker] = useState(false);
+  // PORTAL-021: lets staff see a completed Delivery & Site Details submission
+  // right in the Orders table (from order.deliverySnapshot, already parsed
+  // by getAllOrders) instead of having to open the Delivery & Site Details
+  // Submissions board in Monday and scan past blank rows for orders that
+  // haven't submitted yet.
+  const [expandedDelivery, setExpandedDelivery] = useState(null);
   const [availableCols, setAvailableCols] = useState([]);
   const [selectedColIds, setSelectedColIds] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -491,7 +497,8 @@ function OrdersTab({ orders, onRefresh, showToast }) {
               {orders.map(order => {
                 const ed = editing[order.id];
                 return (
-                  <tr key={order.id}>
+                  <Fragment key={order.id}>
+                  <tr>
                     {displayCols.map(col => {
                       const cell = getCellValue(order, col.id);
 
@@ -537,6 +544,16 @@ function OrdersTab({ orders, onRefresh, showToast }) {
                               <button className="btn btn-ghost btn-sm" title="View/act in this customer's portal to help them complete a step or troubleshoot an issue" onClick={() => viewAsCustomer(order)} style={{ whiteSpace: 'nowrap' }}>
                                 👁️ View as Customer
                               </button>
+                              {order.deliverySnapshot && (
+                                <button
+                                  className="btn btn-ghost btn-sm"
+                                  title="View this customer's submitted delivery & site details"
+                                  onClick={() => setExpandedDelivery(prev => (prev === order.id ? null : order.id))}
+                                  style={{ whiteSpace: 'nowrap' }}
+                                >
+                                  🚚 Delivery {expandedDelivery === order.id ? '▲' : '▼'}
+                                </button>
+                              )}
                               <select
                                 className="btn btn-ghost btn-sm"
                                 value=""
@@ -598,6 +615,14 @@ function OrdersTab({ orders, onRefresh, showToast }) {
                       );
                     })}
                   </tr>
+                  {expandedDelivery === order.id && order.deliverySnapshot && (
+                    <tr>
+                      <td colSpan={displayCols.length} style={{ background: '#f7f9f5', padding: 0 }}>
+                        <DeliveryDetailPanel order={order} />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -608,6 +633,78 @@ function OrdersTab({ orders, onRefresh, showToast }) {
         )}
       </div>
     </>
+  );
+}
+
+// PORTAL-021: read-only summary of a customer's submitted Delivery & Site
+// Details, rendered inline in the Orders table from order.deliverySnapshot
+// (already parsed JSON — see COLS.deliverySnapshot in lib/monday.js). This
+// is what lets staff see a completed submission without opening the
+// Delivery & Site Details Submissions board in Monday. Some checkbox-style
+// fields have been observed serialized inconsistently (`true`, `"v"`, or
+// `{ checked: true }`) depending on when they were written — isChecked()
+// normalizes all three so this panel doesn't misread a checked box as blank.
+function isChecked(v) {
+  return v === true || v === 'v' || (v && typeof v === 'object' && v.checked === true);
+}
+
+function DeliveryField({ label, value }) {
+  return (
+    <div style={{ minWidth: 150 }}>
+      <div style={{ fontSize: 11, color: 'var(--mut)', textTransform: 'uppercase', letterSpacing: '.03em' }}>{label}</div>
+      <div style={{ fontSize: 13.5, marginTop: 2 }}>{value === undefined || value === null || value === '' ? '—' : value}</div>
+    </div>
+  );
+}
+
+function DeliveryDetailPanel({ order }) {
+  const s = order.deliverySnapshot || {};
+
+  return (
+    <div style={{ padding: '16px 20px', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
+      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12 }}>
+        🚚 Delivery &amp; Site Details — {order.name}
+      </div>
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px 28px', marginBottom: 14 }}>
+        <DeliveryField label="Primary Contact" value={s.pocName} />
+        <DeliveryField label="Phone" value={s.pocPhone} />
+        <DeliveryField label="Can Text?" value={isChecked(s.phoneCanText) ? 'Yes' : 'No'} />
+        <DeliveryField label="Email" value={s.pocEmail} />
+      </div>
+
+      {isChecked(s.hasSecondaryPoc) && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px 28px', marginBottom: 14 }}>
+          <DeliveryField label="Secondary Contact" value={s.secondaryPocName} />
+          <DeliveryField label="Phone" value={s.secondaryPocPhone} />
+          <DeliveryField label="Can Text?" value={isChecked(s.secondaryPhoneCanText) ? 'Yes' : 'No'} />
+          <DeliveryField label="Email" value={s.secondaryPocEmail} />
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px 28px', marginBottom: 14 }}>
+        <DeliveryField label="Loading Dock" value={isChecked(s.hasLoadingDock) ? 'Yes' : 'No'} />
+        <DeliveryField label="Delivery Timing" value={s.deliveryTiming} />
+        <DeliveryField label="Preferred Date" value={s.preferredDeliveryDate} />
+      </div>
+
+      {s.addressConfirmed === false && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px 28px', marginBottom: 14 }}>
+          <DeliveryField label="Ship-To Address" value={[s.addressLine1, s.addressLine2, s.addressCity, [s.addressState, s.addressZip].filter(Boolean).join(' '), s.addressCountry].filter(Boolean).join(', ') || undefined} />
+        </div>
+      )}
+
+      {s.specialInstructions && (
+        <div style={{ marginBottom: 14, maxWidth: 640 }}>
+          <div style={{ fontSize: 11, color: 'var(--mut)', textTransform: 'uppercase', letterSpacing: '.03em' }}>Special Instructions</div>
+          <div style={{ fontSize: 13.5, marginTop: 2 }}>{s.specialInstructions}</div>
+        </div>
+      )}
+
+      {s.ackName && (
+        <div style={{ fontSize: 12, color: 'var(--mut)' }}>✓ Acknowledged by {s.ackName}</div>
+      )}
+    </div>
   );
 }
 

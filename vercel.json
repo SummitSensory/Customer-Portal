@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/accessory-tracking-sync",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 * * * *"
     }
   ]
 }

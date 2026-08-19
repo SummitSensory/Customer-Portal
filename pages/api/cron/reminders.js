@@ -20,6 +20,13 @@
 import { getAllOrders, getOrderMessages, postTaggedUpdate } from '../../../lib/monday';
 import { sendSetupReminder } from '../../../lib/email';
 import { reportCriticalFailure } from '../../../lib/monitoring';
+import { mapWithConcurrency } from '../../../lib/concurrency';
+
+// Orders were previously processed one at a time; this run took as long as
+// (order count) × (message fetch + reminder send latency). 8 concurrent
+// orders keeps well under Monday/AfterShip's rate limits while cutting run
+// time roughly 8x on boards with many orders.
+const REMINDER_CONCURRENCY = 8;
 
 // Must match the tabs in the portal (site is merged into delivery)
 const SETUP_TABS = [
@@ -61,18 +68,20 @@ export default async function handler(req, res) {
 
   try {
     const orders = await getAllOrders();
+    const withEmail = orders.filter(o => o.customerEmail);
+    results.checked = withEmail.length;
 
-    for (const order of orders) {
-      if (!order.customerEmail) continue;
-      results.checked++;
-
+    // Processed concurrently (see mapWithConcurrency's comment) instead of
+    // one order at a time — behavior/counting is identical to the old
+    // sequential loop, just faster on boards with many orders.
+    await mapWithConcurrency(withEmail, REMINDER_CONCURRENCY, async (order) => {
       try {
         const updates = await getOrderMessages(order.id);
         const bodies = updates.map(u => u.body || '');
 
         // Find when the portal invitation was sent — this starts the reminder clock
         const inviteUpdate = updates.find(u => u.body?.includes('[PORTAL: Invitation Sent]'));
-        if (!inviteUpdate) { results.skipped++; continue; }
+        if (!inviteUpdate) { results.skipped++; return; }
 
         const inviteDate = new Date(inviteUpdate.created_at);
         const daysSinceInvite = Math.floor((now - inviteDate) / (1000 * 60 * 60 * 24));
@@ -86,18 +95,18 @@ export default async function handler(req, res) {
         });
 
         // All done — no reminder needed
-        if (incompleteTabs.length === 0) { results.skipped++; continue; }
+        if (incompleteTabs.length === 0) { results.skipped++; return; }
 
         // Count how many reminders have already been sent
         const sentCount = bodies.filter(b => b.match(/\[PORTAL: Reminder #\d+\]/)).length;
 
         // Stop if we've hit the max
-        if (sentCount >= MAX_REMINDERS) { results.skipped++; continue; }
+        if (sentCount >= MAX_REMINDERS) { results.skipped++; return; }
 
         // Determine if the next reminder is due
         // Reminder N is due after N * INTERVAL_DAYS since the invitation
         const nextReminderDue = (sentCount + 1) * INTERVAL_DAYS;
-        if (daysSinceInvite < nextReminderDue) { results.skipped++; continue; }
+        if (daysSinceInvite < nextReminderDue) { results.skipped++; return; }
 
         // Send the reminder
         const reminderNumber = sentCount + 1;
@@ -123,7 +132,7 @@ export default async function handler(req, res) {
         console.error(`Reminder error for order ${order.id}:`, orderErr);
         results.errors++;
       }
-    }
+    });
 
     // PORTAL-022: this summary previously only went out in the HTTP response
     // body, which nothing reads for a Vercel Cron invocation — a partial run

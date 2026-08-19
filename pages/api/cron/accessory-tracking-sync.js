@@ -18,16 +18,29 @@
 // returned a server-side internal error on retry. This polling job is the
 // reliable fallback — see Customer-Portal-Process-Flow.md EP-22/EP-23.
 //
-// vercel.json schedule: every 15 minutes (star-slash-15 star star star star)
-// — requires Vercel Pro or higher; Hobby-tier projects silently cap cron
-// frequency at once per day. AfterShip's own webhook (EP-21) still updates
-// status in real time once a shipment has been onboarded at least once —
-// this job only affects how quickly a brand-new item gets its first
-// onboarding.
+// vercel.json schedule: hourly ("0 * * * *"). Previously every 15 minutes,
+// but EP-22 (the real-time Monday->AfterShip webhook, confirmed LIVE
+// 2026-08-19 — see Customer-Portal-Process-Flow.md) now pushes new Carrier
+// Code/Freight Tracking ID entries to AfterShip within seconds, so this job
+// only needs to catch the rare item that slips through (e.g. a webhook retry
+// exhausted, or a row edited before the webhook was configured) — running it
+// 4x as often added Monday/AfterShip API load without meaningfully improving
+// how fast anything showed up for staff or customers. AfterShip's own webhook
+// (EP-21) still updates status in real time once a shipment has been
+// onboarded at least once — this job only affects how quickly a brand-new
+// item gets its first onboarding.
 
 import { getAllAccessoryItems, updateAccessoryCarrierStatus, getAllOrders } from '../../../lib/monday';
 import { trackShipment, onboardShipment } from '../../../lib/aftership';
 import { reportCriticalFailure } from '../../../lib/monitoring';
+import { mapWithConcurrency } from '../../../lib/concurrency';
+
+// Same reasoning as REMINDER_CONCURRENCY in cron/reminders.js — this job's two
+// loops (accessory items, then orders' Frame/Mats shipments) each make an
+// AfterShip call per row, so run time used to scale linearly with board size.
+// 8 concurrent calls keeps well under Monday/AfterShip's rate limits while
+// cutting run time roughly 8x on boards with many rows.
+const SYNC_CONCURRENCY = 8;
 
 export default async function handler(req, res) {
   const authHeader = req.headers['authorization'];
@@ -40,7 +53,7 @@ export default async function handler(req, res) {
     const candidates = items.filter((i) => i.carrierSlug && i.trackingNumber);
 
     let updated = 0;
-    for (const item of candidates) {
+    await mapWithConcurrency(candidates, SYNC_CONCURRENCY, async (item) => {
       try {
         const tracking = await trackShipment(item.carrierSlug, item.trackingNumber, {
           title: item.name,
@@ -54,7 +67,7 @@ export default async function handler(req, res) {
       } catch (err) {
         console.error(`Accessory tracking sync failed for item ${item.id}:`, err.message);
       }
-    }
+    });
 
     // Proactively onboard parent-level Frame + Mats shipments too, so they appear
     // in AfterShip without waiting for a customer to open the portal (the loop
@@ -63,7 +76,7 @@ export default async function handler(req, res) {
     let framesMatsOnboarded = 0;
     try {
       const orders = await getAllOrders();
-      for (const order of orders) {
+      await mapWithConcurrency(orders, SYNC_CONCURRENCY, async (order) => {
         const shipments = [
           { slug: order.frameCarrierSlug, number: order.frameTrackingId },
           { slug: order.matsCarrierSlug, number: order.matsTrackingId },
@@ -72,7 +85,7 @@ export default async function handler(req, res) {
           const id = await onboardShipment(s.slug, s.number, { title: order.name, orderId: order.id, customerName: order.name });
           if (id) framesMatsOnboarded++;
         }
-      }
+      });
     } catch (err) {
       console.error('Frame/Mats onboarding error:', err.message);
     }

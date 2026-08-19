@@ -5,11 +5,25 @@
  *   MY ORDER       — ongoing access to dashboard, status, files, messages, etc.
  */
 
-import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
+import Image from 'next/image';
+import dynamic from 'next/dynamic';
 import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
 import { isStaffMessage, isStaffReply, stripPortalTags, STAFF_DISPLAY_NAME } from '../../lib/messageOrigin';
+import { isValidJotformId } from '../../lib/jotform';
+
+// Lazy-loaded — most customers never open Referral/Showcase in a given
+// session (see components/portal/), so their code shouldn't ship as part
+// of the initial portal bundle. A small inline loading state avoids a
+// layout jump while the chunk fetches.
+const ReferralTab = dynamic(() => import('../../components/portal/ReferralTab'), {
+  loading: () => <div className="card"><div className="spin" style={{ width: 24, height: 24 }} /></div>,
+});
+const ShowcaseTab = dynamic(() => import('../../components/portal/ShowcaseTab'), {
+  loading: () => <div className="card"><div className="spin" style={{ width: 24, height: 24 }} /></div>,
+});
 
 // ── Navigation config ─────────────────────────────────────────────────────────
 
@@ -55,9 +69,11 @@ const ORDER_TABS = [
 // directly into the DOM unescaped. Jotform form IDs are always numeric, so
 // validating that shape before interpolating closes the injection vector
 // without changing legitimate behavior.
-function isValidJotformId(id) {
-  return typeof id === 'string' && /^[0-9]{5,20}$/.test(id);
-}
+// isValidJotformId moved to lib/jotform.js (2026-08-19, imported above) so
+// ShowcaseTab (now lazy-loaded via next/dynamic, see components/portal/) can
+// share this exact validation logic without importing anything from this
+// page module — importing from here would defeat the point of splitting
+// ShowcaseTab into its own chunk.
 
 // ── Main portal ───────────────────────────────────────────────────────────────
 
@@ -237,6 +253,37 @@ export default function CustomerPortal() {
     return () => { document.body.style.overflow = ''; };
   }, [mobileNavOpen]);
 
+  // Derived values below were previously plain `const`s recomputed on every
+  // render (including re-renders triggered by unrelated state, e.g. toast
+  // timers or mobileNavOpen toggling) — cheap individually, but this
+  // component re-renders often and productForms/colorForms/docForms filter
+  // Object.entries(formMap) each time. Memoized here, ABOVE the loading/
+  // order-picker/no-order early returns below, so these hooks are always
+  // called in the same order every render (React's Rules of Hooks forbid
+  // calling a hook only on some renders) — each recomputes only when its
+  // actual inputs change.
+  const setupStats = useMemo(() => {
+    const count = SETUP_TABS.filter(t => completions[t.id]).length;
+    return { setupComplete: count === SETUP_TABS.length, setupCount: count, setupTotal: SETUP_TABS.length };
+  }, [completions]);
+  const { setupComplete, setupCount, setupTotal } = setupStats;
+
+  // Badge should flag messages FROM staff (a reply the customer may not have
+  // seen yet) — not the customer's own sent messages. Before the identity-tag
+  // fix above, isStaff() always returned true for every portal message (see
+  // lib/messageOrigin.js's isStaffMessage), so this filter's polarity never
+  // mattered in practice — it always evaluated to "not staff" = false = 0,
+  // permanently hiding the badge. Corrected polarity here now that origin can
+  // actually be trusted.
+  const unreadMessages = useMemo(() => messages.filter(m => isStaffMessage(m)).length, [messages]);
+
+  // Forms for this customer's product type
+  const productForms = useMemo(() => Object.entries(formMap).filter(([, f]) =>
+    !f.productTypes || f.productTypes.includes(order?.productType)
+  ), [formMap, order?.productType]);
+  const colorForms = useMemo(() => productForms.filter(([, f]) => f.tab === 'color_selection'), [productForms]);
+  const docForms = useMemo(() => productForms.filter(([, f]) => f.tab === 'required_documents'), [productForms]);
+
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
       <div className="spin" style={{ width: 32, height: 32 }} />
@@ -279,26 +326,6 @@ export default function CustomerPortal() {
     </div>
   );
 
-  // Setup completion stats
-  const setupComplete = SETUP_TABS.every(t => completions[t.id]);
-  const setupCount = SETUP_TABS.filter(t => completions[t.id]).length;
-  const setupTotal = SETUP_TABS.length;
-  // Badge should flag messages FROM staff (a reply the customer may not have
-  // seen yet) — not the customer's own sent messages. Before the identity-tag
-  // fix above, isStaff() always returned true for every portal message (see
-  // lib/messageOrigin.js's isStaffMessage), so this filter's polarity never
-  // mattered in practice — it always evaluated to "not staff" = false = 0,
-  // permanently hiding the badge. Corrected polarity here now that origin can
-  // actually be trusted.
-  const unreadMessages = messages.filter(m => isStaffMessage(m)).length;
-
-  // Forms for this customer's product type
-  const productForms = Object.entries(formMap).filter(([, f]) =>
-    !f.productTypes || f.productTypes.includes(order.productType)
-  );
-  const colorForms = productForms.filter(([, f]) => f.tab === 'color_selection');
-  const docForms = productForms.filter(([, f]) => f.tab === 'required_documents');
-
   return (
     <>
       <Head><title>{order.name} — Summit Portal</title></Head>
@@ -328,7 +355,7 @@ export default function CustomerPortal() {
         <div className="top">
           <button className="mob-menu-btn" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation">☰</button>
           <div className="brand">
-            <img src="/logo.png" style={{ width: 30, height: 30, objectFit: 'contain' }} alt="Summit Sensory Gym" onError={e => { e.target.style.display = 'none'; }} />
+            <Image src="/logo.png" width={30} height={30} style={{ objectFit: 'contain' }} alt="Summit Sensory Gym" onError={e => { e.target.style.display = 'none'; }} />
             <b style={{ fontSize: 15 }}>Summit Sensory Gym</b>
           </div>
           <span className="scope cust">Customer</span>
@@ -460,7 +487,7 @@ export default function CustomerPortal() {
         <div className={`mob-drawer${mobileNavOpen ? ' open' : ''}`}>
           <div className="mob-drawer-head">
             <div className="brand">
-              <img src="/logo.png" style={{ width: 24, height: 24, objectFit: 'contain' }} alt="" onError={e => { e.target.style.display = 'none'; }} />
+              <Image src="/logo.png" width={24} height={24} style={{ objectFit: 'contain' }} alt="" onError={e => { e.target.style.display = 'none'; }} />
               <b style={{ fontSize: 14 }}>Summit Sensory Gym</b>
             </div>
             <button className="mob-close" onClick={() => setMobileNavOpen(false)}>✕</button>
@@ -2688,236 +2715,6 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
           </form>
         </div>
       </div>
-    </>
-  );
-}
-
-// ── Tab: Refer a Friend ────────────────────────────────────────────────────────
-
-function ReferralTab({ order, showToast }) {
-  const [friendName, setFriendName] = useState('');
-  const [friendEmail, setFriendEmail] = useState('');
-  const [friendPhone, setFriendPhone] = useState('');
-  const [message, setMessage] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [errors, setErrors] = useState({});
-  const [submitted, setSubmitted] = useState(false);
-
-  function validate() {
-    const e = {};
-    if (!friendName.trim()) e.friendName = 'Required';
-    if (!friendEmail.trim()) e.friendEmail = 'Required';
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(friendEmail.trim())) e.friendEmail = 'Enter a valid email address';
-    return e;
-  }
-
-  async function submit(e) {
-    e.preventDefault();
-    const errs = validate();
-    if (Object.keys(errs).length > 0) {
-      setErrors(errs);
-      showToast('Please complete the required fields.');
-      return;
-    }
-    setErrors({});
-    setSaving(true);
-    try {
-      const res = await fetch('/api/referral/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ friendName, friendEmail, friendPhone, message }),
-      });
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        throw new Error(d.error || 'Referral submission failed.');
-      }
-      setSubmitted(true);
-      setFriendName(''); setFriendEmail(''); setFriendPhone(''); setMessage('');
-      showToast('Thanks for the referral!');
-    } catch (err) {
-      showToast(err.message || 'Something went wrong. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <>
-      <div className="ph">
-        <h2>Refer a Friend</h2>
-        <p>Know a clinic, school, or family who could use a sensory therapy gym? Send us their info and we'll take it from there.</p>
-      </div>
-
-      <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--moss)' }}>
-        <div className="ch"><h3>🎁 How It Works</h3></div>
-        <p style={{ fontSize: 13.5, lineHeight: 1.65, marginBottom: 10 }}>
-          Refer someone to Summit Sensory Gym, and once they place an order, you'll receive a reward based on their purchase — <strong>2% of their order value</strong>, with a <strong>$25 minimum</strong> and up to <strong>$500</strong>. Rewards are typically issued as account credit toward your own future orders or accessories; for smaller individual referrals, we're happy to discuss a gift card instead.
-        </p>
-        <p style={{ fontSize: 13, color: 'var(--mut)', margin: 0 }}>
-          We'll reach out to your friend directly and keep you posted on where things stand.
-        </p>
-      </div>
-
-      {submitted && (
-        <div className="alert success" style={{ marginBottom: 16 }}>✅ Referral submitted — thank you! We'll be in touch with them soon.</div>
-      )}
-
-      <form onSubmit={submit}>
-        <div className="card">
-          <div className="ch"><h3>Referral Details</h3></div>
-          <div className="row">
-            <div className="field">
-              <label><span style={{ color: 'var(--rose)' }}>*</span> Friend's Name</label>
-              <input type="text" value={friendName} onChange={e => { setFriendName(e.target.value); setErrors(v => ({ ...v, friendName: '' })); }} style={{ borderColor: errors.friendName ? 'var(--rose)' : '' }} />
-              {errors.friendName && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.friendName}</div>}
-            </div>
-            <div className="field">
-              <label><span style={{ color: 'var(--rose)' }}>*</span> Friend's Email</label>
-              <input type="email" value={friendEmail} onChange={e => { setFriendEmail(e.target.value); setErrors(v => ({ ...v, friendEmail: '' })); }} style={{ borderColor: errors.friendEmail ? 'var(--rose)' : '' }} />
-              {errors.friendEmail && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.friendEmail}</div>}
-            </div>
-          </div>
-          <div className="field">
-            <label>Friend's Phone <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(optional)</span></label>
-            <input type="tel" value={friendPhone} onChange={e => setFriendPhone(e.target.value)} placeholder="+1 303 555 0100" />
-          </div>
-          <div className="field">
-            <label>Note to Our Team <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(optional)</span></label>
-            <textarea value={message} onChange={e => setMessage(e.target.value)} placeholder="Anything helpful for us to know — their organization, timeline, etc." />
-          </div>
-          <button className="btn btn-moss" disabled={saving}>{saving ? 'Submitting…' : 'Submit Referral →'}</button>
-        </div>
-      </form>
-    </>
-  );
-}
-
-// ── Tab: Photo & Video Showcase ─────────────────────────────────────────────────
-
-// Jotform query-param keys that prefill the Showcase form's Full Name,
-// Organization, and Email Address fields (confirmed against the live form —
-// Jotform's internal field "name" attributes don't always match what it
-// actually reads for URL prefill, so these were verified empirically).
-const SHOWCASE_PREFILL_KEYS = { fullName: 'q2_textbox0', organization: 'yourName', email: 'q3_email1' };
-
-function buildShowcaseFormUrl(formId, order) {
-  const params = new URLSearchParams();
-  const orgName = order?.name ? order.name.split(' - ')[0].trim() : '';
-  if (order?.contactName) params.set(SHOWCASE_PREFILL_KEYS.fullName, order.contactName);
-  if (orgName) params.set(SHOWCASE_PREFILL_KEYS.organization, orgName);
-  if (order?.contactEmail) params.set(SHOWCASE_PREFILL_KEYS.email, order.contactEmail);
-  const qs = params.toString();
-  return `https://form.jotform.com/${formId}${qs ? `?${qs}` : ''}`;
-}
-
-function ShowcaseTab({ order }) {
-  const [formSubmitted, setFormSubmitted] = useState(false);
-  const [emailSending, setEmailSending] = useState(false);
-  const [emailSent, setEmailSent] = useState(false);
-  const rawFormId = order?.showcaseFormId;
-  const trimmedFormId = typeof rawFormId === 'string' ? rawFormId.trim() : '';
-  const formId = isValidJotformId(trimmedFormId) ? trimmedFormId : '';
-  const iframeId = formId ? `JotFormIFrame-${formId}` : null;
-  const formSrc = formId ? buildShowcaseFormUrl(formId, order) : '';
-
-  useEffect(() => {
-    if (!formId || !iframeId) return;
-
-    function initHandler() {
-      if (window.jotformEmbedHandler) {
-        window.jotformEmbedHandler(`iframe[id='${iframeId}']`, 'https://form.jotform.com/');
-      }
-    }
-    if (window.jotformEmbedHandler) {
-      initHandler();
-    } else {
-      const script = document.createElement('script');
-      script.src = 'https://cdn.jotfor.ms/s/umd/latest/for-form-embed-handler.js';
-      script.onload = initHandler;
-      document.body.appendChild(script);
-    }
-
-    function onMessage(e) {
-      const raw = e.data;
-      const data = typeof raw === 'string' ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : raw;
-      if (data?.action === 'submission-completed') setFormSubmitted(true);
-      if (typeof raw === 'string' && raw.includes('formSubmitted')) setFormSubmitted(true);
-    }
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [formId, iframeId]);
-
-  async function emailMeLink() {
-    setEmailSending(true);
-    try {
-      const res = await fetch('/api/portal/email-upload-link', { method: 'POST' });
-      if (!res.ok) throw new Error();
-      setEmailSent(true);
-    } catch {
-      setEmailSent(false);
-    } finally {
-      setEmailSending(false);
-    }
-  }
-
-  return (
-    <>
-      <div className="ph">
-        <h2>Photo & Video Showcase</h2>
-        <p>Show off your new sensory gym — and earn rewards for sharing it.</p>
-      </div>
-
-      <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--moss)' }}>
-        <div className="ch"><h3>📸 Share Your Gym, Earn Rewards</h3></div>
-        <p style={{ fontSize: 13.5, lineHeight: 1.65, marginBottom: 10 }}>
-          We love seeing your space in action — and your photos and videos help other clinics, schools, and families picture what's possible. Submit <strong>10 photos or videos</strong> (1 video counts as 2) and we'll send you a <strong>$25 gift card</strong>. Keep sharing — the reward repeats every 10 submissions.
-        </p>
-        <p style={{ fontSize: 13.5, lineHeight: 1.65, marginBottom: 10, color: 'var(--mut)' }}>
-          For videos: please film for at least <strong>20 seconds</strong>, capture <strong>different angles</strong>, and if possible, show <strong>people using the frame</strong> — these submit for review fastest.
-        </p>
-        <p style={{ fontSize: 13, color: 'var(--mut)', margin: 0 }}>
-          Our team gives every batch a quick look before rewards go out, just to confirm the basics above.
-        </p>
-      </div>
-
-      {formSubmitted && <div className="alert success" style={{ marginBottom: 16 }}>✅ Thanks for sharing! We'll review your submission shortly.</div>}
-
-      <div className="card" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-        <div>
-          <h3 style={{ margin: '0 0 4px', fontSize: 15 }}>Uploading from your phone?</h3>
-          <p style={{ margin: 0, fontSize: 13, color: 'var(--mut)' }}>Email yourself this upload link so you can snap and upload photos right from your camera roll.</p>
-        </div>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={emailMeLink} disabled={emailSending || emailSent || !formId}>
-          {emailSent ? '✅ Sent!' : emailSending ? 'Sending…' : 'Email Me This Link'}
-        </button>
-      </div>
-
-      {formId ? (
-        <div
-          key={formId}
-          dangerouslySetInnerHTML={{
-            __html: `<iframe
-              id="${iframeId}"
-              title="Photo & Video Showcase Form"
-              allowtransparency="true"
-              allow="geolocation; microphone; camera; fullscreen; payment"
-              src="${formSrc}"
-              frameborder="0"
-              class="jf-embed"
-              style="min-width:100%;max-width:100%;height:539px;border:none;display:block;margin-bottom:16px;"
-              scrolling="no"
-            ></iframe>`,
-          }}
-        />
-      ) : (
-        <div className="card">
-          <div className="empty">
-            <div className="ei">📸</div>
-            <h3>Upload form not yet available</h3>
-            <p>We're setting this up — check back soon, or contact us directly if you'd like to share photos or videos now.</p>
-          </div>
-        </div>
-      )}
     </>
   );
 }

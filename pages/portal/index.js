@@ -11,7 +11,7 @@ import Head from 'next/head';
 import Image from 'next/image';
 import dynamic from 'next/dynamic';
 import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
-import { isStaffMessage, isStaffReply, stripPortalTags, STAFF_DISPLAY_NAME } from '../../lib/messageOrigin';
+import { isStaffMessage, isStaffReply, isPortalChatMessage, stripPortalTags, STAFF_DISPLAY_NAME } from '../../lib/messageOrigin';
 import { isValidJotformId } from '../../lib/jotform';
 
 // Lazy-loaded — most customers never open Referral/Showcase in a given
@@ -275,7 +275,24 @@ export default function CustomerPortal() {
   // mattered in practice — it always evaluated to "not staff" = false = 0,
   // permanently hiding the badge. Corrected polarity here now that origin can
   // actually be trusted.
-  const unreadMessages = useMemo(() => messages.filter(m => isStaffMessage(m)).length, [messages]);
+  //
+  // PORTAL-022 (Bryan-reported, Rachel/Remedy Speech Therapy screenshot): this
+  // used to count over the raw `messages` array — which is every update ever
+  // logged to the order (getOrderMessages has no scope beyond "everything on
+  // this item"), not just real Messages-tab chat. Every internal audit-trail
+  // tag (delivery/billing confirmations, reminders, "Staff Viewing As
+  // Customer," contact-update requests, etc.) is created via Monday's
+  // create_update API the same way real staff chat is, so isStaffMessage()'s
+  // legacy-email fallback marked ALL of them "staff" too — a customer with a
+  // long history but exactly one real reply saw a badge counting their
+  // entire audit trail (confirmed against a live order: 15 total updates, 14
+  // of them non-chat system tags, badge showed "15" for 1 actual message).
+  // isPortalChatMessage() isolates genuine chat posts (tagged `[PORTAL]` at
+  // send time — see /api/monday/messages.js) before counting staff ones.
+  const unreadMessages = useMemo(
+    () => messages.filter(m => isPortalChatMessage(m) && isStaffMessage(m)).length,
+    [messages]
+  );
 
   // Forms for this customer's product type
   const productForms = useMemo(() => Object.entries(formMap).filter(([, f]) =>
@@ -2655,10 +2672,11 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
     finally { setSending(false); }
   }
 
-  // Only show messages sent through the portal (tagged [PORTAL]) — origin
-  // (customer vs. staff) is determined by lib/messageOrigin.js's
-  // isStaffMessage(), not creator.email; see that file's comment for why.
-  const portalMessages = messages.filter(m => m.body?.startsWith('[PORTAL]'));
+  // Only show messages sent through the portal (tagged [PORTAL], not one of
+  // the app's other bracketed audit-trail tags — see isPortalChatMessage() in
+  // lib/messageOrigin.js) — origin (customer vs. staff) is determined by
+  // that file's isStaffMessage(), not creator.email; see its comment for why.
+  const portalMessages = messages.filter(isPortalChatMessage);
 
   return (
     <>

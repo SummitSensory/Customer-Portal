@@ -932,6 +932,62 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
 
 // ── Tab: Delivery Details ─────────────────────────────────────────────────────
 
+/**
+ * Split a combined one-line address back into fields, from the end inwards.
+ *
+ * "1078 Headquarters Park Dr., Fenton, MO 63026, United States"
+ *   → line1 "1078 Headquarters Park Dr.", city "Fenton", state "MO",
+ *     zip "63026", country "United States"
+ *
+ * Needed because the ship-to address on file (COLS.address, mirrored onto the order
+ * as billingAddressOnFile) is ONE string — see BillingTab's comment on why. When a
+ * customer confirms that address rather than typing a new one, the six discrete
+ * columns on the submissions board still have to be filled, and this is the only
+ * place the components can come from if no billing snapshot exists.
+ *
+ * Deliberately conservative: it reads the tail it recognises and treats whatever is
+ * left at the front as the street, returning blanks rather than guessing.
+ */
+const COUNTRY_WORDS = new Set([
+  'united states', 'united states of america', 'usa', 'us', 'u.s.', 'u.s.a.', 'canada', 'mexico',
+]);
+const US_ZIP_RE = /^\d{5}(?:-\d{4})?$/;
+const CA_POSTAL_RE = /^[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d$/;
+
+export function parseCombinedAddress(combined) {
+  const blank = { line1: '', line2: '', city: '', state: '', zip: '', country: '' };
+  const parts = String(combined || '').split(',').map(p => p.trim()).filter(Boolean);
+  if (parts.length < 2) return blank;
+
+  let country = '';
+  if (COUNTRY_WORDS.has(parts[parts.length - 1].toLowerCase().replace(/\.$/, ''))) {
+    country = parts.pop();
+  }
+  if (!parts.length) return blank;
+
+  let state = '', zip = '';
+  const tail = parts.pop();
+  const words = tail.split(/\s+/);
+  const last = words[words.length - 1] || '';
+  const lastTwo = words.slice(-2).join(' ');
+  if (words.length > 1 && US_ZIP_RE.test(last)) {
+    zip = last;
+    state = words.slice(0, -1).join(' ');
+  } else if (words.length > 2 && CA_POSTAL_RE.test(lastTwo)) {
+    zip = lastTwo;
+    state = words.slice(0, -2).join(' ');
+  } else if (US_ZIP_RE.test(tail) || CA_POSTAL_RE.test(tail)) {
+    zip = tail;
+  } else {
+    state = tail;
+  }
+
+  const city = parts.length ? parts.pop() : '';
+  const line1 = parts.length ? parts.shift() : '';
+  const line2 = parts.length ? parts.join(', ') : '';
+  return { line1, line2, city, state, zip, country };
+}
+
 function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBack }) {
   // Lock logistics editing once order has shipped
   const shippedIdx = order.stages?.findIndex(s => s.key === 'shipped') ?? 3;
@@ -998,6 +1054,42 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
     ? `${order.billingAddressOnFile}${order.billingZipOnFile ? ' ' + order.billingZipOnFile : ''}`
     : '';
 
+  /**
+   * The ship-to address as SIX FIELDS, whichever way the customer answered.
+   *
+   * The CRM will not put an address on a vendor purchase sheet without a street AND a
+   * city (see its portalDelivery.ts). This used to send all six as empty strings
+   * whenever the customer CONFIRMED the address on file rather than typing a new one —
+   * only the joined formattedAddress went out — so those submissions sat INCOMPLETE in
+   * the CRM and their confirmed address never reached a vendor. Rachel at Remedy Speech
+   * Therapy (SO-2026-000011, 8/14/2026) and Kalen Siddens (8/13/2026) both landed that
+   * way: a full street in "Full Ship-To Address Formatted", nothing in Address Line 1.
+   *
+   * So the fields are always populated. Typed answers come from the form; a confirmed
+   * on-file address comes from the billing snapshot's own components, and only if that
+   * does not exist is the combined string parsed.
+   */
+  function shipToParts() {
+    if (addressConfirmed === false) {
+      return {
+        line1: addressLine1, line2: addressLine2, city: addressCity,
+        state: addressState, zip: addressZip, country: addressCountry,
+      };
+    }
+    const b = order.billingSnapshot || null;
+    if (b && (b.billingAddress || b.billingCity)) {
+      return {
+        line1: b.billingAddress || '',
+        line2: b.billingAddressSuite || '',
+        city: b.billingCity || '',
+        state: b.billingState || '',
+        zip: b.billingZip || '',
+        country: b.billingCountry || '',
+      };
+    }
+    return parseCombinedAddress(billingAddressOnFile);
+  }
+
   function toggleCommMethod(setter, v) {
     setter(prev => prev.includes(v) ? prev.filter(m => m !== v) : [...prev, v]);
   }
@@ -1061,9 +1153,12 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
     setSaving(true);
     const changedRestricted = getChangedRestricted();
 
-    const formattedAddress = addressConfirmed === false
-      ? [addressLine1, addressLine2, addressCity, [addressState, addressZip].filter(Boolean).join(' '), addressCountry].filter(Boolean).join(', ')
-      : billingAddressOnFile;
+    // One object, both ways out: the six columns and the formatted line are built from
+    // the same source, so they can never disagree about where the truck goes.
+    const ship = shipToParts();
+    const formattedAddress =
+      [ship.line1, ship.line2, ship.city, [ship.state, ship.zip].filter(Boolean).join(' '), ship.country]
+        .filter(Boolean).join(', ') || billingAddressOnFile;
 
     const deliveryTimingLabel = deliveryTiming === 'asap'
       ? 'Ship as soon as my order is ready'
@@ -1085,12 +1180,14 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
         secondaryCommMethods: hasSecondaryPoc ? secondaryCommMethods : [],
         secondaryMobilePhone: hasSecondaryPoc ? secondaryMobilePhone : '',
         addressConfirmed,
-        addressLine1: addressConfirmed === false ? addressLine1 : '',
-        addressLine2: addressConfirmed === false ? addressLine2 : '',
-        addressCity: addressConfirmed === false ? addressCity : '',
-        addressState: addressConfirmed === false ? addressState : '',
-        addressZip: addressConfirmed === false ? addressZip : '',
-        addressCountry: addressConfirmed === false ? addressCountry : '',
+        // Always the discrete fields, never blanks — a confirmed address is as real a
+        // ship-to as a typed one, and the CRM reads these columns, not the joined line.
+        addressLine1: ship.line1,
+        addressLine2: ship.line2,
+        addressCity: ship.city,
+        addressState: ship.state,
+        addressZip: ship.zip,
+        addressCountry: ship.country,
         formattedAddress,
         loadingDock: loadingDockLabel,
         deliveryTiming: deliveryTimingLabel,

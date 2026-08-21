@@ -38,9 +38,16 @@ import { mapWithConcurrency } from '../../../lib/concurrency';
 // Same reasoning as REMINDER_CONCURRENCY in cron/reminders.js — this job's two
 // loops (accessory items, then orders' Frame/Mats shipments) each make an
 // AfterShip call per row, so run time used to scale linearly with board size.
-// 8 concurrent calls keeps well under Monday/AfterShip's rate limits while
-// cutting run time roughly 8x on boards with many rows.
-const SYNC_CONCURRENCY = 8;
+// Concurrent calls cut run time roughly N-fold on boards with many rows.
+//
+// PORTAL-024: lowered from 8 to 4. Each "row" here can actually make up to 3
+// AfterShip calls of its own (see lib/aftership.js's ensureTrackingId), so 8
+// concurrent rows could burst well past AfterShip's 5-req/s account-wide
+// limit, as confirmed by a real run's "AfterShip update failed: 429" bursts.
+// lib/aftership.js now retries a 429 with backoff regardless of concurrency
+// here, but a smaller burst size means fewer retries are needed in the first
+// place — this and the retry logic are complementary, not redundant.
+const SYNC_CONCURRENCY = 4;
 
 export default async function handler(req, res) {
   const authHeader = req.headers['authorization'];

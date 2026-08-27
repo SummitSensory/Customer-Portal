@@ -7,7 +7,7 @@ import { parse } from 'cookie';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { getOrderFiles, addFileToOrder, getOrderById } from '../../../lib/monday';
+import { getOrderFiles, addFileToOrder, getOrderById, STAFF_UPLOAD_HOST_ALLOWLIST } from '../../../lib/monday';
 import { notifyCustomerNewFile } from '../../../lib/email';
 
 async function getIdentity(req, res) {
@@ -51,7 +51,11 @@ export default async function handler(req, res) {
     }
 
     try {
-      const file = await addFileToOrder(orderId, fileUrl, fileName);
+      // Staff-pasted links come from an authenticated admin session, not a
+      // public form submission — use the wider staff allowlist (Jotform +
+      // SharePoint/Google Drive/Dropbox/OneDrive) instead of the Jotform-only
+      // one meant for the public webhook path. See lib/monday.js.
+      const file = await addFileToOrder(orderId, fileUrl, fileName, { allowlist: STAFF_UPLOAD_HOST_ALLOWLIST });
 
       // Notify customer
       const order = await getOrderById(orderId);

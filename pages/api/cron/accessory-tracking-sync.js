@@ -60,6 +60,7 @@ export default async function handler(req, res) {
     const candidates = items.filter((i) => i.carrierSlug && i.trackingNumber);
 
     let updated = 0;
+    let errors = 0;
     await mapWithConcurrency(candidates, SYNC_CONCURRENCY, async (item) => {
       try {
         const tracking = await trackShipment(item.carrierSlug, item.trackingNumber, {
@@ -73,6 +74,7 @@ export default async function handler(req, res) {
         }
       } catch (err) {
         console.error(`Accessory tracking sync failed for item ${item.id}:`, err.message);
+        errors++;
       }
     });
 
@@ -101,8 +103,23 @@ export default async function handler(req, res) {
     // outbound call mid-loop, see PORTAL-021) is visible in Vercel's function
     // logs — previously this only went out in the HTTP response body, which
     // nothing reads for a scheduled Cron invocation.
-    console.log(`Accessory tracking sync summary: checked=${candidates.length} updated=${updated} framesMatsOnboarded=${framesMatsOnboarded}`);
-    return res.status(200).json({ ok: true, checked: candidates.length, updated, framesMatsOnboarded });
+    console.log(`Accessory tracking sync summary: checked=${candidates.length} updated=${updated} errors=${errors} framesMatsOnboarded=${framesMatsOnboarded}`);
+
+    // Same reasoning as cron/reminders.js: every per-item failure above is
+    // caught inline, so a systemic cause (revoked AFTERSHIP_API_KEY, a
+    // renamed Monday column) previously let this run complete "successfully"
+    // with updated=0 and no alert. Only fires when there was something to do
+    // and literally none of it worked — a normal run with nothing changed
+    // (errors=0) stays silent.
+    if (candidates.length > 0 && updated === 0 && errors === candidates.length) {
+      await reportCriticalFailure(
+        'cron/accessory-tracking-sync',
+        `Accessory tracking sync completed but every tracked item failed (checked=${candidates.length}, errors=${errors}). Likely a systemic issue (revoked/missing AFTERSHIP_API_KEY, a renamed Monday column) rather than isolated per-item failures — check Vercel function logs.`,
+        { checked: candidates.length, updated, errors, framesMatsOnboarded }
+      );
+    }
+
+    return res.status(200).json({ ok: true, checked: candidates.length, updated, errors, framesMatsOnboarded });
   } catch (err) {
     console.error('Accessory tracking sync error (run did not complete):', err.message);
     // PORTAL-023: same reasoning as cron/reminders — a run that never completes

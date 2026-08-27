@@ -142,6 +142,24 @@ export default async function handler(req, res) {
     // Logging it explicitly makes every run's outcome visible in Vercel's
     // function logs regardless of whether anyone is watching the response.
     console.log(`Cron reminders summary: checked=${results.checked} reminded=${results.reminded} skipped=${results.skipped} errors=${results.errors}`);
+
+    // The run itself completing normally (reaching this line) previously
+    // meant "no alert" even when every single order attempted failed — each
+    // per-order failure is caught inside the mapWithConcurrency loop above,
+    // so a systemic cause (e.g. RESEND_API_KEY revoked, a MONDAY_COL_* env
+    // var renamed) never threw past that catch and never reached the outer
+    // try/catch's reportCriticalFailure below. Alert explicitly when nothing
+    // attempted actually succeeded, so a "quiet day" (skipped>0, errors=0)
+    // stays silent but a broken run doesn't.
+    const attempted = results.reminded + results.errors;
+    if (attempted > 0 && results.reminded === 0) {
+      await reportCriticalFailure(
+        'cron/reminders',
+        `Reminder cron completed but every attempted reminder failed (attempted=${attempted}, errors=${results.errors}). Likely a systemic issue (revoked/misconfigured RESEND_API_KEY, a renamed Monday column, etc.) rather than isolated per-order failures — check Vercel function logs for the specific errors.`,
+        { ...results }
+      );
+    }
+
     return res.status(200).json({ ok: true, intervalDays: INTERVAL_DAYS, maxReminders: MAX_REMINDERS, ...results });
   } catch (err) {
     console.error(`Cron reminders FAILED before completing (checked=${results.checked} reminded=${results.reminded} skipped=${results.skipped} errors=${results.errors}):`, err);

@@ -382,8 +382,13 @@ function OrdersTab({ orders, onRefresh, showToast }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(changes),
       });
-      if (!res.ok) throw new Error('Save failed.');
-      showToast('Order updated.');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Save failed.');
+      // Some fields (tracking number, balance) can be individually skipped
+      // server-side if their Monday column env var isn't configured — that's
+      // real, actionable information, not something to hide behind a generic
+      // success toast (see PATCH /api/monday/orders.js).
+      showToast(data.warnings?.length ? data.warnings.join(' ') : 'Order updated.');
       setEditing(prev => { const n = { ...prev }; delete n[orderId]; return n; });
       await onRefresh();
     } catch {

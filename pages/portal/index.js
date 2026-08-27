@@ -108,7 +108,13 @@ export default function CustomerPortal() {
     setTimeout(() => setToast(''), 4000);
   }
 
-  function markComplete(tabId) {
+  function markComplete(tabId, synced = true) {
+    // `synced=false` means /api/portal/setup told us the Monday write didn't
+    // confirm (checklistSyncPending) — don't cache a false "complete" locally.
+    // Monday's real status column is still the source of truth on next load
+    // (see mergeProgress below); this just avoids masking an unconfirmed
+    // sync with an optimistic local write in the meantime.
+    if (!synced) return;
     setCompletions(prev => {
       const next = { ...prev, [tabId]: true };
       if (typeof window !== 'undefined') {
@@ -665,9 +671,11 @@ function ContactTab({ order, completions, markComplete, showToast, onNext }) {
     }
     setSaving(true);
     try {
-      await saveSetup('contact', {});
-      markComplete('contact');
-      showToast('Contact information confirmed.');
+      const result = await saveSetup('contact', {});
+      markComplete('contact', !result.checklistSyncPending);
+      showToast(result.checklistSyncPending
+        ? "Saved — confirming with our system now. This may take a moment to show as complete."
+        : 'Contact information confirmed.');
       onNext();
     } catch { showToast('Error saving. Please try again.'); }
     finally { setSaving(false); }
@@ -830,13 +838,15 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
     }
     setSaving(true);
     try {
-      await saveSetup('billing', {
+      const billingResult = await saveSetup('billing', {
         billingAddress, billingAddressSuite, billingCity, billingState, billingZip, billingCountry,
         billingContactSameAsPrimary: sameContact,
         billingName, billingPhone, billingEmail,
       });
-      markComplete('billing');
-      showToast('Billing information saved.');
+      markComplete('billing', !billingResult.checklistSyncPending);
+      showToast(billingResult.checklistSyncPending
+        ? "Saved — confirming with our system now. This may take a moment to show as complete."
+        : 'Billing information saved.');
       // Refresh the order from Monday so the just-confirmed address is picked up
       // immediately as the Delivery Logistics tab's default ship-to address.
       await onOrderRefresh?.();
@@ -1169,7 +1179,7 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
       : 'No, I need liftgate delivery';
 
     try {
-      await saveSetup('delivery', {
+      const deliveryPayload = {
         pocName, pocPhone, phoneCanText, pocEmail, specialInstructions,
         hasSecondaryPoc,
         secondaryPocName: hasSecondaryPoc ? secondaryPocName : '',
@@ -1206,10 +1216,16 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
         // acknowledgment itself from these same fields in one atomic
         // request — see pages/api/portal/setup.js.
         freightAckDate: new Date().toISOString().split('T')[0],
-      });
-      markComplete('delivery');
+      };
+      const deliveryResult = await saveSetup('delivery', deliveryPayload);
+      markComplete('delivery', !deliveryResult.checklistSyncPending);
       if (changedRestricted.length > 0) setShowRestrictionNote(true);
-      else { showToast('Delivery details saved.'); onNext(); }
+      else {
+        showToast(deliveryResult.checklistSyncPending
+          ? "Saved — confirming with our system now. This may take a moment to show as complete."
+          : 'Delivery details saved.');
+        onNext();
+      }
     } catch { showToast('Error saving. Please try again.'); }
     finally { setSaving(false); }
   }
@@ -1605,9 +1621,11 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
   async function complete() {
     setSaving(true);
     try {
-      await saveSetup('color', {});
-      markComplete('color');
-      showToast('Color selections marked complete.');
+      const colorResult = await saveSetup('color', {});
+      markComplete('color', !colorResult.checklistSyncPending);
+      showToast(colorResult.checklistSyncPending
+        ? "Saved — confirming with our system now. This may take a moment to show as complete."
+        : 'Color selections marked complete.');
       onNext();
     } catch {
       showToast('Error saving. Please try again.');
@@ -1737,9 +1755,11 @@ function DocumentsTab({ order, completions, markComplete, showToast, docForms, o
   async function complete() {
     setSaving(true);
     try {
-      await saveSetup('documents', {});
-      markComplete('documents');
-      showToast('Documents marked complete.');
+      const docsResult = await saveSetup('documents', {});
+      markComplete('documents', !docsResult.checklistSyncPending);
+      showToast(docsResult.checklistSyncPending
+        ? "Saved — confirming with our system now. This may take a moment to show as complete."
+        : 'Documents marked complete.');
       onNext();
     } catch {
       showToast('Error saving. Please try again.');

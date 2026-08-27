@@ -35,13 +35,25 @@ function resolveTabType(formConfig) {
 }
 
 /**
- * Every formID in JOTFORM_FORM_MAP that resolves to the same tabType. Used so
- * a tab backed by multiple Jotform forms (e.g. several Required Documents
- * forms) only reports complete once every one of them has actually been
- * submitted, instead of flipping ✅ the instant any single one arrives.
+ * Every formID in JOTFORM_FORM_MAP that resolves to the same tabType AND
+ * applies to this order's product type. Used so a tab backed by multiple
+ * Jotform forms (e.g. several Required Documents forms, or several
+ * product-specific Color Selection forms) only reports complete once every
+ * form that's actually applicable to THIS order has been submitted, instead
+ * of flipping ✅ the instant any single one arrives — or, conversely,
+ * never flipping because it also demands forms scoped to OTHER product
+ * types that this order could never submit.
+ *
+ * Mirrors the frontend's productForms filter in pages/portal/index.js
+ * (a form with no productTypes applies to every order; a form with
+ * productTypes only applies when it includes this order's productType).
  */
-function formsForTab(formMap, tabType) {
-  return Object.keys(formMap).filter((id) => resolveTabType(formMap[id]) === tabType);
+function formsForTab(formMap, tabType, productType) {
+  return Object.keys(formMap).filter((id) => {
+    const cfg = formMap[id];
+    if (resolveTabType(cfg) !== tabType) return false;
+    return !cfg.productTypes || cfg.productTypes.includes(productType);
+  });
 }
 
 const IMAGE_EXT = /\.(jpe?g|png|gif|heic|heif|webp|bmp|tiff?)(\?|$)/i;
@@ -258,7 +270,7 @@ export default async function handler(req, res) {
     `Jotform submission received for "${formConfig.name}" on ${new Date().toLocaleDateString()}. Submitted by: ${email}${submissionTag}`
   ).catch(console.error);
 
-  const requiredFormIds = formsForTab(formMap, tabType);
+  const requiredFormIds = formsForTab(formMap, tabType, order.productType);
   let tabComplete = true;
   if (requiredFormIds.length > 1) {
     try {

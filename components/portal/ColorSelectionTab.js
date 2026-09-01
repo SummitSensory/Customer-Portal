@@ -9,7 +9,7 @@
  * server-validated (pages/api/portal/color-selection.js) before it can be
  * confirmed complete.
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   listCardinalColors, listPrismaticColors, listVinylColors,
   cardinalFinishes, prismaticFamilies, prismaticUpcharge,
@@ -85,6 +85,21 @@ function SwatchGrid({ colors, selected, onSelect, onInspect }) {
 }
 
 function InspectModal({ color, onClose }) {
+  // Closes on Escape and keeps focus trapped on the close button while open
+  // — the modal has exactly one focusable element, so trapping focus is
+  // just "keep it there" rather than a full focus-cycle implementation.
+  const closeBtnRef = useRef(null);
+  useEffect(() => {
+    if (!color) return;
+    closeBtnRef.current?.focus();
+    function onKeyDown(e) {
+      if (e.key === 'Escape') onClose();
+      else if (e.key === 'Tab') e.preventDefault(); // single focusable element — Tab can't leave it
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [color, onClose]);
+
   if (!color) return null;
   return (
     <div className="cs-modal-overlay" onClick={onClose} role="presentation">
@@ -93,7 +108,7 @@ function InspectModal({ color, onClose }) {
           {color.photo
             ? <img className="cs-modal-img" src={color.photo} alt={color.name} />
             : <div className="cs-modal-color" style={{ background: color.hex }} />}
-          <button type="button" className="cs-modal-close" onClick={onClose} aria-label="Close">✕</button>
+          <button type="button" className="cs-modal-close" ref={closeBtnRef} onClick={onClose} aria-label="Close">✕</button>
         </div>
         <div className="cs-modal-body">
           <h3 style={{ fontSize: 16, marginBottom: 4 }}>{color.name}</h3>
@@ -116,18 +131,21 @@ function StructurePartPicker({ part, selection, onChange, onBack }) {
   const [brand, setBrand] = useState(selection?.brand || 'cardinal');
   const [search, setSearch] = useState('');
   const [finish, setFinish] = useState('');
+  const [family, setFamily] = useState('');
   const [inspecting, setInspecting] = useState(null);
 
   const cardinal = useMemo(() => listCardinalColors(), []);
   const prismatic = useMemo(() => listPrismaticColors(), []);
   const finishes = useMemo(() => cardinalFinishes(), []);
+  const families = useMemo(() => prismaticFamilies(), []);
 
   const list = brand === 'cardinal' ? cardinal : prismatic;
   const filtered = list.filter((c) => {
     const q = search.trim().toLowerCase();
     const matchesSearch = !q || c.name.toLowerCase().includes(q) || (c.code || c.sku || '').toLowerCase().includes(q);
     const matchesFinish = brand !== 'cardinal' || !finish || c.finish === finish;
-    return matchesSearch && matchesFinish;
+    const matchesFamily = brand !== 'prismatic' || !family || c.family === family;
+    return matchesSearch && matchesFinish && matchesFamily;
   });
 
   return (
@@ -152,6 +170,12 @@ function StructurePartPicker({ part, selection, onChange, onBack }) {
           <select value={finish} onChange={(e) => setFinish(e.target.value)} style={{ maxWidth: 180 }}>
             <option value="">All finishes</option>
             {finishes.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+        )}
+        {brand === 'prismatic' && (
+          <select value={family} onChange={(e) => setFamily(e.target.value)} style={{ maxWidth: 180 }}>
+            <option value="">All color families</option>
+            {families.map((f) => <option key={f} value={f}>{f}</option>)}
           </select>
         )}
       </div>

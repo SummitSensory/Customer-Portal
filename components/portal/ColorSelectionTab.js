@@ -13,6 +13,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   listCardinalColors, listPrismaticColors, listVinylColors,
   cardinalFinishes, prismaticFamilies, resolveSelectedColor, computeLineItemPricing,
+  displayColorName, standardDesignation,
 } from '../../lib/colorCatalog';
 import { COLOR_INPUT, PART_LABELS } from '../../lib/colorRequirements';
 import { createSaveQueue } from '../../lib/saveQueue';
@@ -73,7 +74,7 @@ function SwatchGrid({ colors, selected, onSelect, onInspect }) {
               className="cs-card-select"
               role="option"
               aria-selected={isSelected}
-              aria-label={`Select ${c.name}${c.code ? `, code ${c.code}` : ''}${c.sku ? `, SKU ${c.sku}` : ''}${isSelected ? ' (currently selected)' : ''}`}
+              aria-label={`Select ${displayColorName(c)}${c.code ? `, code ${c.code}` : ''}${c.sku ? `, SKU ${c.sku}` : ''}${isSelected ? ' (currently selected)' : ''}`}
               onClick={() => onSelect(c)}
             >
               <div className="cs-card-swatch">
@@ -83,13 +84,13 @@ function SwatchGrid({ colors, selected, onSelect, onInspect }) {
                 {isSelected && <span className="cs-card-check" aria-hidden="true">✓ Selected</span>}
               </div>
               <div className="cs-card-body">
-                <div className="cs-card-name">{c.name}</div>
+                <div className="cs-card-name">{displayColorName(c)}</div>
               </div>
             </button>
             <button
               type="button"
               className="cs-card-inspect"
-              aria-label={`View ${c.name} larger`}
+              aria-label={`View ${displayColorName(c)} larger`}
               onClick={() => onInspect(c)}
             >🔍 View Larger</button>
           </div>
@@ -118,17 +119,18 @@ function InspectModal({ color, onClose }) {
   if (!color) return null;
   return (
     <div className="cs-modal-overlay" onClick={onClose} role="presentation">
-      <div className="cs-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={color.name}>
+      <div className="cs-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={displayColorName(color)}>
         <div style={{ position: 'relative' }}>
           {color.photo
-            ? <img className="cs-modal-img" src={color.photo} alt={color.name} />
+            ? <img className="cs-modal-img" src={color.photo} alt={displayColorName(color)} />
             : <div className="cs-modal-color" style={{ background: color.hex }} />}
           <button type="button" className="cs-modal-close" ref={closeBtnRef} onClick={onClose} aria-label="Close">✕</button>
         </div>
         <div className="cs-modal-body">
-          <h3 style={{ fontSize: 20, marginBottom: 6 }}>{color.name}</h3>
+          <h3 style={{ fontSize: 20, marginBottom: 6 }}>{displayColorName(color)}</h3>
           <p style={{ fontSize: 13.5, color: 'var(--mut)' }}>
             {color.code || color.sku}{color.finish ? ` · ${color.finish} finish` : ''}{color.family ? ` · ${color.family}` : ''}
+            {standardDesignation(color) ? ` · ${standardDesignation(color)}` : ''}
           </p>
           {!color.photo && (
             <p style={{ fontSize: 12.5, color: 'var(--mut)', marginTop: 10 }}>
@@ -235,7 +237,15 @@ function MatPadPartPicker({ part, selection, onChange, onBack }) {
 }
 
 // ── One input's part list (e.g. all 6 Structure & Frame Paint parts) ──
-function InputPartList({ input, selections, onOpenPart, onBack }) {
+// requiredInputs is the FULL checklist, not just this one input — pricing
+// (which Prismatic selection counts as "first" vs "additional") depends on
+// order across the whole selection set, so the per-part amount shown here
+// has to come from the same computeLineItemPricing() the summary uses,
+// not a separately-derived number that could disagree with it.
+function InputPartList({ input, requiredInputs, selections, onOpenPart, onBack }) {
+  const lines = computeLineItemPricing(requiredInputs, selections);
+  const lineFor = (part) => lines.find((l) => l.inputKey === input.input && l.part === part);
+
   return (
     <>
       <button type="button" className="lk" style={{ marginBottom: 14 }} onClick={onBack}>← Back to checklist</button>
@@ -246,6 +256,7 @@ function InputPartList({ input, selections, onOpenPart, onBack }) {
       <div>
         {input.parts.map((part) => {
           const color = resolveSelectedColor(selections?.[input.input]?.[part]);
+          const line = lineFor(part);
           return (
             <div className="cs-part-card" key={part}>
               <div className="cs-part-head">
@@ -259,12 +270,19 @@ function InputPartList({ input, selections, onOpenPart, onBack }) {
                   {color.photo
                     ? <img src={color.photo} alt="" style={{ width: 28, height: 28, borderRadius: 5, objectFit: 'cover' }} />
                     : <span className="dot" style={{ background: color.hex, width: 20, height: 20 }} />}
-                  {/* Name and code shown as visually distinct fields, not
-                      one blended string — direct customer feedback
-                      (2026-09-01): "remove any reference to the color code
-                      from within the name." */}
+                  {/* Direct customer feedback (2026-09-02): brand and any
+                      added cost weren't showing on the same line as the
+                      name — they're now all one row, with the code kept on
+                      its own separate line underneath rather than folded
+                      into the name string. */}
                   <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    <span style={{ fontWeight: 600 }}>{color.name}</span>
+                    <span style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                      <span className="cs-summary-brand" style={{ fontWeight: 600 }}>{line?.selection?.brand}</span>
+                      <span style={{ fontWeight: 600 }}>{displayColorName(color)}</span>
+                      {line?.amount > 0 && (
+                        <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--moss-dk)' }}>+${line.amount.toLocaleString()}</span>
+                      )}
+                    </span>
                     {(color.code || color.sku) && <span style={{ fontSize: 11.5, color: 'var(--mut)', fontFamily: 'monospace' }}>{color.code || color.sku}</span>}
                   </span>
                 </div>
@@ -349,7 +367,7 @@ function Summary({ requiredInputs, selections, onConfirm, onBack, confirming }) 
             <span>
               {line.color ? (
                 <>
-                  <span className="cs-summary-brand">{line.selection.brand}</span> — {line.color.name}
+                  <span className="cs-summary-brand">{line.selection.brand}</span> — {displayColorName(line.color)}
                 </>
               ) : '—'}
             </span>
@@ -576,6 +594,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     body = (
       <InputPartList
         input={view}
+        requiredInputs={requiredInputs}
         selections={selections}
         onOpenPart={setActivePart}
         onBack={() => setView('checklist')}

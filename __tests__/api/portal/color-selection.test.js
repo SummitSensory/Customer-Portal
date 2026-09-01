@@ -118,6 +118,8 @@ describe('handler — auth and customer isolation', () => {
     mockGetOrderById.mockReset();
     mockVerifyCustomerSession.mockReset();
     mockWriteColorSelectionSnapshot.mockReset().mockResolvedValue(undefined);
+    mockPostTaggedUpdate.mockReset().mockResolvedValue(undefined);
+    mockMarkSectionCompleteSafe.mockReset().mockResolvedValue(true);
   });
 
   it('rejects an unauthenticated request', async () => {
@@ -155,6 +157,44 @@ describe('handler — auth and customer isolation', () => {
     expect(mockGetOrderById).not.toHaveBeenCalledWith('someone-elses-order-999');
     expect(mockWriteColorSelectionSnapshot).toHaveBeenCalledWith('real-order-123', expect.anything());
     expect(res.statusCode).toBe(200);
+  });
+
+  it('staff is notified when a customer changes selections after already confirming them — even though the picker does not yet block the edit', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById.mockResolvedValue({
+      id: 'real-order-123',
+      productType: ADVENTURE_SERIES,
+      colorSelectionSnapshot: { selections: fullValidSelections(), confirmedAt: '2026-08-30T00:00:00.000Z' },
+    });
+
+    const changed = fullValidSelections();
+    changed.structure_frame_paint.legs = { brand: 'cardinal', code: 'P009-BG02' };
+
+    const req = { method: 'POST', headers: {}, body: { selections: changed, confirm: false } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(mockPostTaggedUpdate).toHaveBeenCalledWith(
+      'real-order-123',
+      'PORTAL: Color Selections Changed After Confirmation',
+      expect.any(String)
+    );
+  });
+
+  it('does NOT post the after-confirmation notice on an ordinary first-time autosave', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: false } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(mockPostTaggedUpdate).not.toHaveBeenCalledWith(
+      'real-order-123',
+      'PORTAL: Color Selections Changed After Confirmation',
+      expect.any(String)
+    );
   });
 
   it('confirming with an incomplete selection is rejected server-side, even if the client thinks it is done', async () => {

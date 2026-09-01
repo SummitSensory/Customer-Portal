@@ -718,6 +718,12 @@ tr:hover td { background: #fcfbf7; }
   font-size: 12px; font-weight: 700;
 }
 .cs-swatch-wrap { position: relative; }
+.cs-swatch-inspect {
+  position: absolute; bottom: 6px; right: 6px; z-index: 1;
+  background: rgba(255,255,255,.9); border-radius: 6px; padding: 2px 6px; font-size: 11px;
+  border: none; cursor: pointer;
+}
+.cs-swatch-inspect:focus-visible { outline: 2px solid var(--moss); outline-offset: 1px; }
 
 .cs-part-card { border-bottom: 1px solid var(--line); padding: 20px 0; }
 .cs-part-card:last-child { border-bottom: none; }

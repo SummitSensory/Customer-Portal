@@ -15,6 +15,7 @@ import {
   cardinalFinishes, prismaticFamilies, prismaticUpcharge,
 } from '../../lib/colorCatalog';
 import { COLOR_INPUT, PART_LABELS } from '../../lib/colorRequirements';
+import { createSaveQueue } from '../../lib/saveQueue';
 
 async function fetchSelection() {
   const res = await fetch('/api/portal/color-selection');
@@ -72,8 +73,7 @@ function SwatchGrid({ colors, selected, onSelect, onInspect }) {
             {isSelected && <span className="cs-swatch-check" aria-hidden="true">✓</span>}
             <button
               type="button"
-              className="cs-part-selected"
-              style={{ position: 'absolute', bottom: 6, right: 6, background: 'rgba(255,255,255,.9)', borderRadius: 6, padding: '2px 6px', fontSize: 11 }}
+              className="cs-swatch-inspect"
               aria-label={`Inspect ${c.name} up close`}
               onClick={(e) => { e.stopPropagation(); onInspect(c); }}
             >🔍</button>
@@ -361,34 +361,72 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
+    // Deliberately depends only on order?.id, not showToast: showToast is a
+    // plain function re-created on every render of the parent portal (it's
+    // not wrapped in useCallback there), so including it here would refetch
+    // — and flash the loading spinner over whatever the customer is
+    // currently doing — on every unrelated parent re-render (a new message
+    // arriving, the mobile nav toggling, etc.), not just when the order
+    // actually changes. Caught in review before this shipped.
     let cancelled = false;
     fetchSelection()
       .then((data) => {
         if (cancelled) return;
         setRequiredInputs(data.requiredInputs || []);
-        setSelections(data.selections || {});
+        const loaded = data.selections || {};
+        latestSelectionsRef.current = loaded;
+        setSelections(loaded);
       })
       .catch(() => showToast('Could not load color selection data. Please refresh.'))
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
-  }, [order?.id, showToast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order?.id]);
 
   const allComplete = requiredInputs.length > 0 && requiredInputs.every((i) => inputIsComplete(i, selections));
 
+  // Saves are serialized through a ref-based queue: rapid sequential
+  // selections (or a slow network) could otherwise let an older, in-flight
+  // full-snapshot write resolve AFTER a newer one and silently overwrite it
+  // — a real race caught in review, since the API always replaces the whole
+  // snapshot rather than patching. This guarantees only one request is ever
+  // in flight, and it always carries the latest selections at send time,
+  // never a value captured from a stale closure.
+  // Updated synchronously wherever selections change (never only from a
+  // useEffect keyed on the `selections` state) — a ref refreshed via effect
+  // lags one render behind a setState call, and the queue's getter can run
+  // (as a microtask) before that lagged effect has caught up, sending a
+  // stale snapshot on exactly the rapid-selection case this exists to fix.
+  const latestSelectionsRef = useRef(selections);
+  const enqueueSaveRef = useRef(null);
+  if (!enqueueSaveRef.current) enqueueSaveRef.current = createSaveQueue(saveSelection);
+
+  const queueSave = useCallback((confirm) => {
+    return enqueueSaveRef.current(() => ({ selections: latestSelectionsRef.current, confirm }));
+  }, []);
+
   const handlePartChange = useCallback(async (inputKey, part, value) => {
-    const next = { ...selections, [inputKey]: { ...selections[inputKey], [part]: value } };
+    const next = {
+      ...latestSelectionsRef.current,
+      [inputKey]: { ...latestSelectionsRef.current[inputKey], [part]: value },
+    };
+    latestSelectionsRef.current = next;
     setSelections(next);
     try {
-      await saveSelection({ selections: next, confirm: false });
+      await queueSave(false);
     } catch (err) {
       showToast(err.message || 'Error saving. Please try again.');
     }
-  }, [selections, showToast]);
+  }, [queueSave, showToast]);
 
   async function handleConfirm() {
     setConfirming(true);
     try {
-      const result = await saveSelection({ selections, confirm: true });
+      // Goes through the same queue as autosave, not a separate direct
+      // call — guarantees the confirm write can never race ahead of (or
+      // behind) a still-in-flight autosave from a selection made moments
+      // earlier.
+      const result = await queueSave(true);
       markComplete('color', !result.checklistSyncPending);
       showToast(result.checklistSyncPending
         ? 'Saved — confirming with our system now. This may take a moment to show as complete.'

@@ -15,105 +15,17 @@ import { parse } from 'cookie';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
 import { getOrderById, postTaggedUpdate, markSectionCompleteSafe, writeColorSelectionSnapshot } from '../../../lib/monday';
 import { allowRequest } from '../../../lib/rateLimit';
-import { requiredColorInputs, COLOR_INPUT, ALLOWED_BRANDS } from '../../../lib/colorRequirements';
-import { findCardinalByCode, findPrismaticBySku, findVinylByName, prismaticUpcharge } from '../../../lib/colorCatalog';
+import { requiredColorInputs } from '../../../lib/colorRequirements';
+import { validatePresentSelections, validateColorSelectionData, computeTotalUpcharge } from '../../../lib/colorSelectionValidation';
 
-/**
- * Validates one part's selection against the real catalog AND against which
- * brand(s) are even allowed on that part — never trusts a client-supplied
- * hex/name/brand, only a catalog id it can look up server-side. Returns an
- * error string, or null if valid.
- *
- * FIXED (found in independent code review, 2026-09-01): previously checked
- * only "is this code real within whichever brand the client claims" — a Mat
- * & Pad Color selection using a real, valid Prismatic PAINT SKU passed and
- * could be confirmed, because nothing checked that vinyl is the only brand
- * allowed on a mat/pad part. Now takes the owning input type so it can
- * reject a wrong-category brand before ever consulting a catalog.
- */
-function validatePartSelection(inputType, partKey, selection) {
-  if (!selection || typeof selection !== 'object') return `A color is required for "${partKey}".`;
-  const { brand, code } = selection;
-  const allowed = ALLOWED_BRANDS[inputType] || [];
-  if (!allowed.includes(brand)) {
-    return `"${partKey}" must use one of: ${allowed.join(', ')} (got "${brand}").`;
-  }
-  if (brand === 'cardinal') {
-    if (!code || !findCardinalByCode(code)) return `"${partKey}" has an unrecognized Cardinal color code.`;
-    return null;
-  }
-  if (brand === 'prismatic') {
-    if (!code || !findPrismaticBySku(code)) return `"${partKey}" has an unrecognized Prismatic SKU.`;
-    return null;
-  }
-  if (brand === 'vinyl') {
-    if (!code || !findVinylByName(code)) return `"${partKey}" has an unrecognized mat/pad color.`;
-    return null;
-  }
-  return `"${partKey}" must specify a valid brand.`;
-}
-
-/**
- * Validates every part that IS present in `selections`, regardless of
- * `confirm` — does NOT require completeness. Missing parts are fine here
- * (that's normal mid-selection state); an invalid catalog code or wrong-
- * category brand is not, ever, autosave or not.
- *
- * FIXED (found in independent code review, 2026-09-01): validation used to
- * run only when confirm was true, so a fabricated code (e.g.
- * {brand:'prismatic', code:'FAKE-SKU'}) sent on an ordinary autosave was
- * written straight to Monday and priced via computeTotalUpcharge with no
- * check at all — a real, staff-visible dollar figure computed from data
- * nothing had verified was real.
- */
-function validatePresentSelections(order, selections) {
-  const inputs = requiredColorInputs(order.productType);
-  if (!inputs) return `Color selection isn't available yet for product type "${order.productType}".`;
-
-  for (const input of inputs) {
-    const inputSelections = selections?.[input.input];
-    for (const part of input.parts) {
-      const value = inputSelections?.[part];
-      if (value == null) continue; // absence is fine on autosave — completeness is checked separately
-      const err = validatePartSelection(input.input, part, value);
-      if (err) return err;
-    }
-  }
-  return null;
-}
-
-/**
- * Mirrors validateSetupData()'s shape in pages/api/portal/setup.js: returns
- * a plain error string, or null if the submission is fully valid. Requires
- * every part on every required input to be present and catalog-valid —
- * server is the one that decides "complete," never the client alone (see
- * the Color Selection Experience doc, §20).
- */
-export function validateColorSelectionData(order, selections) {
-  const inputs = requiredColorInputs(order.productType);
-  if (!inputs) return `Color selection isn't available yet for product type "${order.productType}".`;
-
-  for (const input of inputs) {
-    const inputSelections = selections?.[input.input];
-    for (const part of input.parts) {
-      const err = validatePartSelection(input.input, part, inputSelections?.[part]);
-      if (err) return err;
-    }
-  }
-  return null;
-}
-
-export function computeTotalUpcharge(order, selections) {
-  const inputs = requiredColorInputs(order.productType) || [];
-  let prismaticCount = 0;
-  for (const input of inputs) {
-    if (input.input !== COLOR_INPUT.STRUCTURE_FRAME_PAINT) continue;
-    for (const part of input.parts) {
-      if (selections?.[input.input]?.[part]?.brand === 'prismatic') prismaticCount++;
-    }
-  }
-  return prismaticUpcharge(prismaticCount);
-}
+// Re-exported for anything still importing these two from this file's own
+// module (kept for the existing test suite's import paths) — the real
+// implementations now live in lib/colorSelectionValidation.js, which has no
+// auth/session/Monday dependency, specifically so pages/api/demo/color-
+// selection.js can use the exact same validation without inheriting this
+// file's NEXTAUTH_SECRET requirement (see that module's header comment for
+// the real bug this fixes).
+export { validateColorSelectionData, computeTotalUpcharge };
 
 export default async function handler(req, res) {
   const cookies = parse(req.headers.cookie || '');

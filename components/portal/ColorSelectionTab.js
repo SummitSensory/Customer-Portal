@@ -360,6 +360,16 @@ function Summary({ requiredInputs, selections, onConfirm, onBack, confirming }) 
 
 export default function ColorSelectionTab({ order, completions, markComplete, showToast, onNext, onBack, apiBase = DEFAULT_API_BASE }) {
   const [loading, setLoading] = useState(true);
+  // FIXED (real bug, found via a live report on the preview deployment
+  // 2026-09-01): a failed initial fetch (e.g. a 500 from the API) left
+  // requiredInputs at its default [] and silently fell into the exact same
+  // "not yet available for your product type" card as a genuinely
+  // unsupported productType — indistinguishable to whoever's looking at it.
+  // The actual cause that day (NEXTAUTH_SECRET unset on that deployment,
+  // confirmed via Vercel's real runtime logs) had nothing to do with
+  // product-type support at all, but the UI had no way to say so. loadError
+  // tracks that distinction explicitly now.
+  const [loadError, setLoadError] = useState(false);
   const [requiredInputs, setRequiredInputs] = useState([]);
   const [selections, setSelections] = useState({});
   const [view, setView] = useState('checklist'); // 'checklist' | { input } | 'summary'
@@ -375,6 +385,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     // arriving, the mobile nav toggling, etc.), not just when the order
     // actually changes. Caught in review before this shipped.
     let cancelled = false;
+    setLoadError(false);
     fetchSelection(apiBase)
       .then((data) => {
         if (cancelled) return;
@@ -383,7 +394,11 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
         latestSelectionsRef.current = loaded;
         setSelections(loaded);
       })
-      .catch(() => showToast('Could not load color selection data. Please refresh.'))
+      .catch(() => {
+        if (cancelled) return;
+        setLoadError(true);
+        showToast('Could not load color selection data. Please refresh.');
+      })
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -447,6 +462,18 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
 
   if (loading) {
     return <div className="card"><div className="empty"><div className="spin" style={{ margin: '0 auto' }} /></div></div>;
+  }
+
+  if (loadError) {
+    return (
+      <div className="card">
+        <div className="empty">
+          <div className="ei">⚠️</div>
+          <h3>Couldn&apos;t load your color options</h3>
+          <p>Something went wrong loading this page — not a sign your product type is unsupported. Please refresh, and contact us if it keeps happening.</p>
+        </div>
+      </div>
+    );
   }
 
   if (!requiredInputs.length) {

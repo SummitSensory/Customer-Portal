@@ -15,11 +15,12 @@
  */
 
 import { requiredColorInputs } from '../../../lib/colorRequirements';
-// Reuses the real endpoint's own validation/pricing functions (already
-// exported for its own tests) instead of a second copy — importing a named
-// export from another pages/api file is plain JS module resolution and
-// does not create a second route; only the file's own path does that.
-import { validateColorSelectionData, computeTotalUpcharge } from '../portal/color-selection';
+// Imports from lib/colorSelectionValidation.js, NOT from
+// pages/api/portal/color-selection.js — that file pulls in lib/auth.js,
+// which throws at import time if NEXTAUTH_SECRET is unset. This route has
+// no business needing that at all; see the lib module's header comment for
+// the real, confirmed bug that came from getting this wrong the first time.
+import { validateColorSelectionData, computeTotalUpcharge } from '../../../lib/colorSelectionValidation';
 
 const DEMO_PRODUCT_TYPE = 'Summit Adventure Series: Custom Sensory Gym';
 

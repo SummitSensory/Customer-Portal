@@ -187,7 +187,7 @@ describe('handler — auth and customer isolation', () => {
     expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
   });
 
-  it('staff is notified when a customer changes selections after already confirming them — even though the picker does not yet block the edit', async () => {
+  it('rejects any further write once confirmedAt is already set — autosave included, no exceptions', async () => {
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
     mockGetOrderById.mockResolvedValue({
       id: 'real-order-123',
@@ -202,27 +202,25 @@ describe('handler — auth and customer isolation', () => {
     const res = makeRes();
     await handler(req, res);
 
-    expect(res.statusCode).toBe(200);
-    expect(mockPostTaggedUpdate).toHaveBeenCalledWith(
-      'real-order-123',
-      'PORTAL: Color Selections Changed After Confirmation',
-      expect.any(String)
-    );
+    expect(res.statusCode).toBe(409);
+    expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
   });
 
-  it('does NOT post the after-confirmation notice on an ordinary first-time autosave', async () => {
+  it('rejects a re-confirm attempt too, not just plain autosave, once already confirmed', async () => {
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
-    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockGetOrderById.mockResolvedValue({
+      id: 'real-order-123',
+      productType: ADVENTURE_SERIES,
+      colorSelectionSnapshot: { selections: fullValidSelections(), confirmedAt: '2026-08-30T00:00:00.000Z' },
+    });
 
-    const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: false } };
+    const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
     const res = makeRes();
     await handler(req, res);
 
-    expect(mockPostTaggedUpdate).not.toHaveBeenCalledWith(
-      'real-order-123',
-      'PORTAL: Color Selections Changed After Confirmation',
-      expect.any(String)
-    );
+    expect(res.statusCode).toBe(409);
+    expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
+    expect(mockPostTaggedUpdate).not.toHaveBeenCalled();
   });
 
   it('confirming with an incomplete selection is rejected server-side, even if the client thinks it is done', async () => {

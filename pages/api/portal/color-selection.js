@@ -58,6 +58,20 @@ export default async function handler(req, res) {
     return res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' });
   }
 
+  // Locked the moment confirmedAt is set — matches what the customer was
+  // told before they confirmed ("This Cannot Be Undone"). The picker UI
+  // (ConfirmedView) already refuses to render an editable form once this is
+  // true, but the client can't be trusted to enforce that alone: this is
+  // the actual guarantee. No autosave, no re-confirm, no exceptions — a
+  // customer who needs a change after confirming contacts staff, same as
+  // any other locked portal field.
+  if (order.colorSelectionSnapshot?.confirmedAt) {
+    return res.status(409).json({
+      error: 'Color selections were already confirmed and cannot be changed. Contact us if you need to make a correction.',
+      confirmedAt: order.colorSelectionSnapshot.confirmedAt,
+    });
+  }
+
   const { selections, confirm } = req.body || {};
   if (!selections || typeof selections !== 'object') return res.status(400).json({ error: 'selections required.' });
 
@@ -75,11 +89,10 @@ export default async function handler(req, res) {
   }
 
   const totalUpcharge = computeTotalUpcharge(order, selections);
-  const wasAlreadyConfirmed = !!order.colorSelectionSnapshot?.confirmedAt;
   const snapshot = {
     selections,
     totalUpcharge,
-    confirmedAt: confirm ? new Date().toISOString() : (order.colorSelectionSnapshot?.confirmedAt || null),
+    confirmedAt: confirm ? new Date().toISOString() : null,
   };
 
   try {
@@ -98,25 +111,6 @@ export default async function handler(req, res) {
 
     const synced = await markSectionCompleteSafe(order.id, 'portalColors');
     return res.status(200).json({ ok: true, totalUpcharge, checklistSyncPending: !synced });
-  }
-
-  // KNOWN GAP, documented rather than silently shipped: this endpoint does
-  // not yet block or route post-confirmation edits through a "pending
-  // correction" flow the way the Contact tab does for its own locked
-  // fields (Color Selection Experience doc §10, tier: Strongly
-  // Recommended, not required for Phase 1). Full parity with that pattern
-  // is real follow-up work, not something to rush under time pressure.
-  // What this DOES guarantee in the meantime: staff is never left unaware
-  // that an already-confirmed selection changed — every such autosave still
-  // posts a visible tagged update, so it shows up in the order's activity
-  // feed even though the picker doesn't yet show the customer an explicit
-  // "editing a confirmed selection" state.
-  if (wasAlreadyConfirmed) {
-    await postTaggedUpdate(
-      order.id,
-      'PORTAL: Color Selections Changed After Confirmation',
-      `Customer modified color/finish selections on ${new Date().toLocaleDateString()}, after already confirming them. New total upcharge: $${totalUpcharge}. Please review before manufacturing.`
-    ).catch(console.error);
   }
 
   return res.status(200).json({ ok: true, totalUpcharge, checklistSyncPending: false });

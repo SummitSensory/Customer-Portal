@@ -695,35 +695,43 @@ tr:hover td { background: #fcfbf7; }
 .cs-ci-body .d { font-size: 12.5px; color: var(--mut); margin-top: 1px; }
 .cs-ci-count { font-size: 12px; color: var(--mut); font-family: monospace; flex: none; }
 
+/* Card sizing driven by real customer feedback (2026-09-01 preview test):
+   swatches were "too small," cards weren't uniform, and the old
+   position:absolute zoom icon could drift outside its own card. Every card
+   below is a fixed-layout column — image, name, then a full-width "View
+   Larger" button in normal document flow, which by construction can never
+   escape the card the way an absolutely-positioned element could. */
 .cs-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px;
 }
-.cs-swatch {
-  border: 2px solid var(--line); border-radius: 10px; padding: 0; overflow: hidden;
-  cursor: pointer; background: #fff; text-align: left; font: inherit; color: inherit;
-  display: flex; flex-direction: column; transition: border-color .12s;
+.cs-card {
+  border: 2px solid var(--line); border-radius: 12px; overflow: hidden;
+  background: #fff; display: flex; flex-direction: column; transition: border-color .12s;
 }
-.cs-swatch:hover { border-color: var(--moss); }
-.cs-swatch.selected { border-color: var(--moss); box-shadow: 0 0 0 2px var(--moss-lt); }
-.cs-swatch:focus-visible { outline: 2px solid var(--moss); outline-offset: 2px; }
-.cs-swatch-img { width: 100%; height: 72px; object-fit: cover; background: var(--paper); flex: none; }
-.cs-swatch-color { width: 100%; height: 72px; flex: none; }
-.cs-swatch-body { padding: 8px 9px; }
-.cs-swatch-name { font-size: 12px; font-weight: 600; line-height: 1.25; }
-.cs-swatch-code { font-size: 10.5px; color: var(--mut); font-family: monospace; margin-top: 2px; }
-.cs-swatch.selected .cs-swatch-body { background: var(--moss-lt); }
-.cs-swatch-check {
-  position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 50%;
-  background: var(--moss); color: #fff; display: flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 700;
+.cs-card:hover { border-color: var(--moss); }
+.cs-card.selected { border-color: var(--moss); box-shadow: 0 0 0 2px var(--moss-lt); }
+.cs-card-select {
+  display: flex; flex-direction: column; width: 100%; padding: 0;
+  cursor: pointer; background: none; border: none; text-align: left; font: inherit; color: inherit;
 }
-.cs-swatch-wrap { position: relative; }
-.cs-swatch-inspect {
-  position: absolute; bottom: 6px; right: 6px; z-index: 1;
-  background: rgba(255,255,255,.9); border-radius: 6px; padding: 2px 6px; font-size: 11px;
-  border: none; cursor: pointer;
+.cs-card-select:focus-visible { outline: 2px solid var(--moss); outline-offset: -2px; }
+.cs-card-swatch { position: relative; width: 100%; }
+.cs-card-img { width: 100%; height: 170px; object-fit: cover; background: var(--paper); display: block; }
+.cs-card-color { width: 100%; height: 170px; }
+.cs-card-check {
+  position: absolute; bottom: 8px; left: 8px; right: 8px;
+  background: var(--moss); color: #fff; font-size: 12.5px; font-weight: 700;
+  padding: 6px 8px; border-radius: 8px; text-align: center;
 }
-.cs-swatch-inspect:focus-visible { outline: 2px solid var(--moss); outline-offset: 1px; }
+.cs-card-body { padding: 12px 14px 14px; }
+.cs-card-name { font-size: 14.5px; font-weight: 600; line-height: 1.3; }
+.cs-card-inspect {
+  width: 100%; display: block; padding: 10px 8px;
+  background: var(--moss-lt); color: var(--moss-dk); font-size: 13px; font-weight: 600;
+  border: none; border-top: 1px solid var(--line); cursor: pointer;
+}
+.cs-card-inspect:hover { background: var(--moss); color: #fff; }
+.cs-card-inspect:focus-visible { outline: 2px solid var(--moss); outline-offset: -2px; }
 
 .cs-part-card { border-bottom: 1px solid var(--line); padding: 20px 0; }
 .cs-part-card:last-child { border-bottom: none; }
@@ -733,28 +741,57 @@ tr:hover td { background: #fcfbf7; }
 .cs-part-selected .dot { width: 16px; height: 16px; border-radius: 4px; flex: none; border: 1px solid var(--line); }
 
 .cs-modal-overlay {
-  position: fixed; inset: 0; background: rgba(32,31,29,.55); z-index: 90;
+  position: fixed; inset: 0; background: rgba(32,31,29,.6); z-index: 90;
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }
-.cs-modal { background: #fff; border-radius: 14px; max-width: 420px; width: 100%; overflow: hidden; }
-.cs-modal-img { width: 100%; height: 220px; object-fit: cover; background: var(--paper); }
-.cs-modal-color { width: 100%; height: 220px; }
-.cs-modal-body { padding: 18px 20px; }
+/* ~3x the original 220px image, per direct customer feedback (2026-09-01
+   preview test: "I want the image... much larger, I would say 3x the
+   current size"). max-height keeps it from overflowing a short viewport. */
+.cs-modal { background: #fff; border-radius: 16px; max-width: 680px; width: 100%; overflow: hidden; max-height: 90vh; display: flex; flex-direction: column; }
+.cs-modal-img { width: 100%; height: 640px; max-height: 65vh; object-fit: cover; background: var(--paper); }
+.cs-modal-color { width: 100%; height: 640px; max-height: 65vh; }
+.cs-modal-body { padding: 22px 26px; overflow-y: auto; }
 .cs-modal-close {
-  position: absolute; top: 10px; right: 10px; width: 32px; height: 32px; border-radius: 50%;
-  background: rgba(0,0,0,.5); color: #fff; display: flex; align-items: center; justify-content: center;
-  font-size: 16px; cursor: pointer; border: none;
+  position: absolute; top: 14px; right: 14px; width: 38px; height: 38px; border-radius: 50%;
+  background: rgba(0,0,0,.55); color: #fff; display: flex; align-items: center; justify-content: center;
+  font-size: 18px; cursor: pointer; border: none;
+}
+@media (max-width: 560px) {
+  .cs-modal-img, .cs-modal-color { height: 50vh; }
 }
 
+/* Summary table — restructured from a two-column row to a real 3-field +
+   amount layout per direct customer feedback: "I need the summary page to
+   show the color brand selected, color name, and color code... Add an
+   amount column on the far right side." */
+.cs-summary-header {
+  display: grid; grid-template-columns: 1.1fr 1.6fr 1fr .8fr; gap: 10px;
+  padding: 8px 0; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--mut); border-bottom: 1px solid var(--line);
+}
 .cs-summary-row {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 11px 0; border-bottom: 1px solid var(--line-soft, var(--line));
+  display: grid; grid-template-columns: 1.1fr 1.6fr 1fr .8fr; gap: 10px; align-items: center;
+  padding: 12px 0; border-bottom: 1px solid var(--line-soft, var(--line));
   font-size: 13.5px;
 }
 .cs-summary-row:last-of-type { border-bottom: none; }
+.cs-summary-part { color: var(--mut); font-size: 12.5px; }
+.cs-summary-brand { text-transform: capitalize; }
+.cs-summary-code { font-family: monospace; font-size: 12px; color: var(--mut); }
+.cs-summary-amount { text-align: right; font-variant-numeric: tabular-nums; }
 .cs-summary-total {
-  display: flex; justify-content: space-between; font-weight: 700; font-size: 15px;
-  padding-top: 12px; margin-top: 4px; border-top: 2px solid var(--line);
+  display: flex; justify-content: space-between; font-weight: 700; font-size: 16px;
+  padding-top: 14px; margin-top: 6px; border-top: 2px solid var(--line);
+}
+.cs-lock-notice {
+  display: flex; gap: 10px; align-items: flex-start;
+  background: var(--sun-lt); border: 1px solid #f0c490; color: #7a4a1a;
+  padding: 13px 16px; border-radius: 10px; font-size: 13.5px; margin-bottom: 16px;
+}
+.cs-saved-banner {
+  display: flex; gap: 10px; align-items: center;
+  background: var(--sky-lt); border: 1px solid #b0c8e8; color: #1e4a7a;
+  padding: 11px 16px; border-radius: 10px; font-size: 13px; margin-bottom: 18px;
 }
 
 @media (max-width: 560px) {

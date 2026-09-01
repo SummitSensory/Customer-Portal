@@ -234,7 +234,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "BLUE 80 GLOSS",
+    "name": "Blue 80 Gloss",
     "code": "H308-BL03",
     "hex": "#3f8682",
     "category": "Cardinal Blue",
@@ -243,7 +243,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "BLUE 90 GLOSS",
+    "name": "Blue 90 Gloss",
     "code": "T009-BL01",
     "hex": "#01559e",
     "category": "Cardinal Blue",
@@ -252,7 +252,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "BLUE 90 GLOSS",
+    "name": "Blue 90 Gloss",
     "code": "T009-BL05",
     "hex": "#0182a2",
     "category": "Cardinal Blue",
@@ -261,7 +261,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "BLUE TEXTURE",
+    "name": "Blue Texture",
     "code": "C241-BL544",
     "hex": "#00216e",
     "category": "Cardinal Blue",
@@ -270,7 +270,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "BLUE TEXTURE",
+    "name": "Blue Texture",
     "code": "C241-BL210",
     "hex": "#275179",
     "category": "Cardinal Blue",
@@ -279,7 +279,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "DARK BLUE 80 GLOSS",
+    "name": "Dark Blue 80 Gloss",
     "code": "T008-BL20",
     "hex": "#011c37",
     "category": "Cardinal Blue",
@@ -288,7 +288,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "FS 25109 BLUE TEXTURE",
+    "name": "FS 25109 Blue Texture",
     "code": "T032-BL04",
     "hex": "#6a7c83",
     "category": "FDS Blue",
@@ -297,7 +297,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "BRONZE 40 GLOSS",
+    "name": "Bronze 40 Gloss",
     "code": "P004-BR23",
     "hex": "#2a2311",
     "category": "Cardinal Brown",
@@ -306,7 +306,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "BROWN TEXTURE",
+    "name": "Brown Texture",
     "code": "T032-BR62",
     "hex": "#000000",
     "category": "Cardinal Brown",
@@ -315,7 +315,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "RAL 8028 TERRA BROWN 90 GLOSS",
+    "name": "RAL 8028 Terra Brown 90 Gloss",
     "code": "C209-BR358",
     "hex": "#432718",
     "category": "RAL Brown",
@@ -504,7 +504,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "FS 34094 OD GREEN FLAT",
+    "name": "FS 34094 OD Green Flat",
     "code": "P000-GN264",
     "hex": "#505d4b",
     "category": "FDS Green",
@@ -513,7 +513,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "FS14066 D.O.T GREEN 70 GLOSS",
+    "name": "FS14066 D.O.T Green 70 Gloss",
     "code": "T007-GN13",
     "hex": "#004e2c",
     "category": "FDS Green",
@@ -522,7 +522,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "GREEN 60 GLOSS",
+    "name": "Green 60 Gloss",
     "code": "C006-GN03",
     "hex": "#1c331f",
     "category": "Cardinal Green",
@@ -531,7 +531,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "TRACTOR GREEN 90 GLOSS",
+    "name": "Tractor Green 90 Gloss",
     "code": "C209-GN411",
     "hex": "#2a5b18",
     "category": "Cardinal Green",
@@ -540,7 +540,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "TRAFFIC GREEN 70 GLOSS",
+    "name": "Traffic Green 70 Gloss",
     "code": "T007-GN16",
     "hex": "#002406",
     "category": "Cardinal Green",
@@ -549,7 +549,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "BEIGE HAMMER",
+    "name": "Beige Hammer",
     "code": "T013-BG38",
     "hex": "#d0c9b7",
     "category": "Cardinal Hammer Finishes",
@@ -558,7 +558,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "BLACK HAMMER",
+    "name": "Black Hammer",
     "code": "T013-BK62",
     "hex": "#000000",
     "category": "Cardinal Hammer Finishes",
@@ -567,7 +567,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "BLACK HAMMER LOW GLOSS",
+    "name": "Black Hammer Low Gloss",
     "code": "E311-BK04",
     "hex": "#000000",
     "category": "Cardinal Hammer Finishes",
@@ -576,7 +576,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "BLUE HAMMER",
+    "name": "Blue Hammer",
     "code": "T013-BL468",
     "hex": "#032e77",
     "category": "Cardinal Hammer Finishes",
@@ -585,7 +585,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "BRONZE HAMMER",
+    "name": "Bronze Hammer",
     "code": "T012-BR161",
     "hex": "#45372a",
     "category": "Cardinal Hammer Finishes",
@@ -594,7 +594,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "GREEN HAMMER",
+    "name": "Green Hammer",
     "code": "T013-GN220",
     "hex": "#273d33",
     "category": "Cardinal Hammer Finishes",
@@ -603,7 +603,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "GREY HAMMER",
+    "name": "Grey Hammer",
     "code": "C013-GR08",
     "hex": "#6b7171",
     "category": "Cardinal Hammer Finishes",
@@ -612,7 +612,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "RAL 7035 LIGHT GREY HAMMER",
+    "name": "RAL 7035 Light Grey Hammer",
     "code": "T013-GR185",
     "hex": "#878c86",
     "category": "RAL Hammer Finishes",
@@ -621,7 +621,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "RED HAMMER",
+    "name": "Red Hammer",
     "code": "T013-RD15",
     "hex": "#a50008",
     "category": "Cardinal Hammer Finishes",
@@ -630,7 +630,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "WHITE HAMMER",
+    "name": "White Hammer",
     "code": "T012-WH260",
     "hex": "#f0f1ec",
     "category": "Cardinal Hammer Finishes",
@@ -639,7 +639,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "WHITE HAMMER",
+    "name": "White Hammer",
     "code": "T013-WH09",
     "hex": "#e5e5e5",
     "category": "Cardinal Hammer Finishes",
@@ -648,7 +648,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "DARK RED 90 GLOSS",
+    "name": "Dark Red 90 Gloss",
     "code": "P009-RD02",
     "hex": "#a00910",
     "category": "Cardinal Red-Orange-Yellow",
@@ -657,7 +657,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "FS 13538 YELLOW 90 GLOSS",
+    "name": "FS 13538 Yellow 90 Gloss",
     "code": "T009-YL14",
     "hex": "#f8a01a",
     "category": "FDS Red-Orange-Yellow",
@@ -666,7 +666,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "INTERNATIONAL ORANGE 90 GLOSS",
+    "name": "International Orange 90 Gloss",
     "code": "T009-OG26",
     "hex": "#cc501a",
     "category": "Cardinal Red-Orange-Yellow",
@@ -675,7 +675,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "RED 90 GLOSS",
+    "name": "Red 90 Gloss",
     "code": "T009-RD03",
     "hex": "#940202",
     "category": "Cardinal Red-Orange-Yellow",
@@ -684,7 +684,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "RED 90 GLOSS",
+    "name": "Red 90 Gloss",
     "code": "T009-RD01",
     "hex": "#b42f1e",
     "category": "Cardinal Red-Orange-Yellow",
@@ -693,7 +693,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "RED TEXTURE",
+    "name": "Red Texture",
     "code": "T241-RD129",
     "hex": "#910001",
     "category": "Cardinal Red-Orange-Yellow",
@@ -702,7 +702,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "SAFETY ORANGE 90 GLOSS",
+    "name": "Safety Orange 90 Gloss",
     "code": "T009-OG01",
     "hex": "#f37520",
     "category": "Cardinal Red-Orange-Yellow",
@@ -711,7 +711,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "TRACTOR YELLOW 90 GLOSS",
+    "name": "Tractor Yellow 90 Gloss",
     "code": "C209-YL130",
     "hex": "#ad6d01",
     "category": "Cardinal Red-Orange-Yellow",
@@ -720,7 +720,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "YELLOW 90 GLOSS",
+    "name": "Yellow 90 Gloss",
     "code": "T009-YL71",
     "hex": "#f9941e",
     "category": "Cardinal Red-Orange-Yellow",
@@ -729,7 +729,7 @@
     "provenance": "photo-verified"
   },
   {
-    "name": "YELLOW 90 GLOSS",
+    "name": "Yellow 90 Gloss",
     "code": "T009-YL01",
     "hex": "#fcd202",
     "category": "Cardinal Red-Orange-Yellow",

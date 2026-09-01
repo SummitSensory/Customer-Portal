@@ -24,6 +24,13 @@ import { validateColorSelectionData, computeTotalUpcharge } from '../../../lib/c
 
 const DEMO_PRODUCT_TYPE = 'Summit Adventure Series: Custom Sensory Gym';
 
+// In-memory only — resets on cold start/redeploy, never touches Monday.com.
+// This exists so the demo can actually PROVE the "cannot be modified once
+// submitted" rule works (confirm here, then try to change it) rather than
+// just asserting it in copy. Module-scope state is fine for a single-user
+// click-through demo; it is never meant to be a real multi-user store.
+let demoSnapshot = { selections: {}, confirmedAt: null };
+
 export default async function handler(req, res) {
   const demoOrder = { productType: DEMO_PRODUCT_TYPE };
 
@@ -31,12 +38,21 @@ export default async function handler(req, res) {
     return res.status(200).json({
       supported: true,
       requiredInputs: requiredColorInputs(DEMO_PRODUCT_TYPE),
-      selections: {},
-      confirmedAt: null,
+      selections: demoSnapshot.selections,
+      confirmedAt: demoSnapshot.confirmedAt,
     });
   }
 
   if (req.method !== 'POST') return res.status(405).end();
+
+  // Mirrors the real endpoint's hard lock: once confirmed, no further
+  // writes, autosave included.
+  if (demoSnapshot.confirmedAt) {
+    return res.status(409).json({
+      error: 'Color selections were already confirmed and cannot be changed. Contact us if you need to make a correction.',
+      confirmedAt: demoSnapshot.confirmedAt,
+    });
+  }
 
   const { selections, confirm } = req.body || {};
   if (!selections || typeof selections !== 'object') return res.status(400).json({ error: 'selections required.' });
@@ -46,12 +62,20 @@ export default async function handler(req, res) {
     if (validationError) return res.status(400).json({ error: validationError });
   }
 
-  // Deliberately does not persist anywhere — this is the whole point of a
-  // demo endpoint. The response shape matches the real one exactly so the
-  // picker's own success/error handling behaves identically either way.
+  demoSnapshot = {
+    selections,
+    confirmedAt: confirm ? new Date().toISOString() : null,
+  };
+
   return res.status(200).json({
     ok: true,
     totalUpcharge: computeTotalUpcharge(demoOrder, selections),
     checklistSyncPending: false,
   });
+}
+
+// Reset hook for local/demo convenience — not exposed as a route, just
+// importable by tests that want a clean slate between cases.
+export function __resetDemoSnapshot() {
+  demoSnapshot = { selections: {}, confirmedAt: null };
 }

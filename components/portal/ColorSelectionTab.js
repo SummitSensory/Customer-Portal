@@ -12,7 +12,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   listCardinalColors, listPrismaticColors, listVinylColors,
-  cardinalFinishes, prismaticFamilies, prismaticUpcharge,
+  cardinalFinishes, prismaticFamilies, resolveSelectedColor, computeLineItemPricing,
 } from '../../lib/colorCatalog';
 import { COLOR_INPUT, PART_LABELS } from '../../lib/colorRequirements';
 import { createSaveQueue } from '../../lib/saveQueue';
@@ -49,6 +49,14 @@ function inputIsComplete(input, selections) {
 }
 
 // ── Swatch grid (brand-aware: cardinal photos, prismatic/vinyl flat swatches) ──
+// REDESIGNED (real customer feedback from the preview, 2026-09-01): swatches
+// were too small, every card wasn't the same size, and the "view larger"
+// icon was absolutely-positioned — which let it drift outside the card
+// entirely on some entries (a real layout bug, not just a style complaint).
+// Every card is now a fixed, uniform-height column (image, name, code, then
+// a full-width "View Larger" button in normal document flow — it can never
+// escape its own card because it's no longer position:absolute) so the
+// zoom action is impossible to miss and impossible to lose track of.
 function SwatchGrid({ colors, selected, onSelect, onInspect }) {
   if (!colors.length) {
     return <div className="empty"><p>No colors match your search.</p></div>;
@@ -59,30 +67,31 @@ function SwatchGrid({ colors, selected, onSelect, onInspect }) {
         const isSelected = selected?.code === (c.code || c.sku || c.name) && selected?.brand === c.brand;
         const id = c.code || c.sku || c.name;
         return (
-          <div className="cs-swatch-wrap" key={`${c.brand}-${id}`}>
+          <div className={`cs-card${isSelected ? ' selected' : ''}`} key={`${c.brand}-${id}`}>
             <button
               type="button"
-              className={`cs-swatch${isSelected ? ' selected' : ''}`}
+              className="cs-card-select"
               role="option"
               aria-selected={isSelected}
-              aria-label={`${c.name}${c.code ? `, code ${c.code}` : ''}${c.sku ? `, SKU ${c.sku}` : ''}${isSelected ? ', selected' : ''}`}
+              aria-label={`Select ${c.name}${c.code ? `, code ${c.code}` : ''}${c.sku ? `, SKU ${c.sku}` : ''}${isSelected ? ' (currently selected)' : ''}`}
               onClick={() => onSelect(c)}
             >
-              {c.photo
-                ? <img className="cs-swatch-img" src={c.photo} alt="" />
-                : <div className="cs-swatch-color" style={{ background: c.hex }} />}
-              <div className="cs-swatch-body">
-                <div className="cs-swatch-name">{c.name}</div>
-                {(c.code || c.sku) && <div className="cs-swatch-code">{c.code || c.sku}</div>}
+              <div className="cs-card-swatch">
+                {c.photo
+                  ? <img className="cs-card-img" src={c.photo} alt="" loading="lazy" />
+                  : <div className="cs-card-color" style={{ background: c.hex }} />}
+                {isSelected && <span className="cs-card-check" aria-hidden="true">✓ Selected</span>}
+              </div>
+              <div className="cs-card-body">
+                <div className="cs-card-name">{c.name}</div>
               </div>
             </button>
-            {isSelected && <span className="cs-swatch-check" aria-hidden="true">✓</span>}
             <button
               type="button"
-              className="cs-swatch-inspect"
-              aria-label={`Inspect ${c.name} up close`}
-              onClick={(e) => { e.stopPropagation(); onInspect(c); }}
-            >🔍</button>
+              className="cs-card-inspect"
+              aria-label={`View ${c.name} larger`}
+              onClick={() => onInspect(c)}
+            >🔍 View Larger</button>
           </div>
         );
       })}
@@ -117,12 +126,12 @@ function InspectModal({ color, onClose }) {
           <button type="button" className="cs-modal-close" ref={closeBtnRef} onClick={onClose} aria-label="Close">✕</button>
         </div>
         <div className="cs-modal-body">
-          <h3 style={{ fontSize: 16, marginBottom: 4 }}>{color.name}</h3>
-          <p style={{ fontSize: 12.5, color: 'var(--mut)' }}>
+          <h3 style={{ fontSize: 20, marginBottom: 6 }}>{color.name}</h3>
+          <p style={{ fontSize: 13.5, color: 'var(--mut)' }}>
             {color.code || color.sku}{color.finish ? ` · ${color.finish} finish` : ''}{color.family ? ` · ${color.family}` : ''}
           </p>
           {!color.photo && (
-            <p style={{ fontSize: 12, color: 'var(--mut)', marginTop: 10 }}>
+            <p style={{ fontSize: 12.5, color: 'var(--mut)', marginTop: 10 }}>
               Shown as a verified color swatch — a physical sample can be requested before you confirm.
             </p>
           )}
@@ -227,15 +236,6 @@ function MatPadPartPicker({ part, selection, onChange, onBack }) {
 
 // ── One input's part list (e.g. all 6 Structure & Frame Paint parts) ──
 function InputPartList({ input, selections, onOpenPart, onBack }) {
-  const findColor = (part) => {
-    const sel = selections?.[input.input]?.[part];
-    if (!sel) return null;
-    if (sel.brand === 'cardinal') return listCardinalColors().find((c) => c.code === sel.code);
-    if (sel.brand === 'prismatic') return listPrismaticColors().find((c) => c.sku === sel.code);
-    if (sel.brand === 'vinyl') return listVinylColors().find((c) => c.name === sel.code);
-    return null;
-  };
-
   return (
     <>
       <button type="button" className="lk" style={{ marginBottom: 14 }} onClick={onBack}>← Back to checklist</button>
@@ -245,7 +245,7 @@ function InputPartList({ input, selections, onOpenPart, onBack }) {
       </p>
       <div>
         {input.parts.map((part) => {
-          const color = findColor(part);
+          const color = resolveSelectedColor(selections?.[input.input]?.[part]);
           return (
             <div className="cs-part-card" key={part}>
               <div className="cs-part-head">
@@ -257,9 +257,16 @@ function InputPartList({ input, selections, onOpenPart, onBack }) {
               {color && (
                 <div className="cs-part-selected">
                   {color.photo
-                    ? <img src={color.photo} alt="" style={{ width: 24, height: 24, borderRadius: 4, objectFit: 'cover' }} />
-                    : <span className="dot" style={{ background: color.hex }} />}
-                  <span>{color.name}{color.code || color.sku ? ` — ${color.code || color.sku}` : ''}</span>
+                    ? <img src={color.photo} alt="" style={{ width: 28, height: 28, borderRadius: 5, objectFit: 'cover' }} />
+                    : <span className="dot" style={{ background: color.hex, width: 20, height: 20 }} />}
+                  {/* Name and code shown as visually distinct fields, not
+                      one blended string — direct customer feedback
+                      (2026-09-01): "remove any reference to the color code
+                      from within the name." */}
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <span style={{ fontWeight: 600 }}>{color.name}</span>
+                    {(color.code || color.sku) && <span style={{ fontSize: 11.5, color: 'var(--mut)', fontFamily: 'monospace' }}>{color.code || color.sku}</span>}
+                  </span>
                 </div>
               )}
             </div>
@@ -274,6 +281,16 @@ function InputPartList({ input, selections, onOpenPart, onBack }) {
 function Checklist({ requiredInputs, selections, onOpenInput, onReview, allComplete }) {
   return (
     <>
+      {/* Direct customer feedback (2026-09-01): "I need there to be a way
+          for a customer to be confident that their color choices have been
+          saved, in case they want to come back and complete the form at a
+          later time." This banner states that plainly; the per-part "✓
+          selected" state below it (and on return visits) is the actual
+          proof, not just words. */}
+      <div className="cs-saved-banner">
+        <span>💾</span>
+        <span>Your progress saves automatically as you go — you can leave and come back anytime before confirming.</span>
+      </div>
       {requiredInputs.map((input) => {
         const done = inputIsComplete(input, selections);
         const filledCount = input.parts.filter((p) => partIsFilled(selections, input.input, p)).length;
@@ -303,43 +320,41 @@ function Checklist({ requiredInputs, selections, onOpenInput, onReview, allCompl
 }
 
 // ── Summary / confirm screen ──
+// REDESIGNED (real customer feedback, 2026-09-01): the summary now shows
+// brand / name / code as distinct fields (not one blended string), a
+// per-line dollar amount on the right, a running total, and a clear
+// up-front warning that selections lock once confirmed — all directly
+// requested, none of it guessed at.
 function Summary({ requiredInputs, selections, onConfirm, onBack, confirming }) {
-  const findColor = (inputKey, sel) => {
-    if (!sel) return null;
-    if (sel.brand === 'cardinal') return listCardinalColors().find((c) => c.code === sel.code);
-    if (sel.brand === 'prismatic') return listPrismaticColors().find((c) => c.sku === sel.code);
-    if (sel.brand === 'vinyl') return listVinylColors().find((c) => c.name === sel.code);
-    return null;
-  };
-
-  let prismaticCount = 0;
-  for (const input of requiredInputs) {
-    if (input.input !== COLOR_INPUT.STRUCTURE_FRAME_PAINT) continue;
-    for (const part of input.parts) {
-      if (selections?.[input.input]?.[part]?.brand === 'prismatic') prismaticCount++;
-    }
-  }
-  const total = prismaticUpcharge(prismaticCount);
+  const lines = computeLineItemPricing(requiredInputs, selections);
+  const total = lines.reduce((sum, l) => sum + l.amount, 0);
 
   return (
     <>
       <button type="button" className="lk" style={{ marginBottom: 14 }} onClick={onBack}>← Back</button>
       <h3 style={{ fontSize: 17, marginBottom: 14 }}>Review your selections</h3>
+
+      <div className="cs-lock-notice">
+        <span>🔒</span>
+        <span><b>Once confirmed, these selections cannot be changed</b> — please review every part carefully before confirming. Contact us if you need help.</span>
+      </div>
+
       <div className="card" style={{ marginBottom: 16 }}>
-        {requiredInputs.map((input) => (
-          <div key={input.input}>
-            <div style={{ fontWeight: 600, fontSize: 13, textTransform: 'uppercase', letterSpacing: '.03em', color: 'var(--mut)', marginTop: 10, marginBottom: 4 }}>
-              {input.label}
-            </div>
-            {input.parts.map((part) => {
-              const color = findColor(input.input, selections?.[input.input]?.[part]);
-              return (
-                <div className="cs-summary-row" key={part}>
-                  <span>{PART_LABELS[part] || part}</span>
-                  <span>{color ? `${color.name}${color.code || color.sku ? ` (${color.code || color.sku})` : ''}` : '—'}</span>
-                </div>
-              );
-            })}
+        <div className="cs-summary-header">
+          <span>Part</span><span>Color</span><span>Code</span><span style={{ textAlign: 'right' }}>Amount</span>
+        </div>
+        {lines.map((line) => (
+          <div className="cs-summary-row" key={`${line.inputKey}-${line.part}`}>
+            <span className="cs-summary-part">{PART_LABELS[line.part] || line.part}</span>
+            <span>
+              {line.color ? (
+                <>
+                  <span className="cs-summary-brand">{line.selection.brand}</span> — {line.color.name}
+                </>
+              ) : '—'}
+            </span>
+            <span className="cs-summary-code">{line.color ? (line.color.code || line.color.sku || '—') : '—'}</span>
+            <span className="cs-summary-amount">{line.amount > 0 ? `$${line.amount.toLocaleString()}` : '—'}</span>
           </div>
         ))}
         <div className="cs-summary-total">
@@ -352,8 +367,44 @@ function Summary({ requiredInputs, selections, onConfirm, onBack, confirming }) 
         <span>Your selections will be reviewed by our team before manufacturing begins.</span>
       </div>
       <button type="button" className="btn btn-moss" disabled={confirming} onClick={onConfirm}>
-        {confirming ? 'Confirming…' : 'Confirm Selections'}
+        {confirming ? 'Confirming…' : 'Confirm Selections — This Cannot Be Undone'}
       </button>
+    </>
+  );
+}
+
+// ── Locked, read-only view once selections are confirmed ──
+// Direct customer requirement (2026-09-01): selections cannot be modified
+// after submission. This is the client-side face of that — the server
+// independently enforces the same rule (pages/api/portal/color-selection.js
+// rejects any further write once confirmedAt is set), so this view can't
+// drift into showing an editable UI the backend would just reject anyway.
+function ConfirmedView({ requiredInputs, selections, confirmedAt }) {
+  const lines = computeLineItemPricing(requiredInputs, selections);
+  const total = lines.reduce((sum, l) => sum + l.amount, 0);
+  return (
+    <>
+      <div className="alert success" style={{ marginBottom: 16 }}>
+        <span>✅</span>
+        <span>Confirmed on {new Date(confirmedAt).toLocaleDateString()} — these selections are locked and can&apos;t be changed here. Contact us if you need help.</span>
+      </div>
+      <div className="card">
+        <div className="cs-summary-header">
+          <span>Part</span><span>Color</span><span>Code</span><span style={{ textAlign: 'right' }}>Amount</span>
+        </div>
+        {lines.map((line) => (
+          <div className="cs-summary-row" key={`${line.inputKey}-${line.part}`}>
+            <span className="cs-summary-part">{PART_LABELS[line.part] || line.part}</span>
+            <span>{line.color ? (<><span className="cs-summary-brand">{line.selection.brand}</span> — {line.color.name}</>) : '—'}</span>
+            <span className="cs-summary-code">{line.color ? (line.color.code || line.color.sku || '—') : '—'}</span>
+            <span className="cs-summary-amount">{line.amount > 0 ? `$${line.amount.toLocaleString()}` : '—'}</span>
+          </div>
+        ))}
+        <div className="cs-summary-total">
+          <span>Total color upcharge</span>
+          <span>${total.toLocaleString()}</span>
+        </div>
+      </div>
     </>
   );
 }
@@ -372,6 +423,13 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   const [loadError, setLoadError] = useState(false);
   const [requiredInputs, setRequiredInputs] = useState([]);
   const [selections, setSelections] = useState({});
+  // Direct customer requirement (2026-09-01): "color selection changes are
+  // unable to be modified once they have been submitted." confirmedAt
+  // drives a read-only view once set — enforced server-side too (see
+  // pages/api/portal/color-selection.js), this is the client-side half so
+  // a customer sees a locked, informative screen instead of just having
+  // their edits silently rejected.
+  const [confirmedAt, setConfirmedAt] = useState(null);
   const [view, setView] = useState('checklist'); // 'checklist' | { input } | 'summary'
   const [activePart, setActivePart] = useState(null);
   const [confirming, setConfirming] = useState(false);
@@ -393,6 +451,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
         const loaded = data.selections || {};
         latestSelectionsRef.current = loaded;
         setSelections(loaded);
+        setConfirmedAt(data.confirmedAt || null);
       })
       .catch(() => {
         if (cancelled) return;
@@ -449,6 +508,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
       // earlier.
       const result = await queueSave(true);
       markComplete('color', !result.checklistSyncPending);
+      setConfirmedAt(new Date().toISOString());
       showToast(result.checklistSyncPending
         ? 'Saved — confirming with our system now. This may take a moment to show as complete.'
         : 'Color selections confirmed.');
@@ -489,7 +549,9 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   }
 
   let body;
-  if (view === 'summary') {
+  if (confirmedAt) {
+    body = <ConfirmedView requiredInputs={requiredInputs} selections={selections} confirmedAt={confirmedAt} />;
+  } else if (view === 'summary') {
     body = (
       <Summary
         requiredInputs={requiredInputs}
@@ -537,9 +599,8 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
         <h2>Color & Product Selections</h2>
         <p>Choose your equipment colors and finishes — real colors, real photos where available.</p>
       </div>
-      {completions.color && <div className="alert success" style={{ marginBottom: 16 }}>✅ Color selections submitted.</div>}
       {body}
-      {view === 'checklist' && (
+      {(confirmedAt || view === 'checklist') && (
         <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
           <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back</button>
         </div>

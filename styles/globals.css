@@ -733,6 +733,17 @@ tr:hover td { background: #fcfbf7; }
 .cs-card-inspect:hover { background: var(--moss); color: #fff; }
 .cs-card-inspect:focus-visible { outline: 2px solid var(--moss); outline-offset: -2px; }
 
+/* Direct customer feedback (2026-09-02): the running total needs to be
+   visible WHILE colors are being picked, not just on the final review
+   screen. Sits right under the page header on every screen except Summary/
+   ConfirmedView, which already show the full priced breakdown. */
+.cs-running-total {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--moss-lt); color: var(--moss-dk); font-size: 13.5px; font-weight: 700;
+  padding: 10px 14px; border-radius: 10px; margin-bottom: 16px;
+}
+.cs-running-total strong { font-variant-numeric: tabular-nums; }
+
 .cs-part-card { border-bottom: 1px solid var(--line); padding: 20px 0; }
 .cs-part-card:last-child { border-bottom: none; }
 .cs-part-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 10px; flex-wrap: wrap; }

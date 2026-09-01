@@ -391,6 +391,25 @@ function Summary({ requiredInputs, selections, onConfirm, onBack, confirming }) 
   );
 }
 
+// ── Running total, visible the whole time selections are being made ──
+// Direct customer feedback (2026-09-02): the running total only showed up
+// on the final Review screen — customers need to see the additional cost
+// building up AS they pick colors, not just at the very end. Rendered in
+// the header (mounted for every screen except the final Summary/confirmed
+// views, which already show the full breakdown), so it updates the instant
+// a Prismatic selection is made — using the same computeLineItemPricing the
+// Summary and ConfirmedView use, so it can never disagree with the real
+// total.
+function RunningTotal({ total }) {
+  if (total <= 0) return null;
+  return (
+    <div className="cs-running-total">
+      <span aria-hidden="true">💰</span>
+      <span>Additional cost so far: <strong>${total.toLocaleString()}</strong></span>
+    </div>
+  );
+}
+
 // ── Locked, read-only view once selections are confirmed ──
 // Direct customer requirement (2026-09-01): selections cannot be modified
 // after submission. This is the client-side face of that — the server
@@ -482,6 +501,14 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   }, [order?.id]);
 
   const allComplete = requiredInputs.length > 0 && requiredInputs.every((i) => inputIsComplete(i, selections));
+
+  // Recomputed on every render from live `selections` state — no separate
+  // running counter to keep in sync, so it can never drift from what the
+  // Summary/ConfirmedView total says once the customer gets there.
+  const runningTotal = useMemo(
+    () => computeLineItemPricing(requiredInputs, selections).reduce((sum, l) => sum + l.amount, 0),
+    [requiredInputs, selections]
+  );
 
   // Saves are serialized through a ref-based queue: rapid sequential
   // selections (or a slow network) could otherwise let an older, in-flight
@@ -618,6 +645,11 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
         <h2>Color & Product Selections</h2>
         <p>Choose your equipment colors and finishes — real colors, real photos where available.</p>
       </div>
+      {/* Summary and the confirmed view already show the full priced
+          breakdown, so the compact badge is redundant there — every other
+          screen (checklist, an input's part list, an individual color
+          picker) gets it. */}
+      {!confirmedAt && view !== 'summary' && <RunningTotal total={runningTotal} />}
       {body}
       {(confirmedAt || view === 'checklist') && (
         <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>

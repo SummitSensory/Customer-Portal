@@ -1,0 +1,33 @@
+# Customer Portal — Fresh Audit + Fixes (2026-08-27)
+
+Bryan asked directly: "Have you audited all of the code in the customer portal to ensure that there aren't any issues with the software or data that gets entered that doesn't ultimately do anything or execute the step that it should be completing." This doc covers that pass.
+
+## Starting point
+
+Four prior audits already exist in this project (`deep-technical-audit-2026-08-18.md`, `kalen-siddens-portal-audit-2026-08-17.md`, `portal-audit-batch-2-fixes-2026-08-17.md`, `48-hour-audit-2026-08-21.md`) and had already fixed the majority of issues in exactly this class — most notably the original Kalen Siddens bug (completion state that only ever lived in localStorage, "Mark Complete" buttons with zero backend call). Confirmed via `git status`/`git log` that the repo was clean going into this pass (last commit Aug 21, nothing uncommitted).
+
+## Method
+
+Read all four prior docs first, then ran three parallel targeted sweeps against the real code on Bryan's machine — customer-facing flows (`pages/portal/index.js` + `pages/api/portal/*`), staff/admin flows (`pages/admin/index.js` + `components/admin/*` + `pages/api/admin/*`), and the integration/background layer (`lib/*.js` + remaining `pages/api/*`) — each explicitly scoped to surface only genuinely new findings, not re-report what the prior docs already fixed.
+
+## Findings, all fixed
+
+1. **Customers could see a false "complete" checkmark that never made it to Monday.** `/api/portal/setup` already had an honest-failure signal (`checklistSyncPending: true`, returned when the retried Monday write still didn't confirm) — but nothing in `pages/portal/index.js` ever read it. Every "Mark Complete" button unconditionally cached `true` to `completions`/localStorage and showed success, regardless of whether the real Monday status column flipped. **Fixed:** `markComplete()` now takes a `synced` flag; all 6 call sites (Contact, Billing, Delivery/Freight Ack, Color, Documents) check `checklistSyncPending` and only cache the optimistic "complete" state when the backend actually confirmed it, showing a "confirming with our system" toast instead when it didn't. Monday's real status column (via `order.progress`/`mergeProgress`) remains the ultimate source of truth either way.
+2. **Admin File Manager's "Share with Customer" could never work as documented.** Its own hint text says "Paste a direct link... from SharePoint, Google Drive, Dropbox, etc.," but `addFileToOrder()`'s host allowlist (`UPLOAD_HOST_ALLOWLIST`) was scoped only to `jotform.com`/`jotfor.ms` — correct for its original purpose (SSRF protection on the *public, unauthenticated* Jotform webhook) but silently rejecting every host the staff UI itself advertises. **Fixed:** added a separate, wider `STAFF_UPLOAD_HOST_ALLOWLIST` (Jotform + SharePoint/OneDrive/Google Drive/Dropbox) used only by the authenticated admin file-share endpoint; the public Jotform webhook path is untouched and just as restricted as before.
+3. **Cron jobs could report "success" while doing nothing.** Both `cron/reminders` and `cron/accessory-tracking-sync` catch each item's failure individually, so a systemic cause (a revoked `RESEND_API_KEY`, an expired `AFTERSHIP_API_KEY`, a renamed Monday column) could make *every single item* fail while the run still finished normally and returned `200 ok:true` — no alert email, nothing distinguishing "quiet day" from "totally broken." Compounding it, `lib/aftership.js` returned `null` with zero log output whenever `AFTERSHIP_API_KEY` was simply unset. **Fixed:** both cron jobs now alert (`reportCriticalFailure`) when everything attempted failed and nothing succeeded; AfterShip and FedEx now log once (not spammy) when their API key isn't configured, instead of failing in total silence.
+4. **Admin tracking-number edits could silently not save.** `updateTrackingNumber()`/`updateBalance()` both return `null` (just a `console.warn`) when their target Monday column env var isn't set — genuinely optional/unconfigured columns. The PATCH handler never checked that return value and always responded `{ok:true}}`, so a staff member could edit a tracking number, get a success toast, and have it silently not save — reappearing with the old value on next load. **Fixed:** the PATCH endpoint now returns a `warnings` array naming exactly which field didn't save and why; the admin Orders table shows that warning instead of a blanket "Order updated." (Also fixed as a side effect: the balance-change customer email no longer fires when the balance write itself was skipped.)
+5. **`lib/fedex.js` had no timeout protection**, the one integration that missed the PORTAL-021 timeout pattern already applied everywhere else (Monday, AfterShip, Resend). A hung FedEx call could hang a customer's tracking request indefinitely. **Fixed:** added the same `AbortController`-based 15s timeout used elsewhere.
+
+## Also confirmed, not a bug
+
+The admin Settings page's Notifications and Authentication toggles (`components/admin/SettingsTab.js`) render as live switches but have no `onClick` — pure display of an always-on state, not broken exactly, but worth knowing they're not interactive. Every other staff/admin action (status/tracking/balance edits minus the two gaps above, invites, View as Customer impersonation, the three "Notify..." triggers, Messages) traces end-to-end to real, working code with errors surfaced, not swallowed.
+
+## Verification
+
+All 9 edited files parsed clean with Babel's JS/JSX parser (sanity-checked against deliberately broken code first, to confirm the checker actually catches errors — `node --check` alone gave false negatives on ES-module syntax and was not trusted). Manually re-read every changed function in full context. No behavior was tested end-to-end against live Monday/AfterShip/Resend (would require the sandbox environment — see the sandbox-setup doc/discussion from this same session, `build-and-fix-2026-08-27.md` section 7).
+
+## Status
+
+**Not committed.** All 9 files are modified on disk in Bryan's local clone (`git status` confirms exactly these 9, nothing else). Bryan should review the diffs and commit/push via GitHub Desktop (or ask Claude to do it) when ready — pushing to `main` auto-deploys to production (`portal.summitsensory.com`) via the existing Vercel integration, so this is a deliberate go/no-go, not an auto-push.
+
+Files touched: `pages/portal/index.js`, `pages/admin/index.js`, `lib/monday.js`, `lib/fedex.js`, `lib/aftership.js`, `pages/api/monday/orders.js`, `pages/api/monday/files.js`, `pages/api/cron/reminders.js`, `pages/api/cron/accessory-tracking-sync.js`.

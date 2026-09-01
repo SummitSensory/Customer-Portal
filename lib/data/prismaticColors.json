@@ -1,0 +1,2998 @@
+[
+  {
+    "name": "CAN-AM TAN 21",
+    "sku": "PRB-10395",
+    "hex": "#cbbda2",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Matte Black River",
+    "sku": "PRB-4432",
+    "hex": "#353439",
+    "family": "Black",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Black River II",
+    "sku": "PRS-6118",
+    "hex": "#2d2b2e",
+    "family": "Black",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Canary Yellow",
+    "sku": "PRB-6119",
+    "hex": "#e7c038",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Villain Black",
+    "sku": "PRB-1203",
+    "hex": "#47494a",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Arctic White",
+    "sku": "PRS-5390",
+    "hex": "#f3f3f0",
+    "family": "White",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Black Rock",
+    "sku": "PRB-1019",
+    "hex": "#3e3d39",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Black Rock II",
+    "sku": "HRB-4990",
+    "hex": "#3f3e43",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Flat Bronze River",
+    "sku": "HRB-4682",
+    "hex": "#584634",
+    "family": "Brown",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Coppersun River",
+    "sku": "PRB-2826",
+    "hex": "#bd6936",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Liberty Blue",
+    "sku": "PRB-1731",
+    "hex": "#2f5475",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Cobalt Blue River",
+    "sku": "PRB-1862",
+    "hex": "#354aa8",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Imperial White River",
+    "sku": "PRB-5541",
+    "hex": "#efeeeb",
+    "family": "White",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Just Orange River",
+    "sku": "PRB-10871",
+    "hex": "#ff7715",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Very White River",
+    "sku": "PRB-5460",
+    "hex": "#eae6e0",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Rainbow's End River",
+    "sku": "PRB-5222",
+    "hex": "#3f3b3d",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Plum River",
+    "sku": "PRB-4332",
+    "hex": "#683f94",
+    "family": "Purple",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Turquoise River",
+    "sku": "PRB-2647",
+    "hex": "#1fa49d",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Light Cherry River",
+    "sku": "PRB-1891",
+    "hex": "#ac2f47",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Passion Pink River",
+    "sku": "PRB-11067",
+    "hex": "#ff669a",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "White River II",
+    "sku": "PRB-6108",
+    "hex": "#dfd5cf",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Blue Hawaiian River",
+    "sku": "PRB-6104",
+    "hex": "#187fa4",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sky Blue River",
+    "sku": "PRB-5263",
+    "hex": "#9dbecf",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Astatic Red River",
+    "sku": "PRB-5218",
+    "hex": "#f52f3a",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Purple Mirage River",
+    "sku": "PRB-4539",
+    "hex": "#734b9b",
+    "family": "Purple",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Blue Ripples",
+    "sku": "PRB-3073",
+    "hex": "#465683",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Deep Blue River",
+    "sku": "PRB-2534",
+    "hex": "#243854",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Tornado River",
+    "sku": "PRB-0863",
+    "hex": "#888384",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sea Foam Green River",
+    "sku": "PRB-10283",
+    "hex": "#a2cdc1",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Neon Green River",
+    "sku": "PRB-4022",
+    "hex": "#4fef58",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Kelly Green River",
+    "sku": "PRB-6976",
+    "hex": "#64bb6b",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Destroyer Blue River",
+    "sku": "PRB-6938",
+    "hex": "#575c6b",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sky White River",
+    "sku": "PRB-5475",
+    "hex": "#ebe8e4",
+    "family": "White",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Dark Green River",
+    "sku": "PRB-4655",
+    "hex": "#828679",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Tucker River",
+    "sku": "PRB-2788",
+    "hex": "#f97632",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Cobblestone Beige",
+    "sku": "PRB-2729",
+    "hex": "#c7b399",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Shimmer River",
+    "sku": "PRB-1502",
+    "hex": "#bebcb8",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Hickory Beige",
+    "sku": "URB-0191",
+    "hex": "#f3edd1",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Granite Sage",
+    "sku": "PLB-1407",
+    "hex": "#4e6c67",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Vienna River",
+    "sku": "PRB-6115",
+    "hex": "#d5b398",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "International Orange River",
+    "sku": "PRB-5622",
+    "hex": "#f7732f",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Flame Red River",
+    "sku": "PRB-5081",
+    "hex": "#f63e35",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Scarlet River",
+    "sku": "PRB-4593",
+    "hex": "#d55b48",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Gold River",
+    "sku": "PRB-4460",
+    "hex": "#bc966e",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Ashley Blue River",
+    "sku": "PRB-2903",
+    "hex": "#b2d6e1",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Hydro Red",
+    "sku": "PRB-2347",
+    "hex": "#d43e2c",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "FRONTIER BEIGE",
+    "sku": "PRB-2314",
+    "hex": "#dacbb9",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Aztec River",
+    "sku": "PRB-2245",
+    "hex": "#dd4141",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Orchid Lavender River",
+    "sku": "PRB-11047",
+    "hex": "#d7aced",
+    "family": "Purple",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Rosette Pink River",
+    "sku": "PRB-11039",
+    "hex": "#ff8db0",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Mocha Beige River",
+    "sku": "PRB-10559",
+    "hex": "#aa9475",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Cotton Candy Blue River",
+    "sku": "PRB-10415",
+    "hex": "#daeeed",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Tan River",
+    "sku": "URB-6109",
+    "hex": "#e8d7b6",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Woodlin Beige",
+    "sku": "URB-1914",
+    "hex": "#ece4d4",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Yellowstone River",
+    "sku": "URB-1540",
+    "hex": "#febd2f",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Ruby Red River",
+    "sku": "PRS-6107",
+    "hex": "#e7424b",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Blue River",
+    "sku": "PRB-5557",
+    "hex": "#1971ab",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "GOLDSTONE BEIGE",
+    "sku": "PRB-5406",
+    "hex": "#dcc5b7",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Cadet Blue River",
+    "sku": "PRB-4554",
+    "hex": "#2653a4",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Class A Silver River",
+    "sku": "PRB-4550",
+    "hex": "#bbb7b5",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Ducky River",
+    "sku": "PRB-2549",
+    "hex": "#ffb81a",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Light Grey River",
+    "sku": "PRB-2348",
+    "hex": "#f4f6f3",
+    "family": "White",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "CAVERN GREY",
+    "sku": "PRB-1988",
+    "hex": "#a5a8a8",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Orbit Orange",
+    "sku": "PRB-1821",
+    "hex": "#fc7b2b",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "FRONTIER GREY",
+    "sku": "PRB-1704",
+    "hex": "#6a6768",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Bing Cherry River",
+    "sku": "PRB-1015",
+    "hex": "#86222f",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "White Head River",
+    "sku": "PRB-1009",
+    "hex": "#e7e2d5",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Creamy River",
+    "sku": "PRB-0509",
+    "hex": "#f1e7d9",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Whimsy Pink River",
+    "sku": "PRB-11051",
+    "hex": "#ef5bad",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Juju Orange River",
+    "sku": "PRB-10872",
+    "hex": "#fe8f34",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sunflower River",
+    "sku": "PRB-10497",
+    "hex": "#fdc51c",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Hot Yellow River",
+    "sku": "PRB-10485",
+    "hex": "#f9d00f",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Lemon Peel River",
+    "sku": "PRB-10467",
+    "hex": "#f8e641",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Caterpillar Yellow II River",
+    "sku": "PRB-10437",
+    "hex": "#f9b80f",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Hush Puppy River",
+    "sku": "PRB-10112",
+    "hex": "#826f61",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Frog Green River",
+    "sku": "PRB-10030",
+    "hex": "#77a872",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "MELTED CHOCOLATE",
+    "sku": "PRB-6833",
+    "hex": "#7f5742",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "COPPER HEAD",
+    "sku": "PRB-2989",
+    "hex": "#bf9579",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Greystone River",
+    "sku": "URB-6111",
+    "hex": "#e5d3b7",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "MILITARY GREEN",
+    "sku": "URB-1950",
+    "hex": "#576b5e",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sweet Pea River",
+    "sku": "PRB-6594",
+    "hex": "#6cd146",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Federation River",
+    "sku": "PRB-6338",
+    "hex": "#5f554f",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Cadet Blue II River",
+    "sku": "PRB-6334",
+    "hex": "#3a7282",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Apple River",
+    "sku": "PRB-6117",
+    "hex": "#5edaa8",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Almond River",
+    "sku": "PRB-6103",
+    "hex": "#e0dad1",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "River Rock Grey",
+    "sku": "PRB-6101",
+    "hex": "#a8a197",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Passion Red River",
+    "sku": "PRB-5775",
+    "hex": "#ef3441",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Alpine Grey River",
+    "sku": "PRB-5391",
+    "hex": "#bdbcbf",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Pearl White River",
+    "sku": "PRB-5261",
+    "hex": "#f1f3ef",
+    "family": "White",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "EBONY ROCK",
+    "sku": "PRB-5061",
+    "hex": "#494948",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Claret River",
+    "sku": "PRB-4822",
+    "hex": "#994846",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Yosemite Green River",
+    "sku": "PRB-4743",
+    "hex": "#ad9f82",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Overcast River",
+    "sku": "PRB-4653",
+    "hex": "#dbd8d1",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Truck Blue River",
+    "sku": "PRB-4596",
+    "hex": "#3a4d6f",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Hawaiian River",
+    "sku": "PRB-4573",
+    "hex": "#fe706c",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "EMINENT RIPPLE",
+    "sku": "PRB-4306",
+    "hex": "#eedfcf",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sunrise River",
+    "sku": "PRB-4067",
+    "hex": "#f8c457",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Roses R Red",
+    "sku": "PRB-2972",
+    "hex": "#f55535",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Grey Matter",
+    "sku": "PRB-2971",
+    "hex": "#bfbaac",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Low Gloss Shady Green River",
+    "sku": "PRB-2842",
+    "hex": "#527264",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Dark Grey River",
+    "sku": "PRB-2427",
+    "hex": "#b4a7a1",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Aged Teal",
+    "sku": "PRB-2183",
+    "hex": "#446362",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Evergreen River",
+    "sku": "PRB-2080",
+    "hex": "#1e7654",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Suddenly Yellow",
+    "sku": "PRB-2053",
+    "hex": "#fdc417",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Diablo River",
+    "sku": "PRB-2021",
+    "hex": "#fb5347",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Wichita River",
+    "sku": "PRB-1999",
+    "hex": "#aa3131",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Dusty Rose River",
+    "sku": "PRB-1942",
+    "hex": "#e1566c",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Jungle River",
+    "sku": "PRB-1936",
+    "hex": "#266556",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Mocha Peach River",
+    "sku": "PRB-1920",
+    "hex": "#e39a7f",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Captive River",
+    "sku": "PRB-1717",
+    "hex": "#98a4c3",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Faithful White",
+    "sku": "PRB-1552",
+    "hex": "#f5f5f1",
+    "family": "White",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Alpine River",
+    "sku": "PRB-1374",
+    "hex": "#416255",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "KLAMATH RIDGE",
+    "sku": "PRB-1369",
+    "hex": "#ebe3d6",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Statuary River",
+    "sku": "PRB-1213",
+    "hex": "#69615d",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Satin Forest Green River",
+    "sku": "PRB-11160",
+    "hex": "#445744",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Hot Orange River",
+    "sku": "PRB-11025",
+    "hex": "#ff4823",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Yes Yellow River",
+    "sku": "PRB-10482",
+    "hex": "#f7cc0f",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Edgewood Beige River",
+    "sku": "PRB-10476",
+    "hex": "#e0c5a0",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sunshine Yellow River",
+    "sku": "PRB-10473",
+    "hex": "#fcdc49",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Feeling Blue River",
+    "sku": "PRB-10403",
+    "hex": "#84a5e9",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Suddenly Red River",
+    "sku": "PRB-8108",
+    "hex": "#cb3d4b",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "M & M Orange River",
+    "sku": "PRB-8007",
+    "hex": "#fc9e17",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Metal Grey River",
+    "sku": "PRB-4661",
+    "hex": "#bfbfc0",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Autumn River",
+    "sku": "URB-1850",
+    "hex": "#e4e0d4",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "LIME PEEL",
+    "sku": "PRB-6841",
+    "hex": "#60c243",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Loafer Red River",
+    "sku": "PRB-6501",
+    "hex": "#974937",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Feather Blue River",
+    "sku": "PRB-6114",
+    "hex": "#1e5a9a",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Lite Grey River",
+    "sku": "PRB-6110",
+    "hex": "#dbd7d2",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Fuchsia River",
+    "sku": "PRB-6106",
+    "hex": "#bc5686",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Yellow River",
+    "sku": "PRB-6105",
+    "hex": "#f5b028",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Blue Paradise",
+    "sku": "PRB-6100",
+    "hex": "#308eca",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Powder Blue River",
+    "sku": "PRB-5991",
+    "hex": "#69adc6",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Fuchsia Purple",
+    "sku": "PRB-5831",
+    "hex": "#a84987",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Blue Ripples II",
+    "sku": "PRB-5673",
+    "hex": "#34405a",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Internal White River",
+    "sku": "PRB-5629",
+    "hex": "#eae5da",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sandal Grey River",
+    "sku": "PRB-5375",
+    "hex": "#cfcdc2",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Pretty Pink River",
+    "sku": "PRB-5362",
+    "hex": "#f7c2bc",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Green River",
+    "sku": "PRB-5331",
+    "hex": "#7ac257",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Light Lavender River",
+    "sku": "PRB-5270",
+    "hex": "#dbb8c5",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Winter Grey River",
+    "sku": "PRB-5215",
+    "hex": "#4b4f49",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Jewel Grey River",
+    "sku": "PRB-5073",
+    "hex": "#6a6f72",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Franklin Grey River",
+    "sku": "PRB-4741",
+    "hex": "#91908e",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Robin Blue River",
+    "sku": "PRB-4421",
+    "hex": "#2189cc",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Light Blue River",
+    "sku": "PRB-4417",
+    "hex": "#8ba1b5",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Barbie Pink River",
+    "sku": "PRB-4096",
+    "hex": "#fe5d76",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Tomato Sauce Red River",
+    "sku": "PRB-4079",
+    "hex": "#c33433",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "LAZY DAISY",
+    "sku": "PRB-4078",
+    "hex": "#d9c93f",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "GOLF GREEN",
+    "sku": "PRB-4033",
+    "hex": "#3b6451",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "ELEPHANT TRUNK",
+    "sku": "PRB-2979",
+    "hex": "#9c9083",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Blue Dimples",
+    "sku": "PRB-2967",
+    "hex": "#6985a0",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Atlas Grey River",
+    "sku": "PRB-2911",
+    "hex": "#d1d5d0",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Oh So Blue River",
+    "sku": "PRB-2874",
+    "hex": "#67a5fe",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "China Mint River",
+    "sku": "PRB-2696",
+    "hex": "#ddead3",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Hay River",
+    "sku": "PRB-2682",
+    "hex": "#ddbf89",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Lava River Grey",
+    "sku": "PRB-2540",
+    "hex": "#b1afac",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "CEMENT GREEN",
+    "sku": "PRB-2355",
+    "hex": "#b4a994",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Torque Green River",
+    "sku": "PRB-2271",
+    "hex": "#329d81",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Texas Green River",
+    "sku": "PRB-2217",
+    "hex": "#296254",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sienna Brown River",
+    "sku": "PRB-2101",
+    "hex": "#4f484b",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Blizzard Blue",
+    "sku": "PRB-2098",
+    "hex": "#1e6b9d",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Harbor Grey River",
+    "sku": "PRB-1963",
+    "hex": "#8b8a86",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Riverhill Beige",
+    "sku": "PRB-1831",
+    "hex": "#f4e8d1",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Willow Grey River",
+    "sku": "PRB-1751",
+    "hex": "#b9b6b5",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Reedy Green River",
+    "sku": "PRB-1746",
+    "hex": "#405850",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Texas River",
+    "sku": "PRB-1733",
+    "hex": "#28968e",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sailor River",
+    "sku": "PRB-1692",
+    "hex": "#473f72",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Savi Grey",
+    "sku": "PRB-1349",
+    "hex": "#bbbab5",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Camel River",
+    "sku": "PRB-1199",
+    "hex": "#eed7bc",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Ivory River",
+    "sku": "PRB-1082",
+    "hex": "#ebd9c3",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Elkwood Beige",
+    "sku": "ERB-1566",
+    "hex": "#e7d8c8",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Pearl River",
+    "sku": "HRB-6113",
+    "hex": "#f0eadb",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Spring Purple River",
+    "sku": "PRB-11063",
+    "hex": "#e5b8ba",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Grape Ape River",
+    "sku": "PRB-11055",
+    "hex": "#853264",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Magenta Red River",
+    "sku": "PRB-11043",
+    "hex": "#b13360",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Dark Mauve River",
+    "sku": "PRB-11035",
+    "hex": "#ff6a82",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "China Red River",
+    "sku": "PRB-11027",
+    "hex": "#fd6159",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Orange Guava River",
+    "sku": "PRB-11026",
+    "hex": "#ff8362",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Hawaiian Flower River",
+    "sku": "PRB-11024",
+    "hex": "#ff6b68",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Rose River",
+    "sku": "PRB-11023",
+    "hex": "#ff7573",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Washed Red River",
+    "sku": "PRB-11022",
+    "hex": "#fe664a",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Guava River",
+    "sku": "PRB-11021",
+    "hex": "#fc8f88",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Ritzy Red River",
+    "sku": "PRB-10876",
+    "hex": "#da4335",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Stark Orange River",
+    "sku": "PRB-10870",
+    "hex": "#fe5129",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Flag Orange River",
+    "sku": "PRB-10869",
+    "hex": "#f76d10",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Melon Orange River",
+    "sku": "PRB-10799",
+    "hex": "#ff852c",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Dark Autumn Orange River",
+    "sku": "PRB-10798",
+    "hex": "#fe873b",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Candle Orange River",
+    "sku": "PRB-10510",
+    "hex": "#f48816",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Taupe River",
+    "sku": "PRB-10558",
+    "hex": "#ae9879",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Cascade Peach River",
+    "sku": "PRB-10503",
+    "hex": "#f6ae59",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "School Bus Yellow River",
+    "sku": "PRB-10500",
+    "hex": "#feb44b",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Olde Yeller River",
+    "sku": "PRB-10494",
+    "hex": "#fea813",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sage Yellow River",
+    "sku": "PRB-10491",
+    "hex": "#dcb316",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Porcelain White River",
+    "sku": "PRB-10458",
+    "hex": "#f6f2e1",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Citron River",
+    "sku": "PRB-10455",
+    "hex": "#ecc82c",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sudden Yellow River",
+    "sku": "PRB-10449",
+    "hex": "#faaa0f",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Vintage Leather River",
+    "sku": "PRB-10488",
+    "hex": "#ebbd62",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Yellow Olive River",
+    "sku": "PRB-10479",
+    "hex": "#dfc57c",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Saffron River",
+    "sku": "PRB-10470",
+    "hex": "#febb54",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "File Folder River",
+    "sku": "PRB-10464",
+    "hex": "#f6eac6",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sad Beige River",
+    "sku": "PRB-10461",
+    "hex": "#eed5a3",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Western Beige River",
+    "sku": "PRB-10452",
+    "hex": "#e5ab64",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Dijon Yellow River",
+    "sku": "PRB-10446",
+    "hex": "#ffb819",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Mustard Green River",
+    "sku": "PRB-10443",
+    "hex": "#f2bb0f",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sunrise Yellow River",
+    "sku": "PRB-10440",
+    "hex": "#f6bb11",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Wheatland River",
+    "sku": "PRB-10434",
+    "hex": "#fcd382",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Creamy Almond River",
+    "sku": "PRB-10431",
+    "hex": "#f6d394",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Lima Green River",
+    "sku": "PRB-10428",
+    "hex": "#f5e49a",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Rhodamine River",
+    "sku": "PRB-10407",
+    "hex": "#ff659d",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7035 River",
+    "sku": "RAL-7035-RIVER",
+    "hex": "#e5e3de",
+    "family": "White",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 9005 River",
+    "sku": "RAL-9005-RIVER",
+    "hex": "#2d2c30",
+    "family": "Black",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5002 River",
+    "sku": "RAL-5002-RIVER",
+    "hex": "#2251ad",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5005 River",
+    "sku": "RAL-5005-RIVER",
+    "hex": "#1767b9",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "ASA 61 Gray River",
+    "sku": "PRS-11462",
+    "hex": "#a8aba4",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Native Turquoise River",
+    "sku": "PRB-11448",
+    "hex": "#11afbb",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5012 River",
+    "sku": "RAL-5012-RIVER",
+    "hex": "#1fa6ea",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1023 River",
+    "sku": "RAL-1023-RIVER",
+    "hex": "#fbd731",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Neon Yellow River",
+    "sku": "PRB-7085",
+    "hex": "#e3fd81",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Low Gloss Black Rock",
+    "sku": "PRB-2841",
+    "hex": "#18181a",
+    "family": "Black",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 9010 River",
+    "sku": "RAL-9010-RIVER",
+    "hex": "#fdf6ed",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7045 River",
+    "sku": "RAL-7045-RIVER",
+    "hex": "#bbb3ad",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7021 River",
+    "sku": "RAL-7021-RIVER",
+    "hex": "#525357",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7016 River",
+    "sku": "RAL-7016-RIVER",
+    "hex": "#4f565b",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6022 River",
+    "sku": "RAL-6022-RIVER",
+    "hex": "#4f473a",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6018 River",
+    "sku": "RAL-6018-RIVER",
+    "hex": "#2fb954",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 9016 River",
+    "sku": "RAL-9016-RIVER",
+    "hex": "#fbf7f2",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 9002 River",
+    "sku": "RAL-9002-RIVER",
+    "hex": "#f5ede1",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8023 River",
+    "sku": "RAL-8023-RIVER",
+    "hex": "#d67540",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7044 River",
+    "sku": "RAL-7044-RIVER",
+    "hex": "#dad2c8",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7042 River",
+    "sku": "RAL-7042-RIVER",
+    "hex": "#b6b6b2",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7024 River",
+    "sku": "RAL-7024-RIVER",
+    "hex": "#706d74",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7004 River",
+    "sku": "RAL-7004-RIVER",
+    "hex": "#c1bcba",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6034 River",
+    "sku": "RAL-6034-RIVER",
+    "hex": "#9cd1d4",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6027 River",
+    "sku": "RAL-6027-RIVER",
+    "hex": "#8be0dc",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6021 River",
+    "sku": "RAL-6021-RIVER",
+    "hex": "#9cc39c",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6020 River",
+    "sku": "RAL-6020-RIVER",
+    "hex": "#48634a",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6019 River",
+    "sku": "RAL-6019-RIVER",
+    "hex": "#ceedd4",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6011 River",
+    "sku": "RAL-6011-RIVER",
+    "hex": "#799b77",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5023 River",
+    "sku": "RAL-5023-RIVER",
+    "hex": "#6f84b4",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5013 River",
+    "sku": "RAL-5013-RIVER",
+    "hex": "#2b396d",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 4009 River",
+    "sku": "RAL-4009-RIVER",
+    "hex": "#cea6b2",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3020 River",
+    "sku": "RAL-3020-RIVER",
+    "hex": "#eb4e2f",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3007 River",
+    "sku": "RAL-3007-RIVER",
+    "hex": "#6c373b",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3003 River",
+    "sku": "RAL-3003-RIVER",
+    "hex": "#c33f33",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3001 River",
+    "sku": "RAL-3001-RIVER",
+    "hex": "#e64a31",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 2009 River",
+    "sku": "RAL-2009-RIVER",
+    "hex": "#ff732d",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Eris Dream",
+    "sku": "PRB-11293",
+    "hex": "#533d87",
+    "family": "Purple",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Dune Beige",
+    "sku": "PRB-5645",
+    "hex": "#f5e7dd",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Antique Off White River",
+    "sku": "PRB-5528",
+    "hex": "#fdf7ee",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Aspen Grey River",
+    "sku": "PRB-5246",
+    "hex": "#555a5b",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Skyline Blue River",
+    "sku": "PRB-6950",
+    "hex": "#2272c5",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 9001 River",
+    "sku": "RAL-9001-RIVER",
+    "hex": "#fcf1e9",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8025 River",
+    "sku": "RAL-8025-RIVER",
+    "hex": "#9b735e",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8022 River",
+    "sku": "RAL-8022-RIVER",
+    "hex": "#322c2d",
+    "family": "Black",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8019 River",
+    "sku": "RAL-8019-RIVER",
+    "hex": "#5e4f4e",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8016 River",
+    "sku": "RAL-8016-RIVER",
+    "hex": "#7c4638",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8015 River",
+    "sku": "RAL-8015-RIVER",
+    "hex": "#924d40",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8014 River",
+    "sku": "RAL-8014-RIVER",
+    "hex": "#725143",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8004 River",
+    "sku": "RAL-8004-RIVER",
+    "hex": "#bc6440",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8003 River",
+    "sku": "RAL-8003-RIVER",
+    "hex": "#ad6c3f",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7038 River",
+    "sku": "RAL-7038-RIVER",
+    "hex": "#d5d1c9",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7037 River",
+    "sku": "RAL-7037-RIVER",
+    "hex": "#a4a19d",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7033 River",
+    "sku": "RAL-7033-RIVER",
+    "hex": "#a2a698",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7031 River",
+    "sku": "RAL-7031-RIVER",
+    "hex": "#828c8f",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7012 River",
+    "sku": "RAL-7012-RIVER",
+    "hex": "#7e7f7f",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Shimmer Rose River",
+    "sku": "PRB-11511",
+    "hex": "#d4c7c2",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7011 River",
+    "sku": "RAL-7011-RIVER",
+    "hex": "#7c8286",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7010 River",
+    "sku": "RAL-7010-RIVER",
+    "hex": "#797a74",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7005 River",
+    "sku": "RAL-7005-RIVER",
+    "hex": "#8d8e8a",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7001 River",
+    "sku": "RAL-7001-RIVER",
+    "hex": "#b1b9c3",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6016 River",
+    "sku": "RAL-6016-RIVER",
+    "hex": "#148a6b",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6013 River",
+    "sku": "RAL-6013-RIVER",
+    "hex": "#989675",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6003 River",
+    "sku": "RAL-6003-RIVER",
+    "hex": "#6a7355",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6002 River",
+    "sku": "RAL-6002-RIVER",
+    "hex": "#12852f",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6000 River",
+    "sku": "RAL-6000-RIVER",
+    "hex": "#1c967e",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5021 River",
+    "sku": "RAL-5021-RIVER",
+    "hex": "#1997a2",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5019 River",
+    "sku": "RAL-5019-RIVER",
+    "hex": "#1775b2",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5017 River",
+    "sku": "RAL-5017-RIVER",
+    "hex": "#1776c6",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5015 River",
+    "sku": "RAL-5015-RIVER",
+    "hex": "#1d99e2",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5011 River",
+    "sku": "RAL-5011-RIVER",
+    "hex": "#29395c",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5010 River",
+    "sku": "RAL-5010-RIVER",
+    "hex": "#1a64aa",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5008 River",
+    "sku": "RAL-5008-RIVER",
+    "hex": "#424e60",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Quater Blue River",
+    "sku": "PRB-11449",
+    "hex": "#1360a2",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 4005 River",
+    "sku": "RAL-4005-RIVER",
+    "hex": "#aa88c6",
+    "family": "Purple",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3015 River",
+    "sku": "RAL-3015-RIVER",
+    "hex": "#fdbebd",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3009 River",
+    "sku": "RAL-3009-RIVER",
+    "hex": "#a24c3d",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3002 River",
+    "sku": "RAL-3002-RIVER",
+    "hex": "#e74a33",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1013 River",
+    "sku": "RAL-1013-RIVER",
+    "hex": "#fef5e6",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1011 River",
+    "sku": "RAL-1011-RIVER",
+    "hex": "#dea769",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1000 River",
+    "sku": "RAL-1000-RIVER",
+    "hex": "#cdb380",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Harbor Blue River",
+    "sku": "PRB-11099",
+    "hex": "#457ba7",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Southwest Blue River",
+    "sku": "PRB-11080",
+    "hex": "#4562c4",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Hurricane Mist River",
+    "sku": "HRB-11074",
+    "hex": "#c5c8cb",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Wendys Gold River",
+    "sku": "URB-4722",
+    "hex": "#c7a585",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Mason Red River",
+    "sku": "PRB-5877",
+    "hex": "#874e42",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Low Gloss Conroy River",
+    "sku": "PRB-2844",
+    "hex": "#604134",
+    "family": "Brown",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Teal Leatherette",
+    "sku": "PLB-1567",
+    "hex": "#1d5566",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Alloy Gold River",
+    "sku": "HRB-4995",
+    "hex": "#e8e0a7",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sandy River",
+    "sku": "PRB-6622",
+    "hex": "#d5c2ac",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Dull Vienna",
+    "sku": "PRB-5709",
+    "hex": "#ccb499",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Green Shamrock",
+    "sku": "PRB-5631",
+    "hex": "#1d5943",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Perma Beige Plus River",
+    "sku": "PRB-5601",
+    "hex": "#e9d0ad",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Fairway Green",
+    "sku": "PRB-5581",
+    "hex": "#4d5d4f",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Orient Beige River",
+    "sku": "PRB-5382",
+    "hex": "#faf4df",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Mill White River",
+    "sku": "PRB-4968",
+    "hex": "#fcf5ea",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Stormy Blue River",
+    "sku": "PRB-4913",
+    "hex": "#5a7a92",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Perma Beige River",
+    "sku": "PRB-4838",
+    "hex": "#b4a79d",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Decor White River",
+    "sku": "PRB-4612",
+    "hex": "#f1f1ed",
+    "family": "White",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Bayberry River",
+    "sku": "PRB-2777",
+    "hex": "#a380bc",
+    "family": "Purple",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Moss Rock",
+    "sku": "PRB-2709",
+    "hex": "#4b554f",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Spearmint Gum",
+    "sku": "PRB-2699",
+    "hex": "#5ac890",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "River Valley",
+    "sku": "PRB-2568",
+    "hex": "#40aaab",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Shady Green River",
+    "sku": "PRB-1663",
+    "hex": "#2a5d4b",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Camden Beige River",
+    "sku": "PRB-2274",
+    "hex": "#e3d3bf",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Lentel Brown River",
+    "sku": "PRB-1919",
+    "hex": "#a77d67",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7040 River",
+    "sku": "RAL-7040-RIVER",
+    "hex": "#c0c2c7",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3031 River",
+    "sku": "RAL-3031-RIVER",
+    "hex": "#e65341",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 4002 River",
+    "sku": "RAL-4002-RIVER",
+    "hex": "#be4959",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 4001 River",
+    "sku": "RAL-4001-RIVER",
+    "hex": "#a671a1",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3005 River",
+    "sku": "RAL-3005-RIVER",
+    "hex": "#90383a",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 9018 River",
+    "sku": "RAL-9018-RIVER",
+    "hex": "#dde4dd",
+    "family": "White",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8028 River",
+    "sku": "RAL-8028-RIVER",
+    "hex": "#775445",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8024 River",
+    "sku": "RAL-8024-RIVER",
+    "hex": "#a87052",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8012 River",
+    "sku": "RAL-8012-RIVER",
+    "hex": "#974736",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8007 River",
+    "sku": "RAL-8007-RIVER",
+    "hex": "#9a5e43",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8002 River",
+    "sku": "RAL-8002-RIVER",
+    "hex": "#a5664a",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8001 River",
+    "sku": "RAL-8001-RIVER",
+    "hex": "#c88745",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 8000 River",
+    "sku": "RAL-8000-RIVER",
+    "hex": "#ad8852",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7047 River",
+    "sku": "RAL-7047-RIVER",
+    "hex": "#e7e4e0",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7043 River",
+    "sku": "RAL-7043-RIVER",
+    "hex": "#6f6f69",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7039 River",
+    "sku": "RAL-7039-RIVER",
+    "hex": "#8f897d",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7036 River",
+    "sku": "RAL-7036-RIVER",
+    "hex": "#bab1ac",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7034 River",
+    "sku": "RAL-7034-RIVER",
+    "hex": "#beb192",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7032 River",
+    "sku": "RAL-7032-RIVER",
+    "hex": "#ded5c1",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7030 River",
+    "sku": "RAL-7030-RIVER",
+    "hex": "#b1aea5",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7026 River",
+    "sku": "RAL-7026-RIVER",
+    "hex": "#4d5f61",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7023 River",
+    "sku": "RAL-7023-RIVER",
+    "hex": "#a19e93",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7022 River",
+    "sku": "RAL-7022-RIVER",
+    "hex": "#65615b",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7013 River",
+    "sku": "RAL-7013-RIVER",
+    "hex": "#7b7263",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7006 River",
+    "sku": "RAL-7006-RIVER",
+    "hex": "#9c8676",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7015 River",
+    "sku": "RAL-7015-RIVER",
+    "hex": "#6c6b75",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7009 River",
+    "sku": "RAL-7009-RIVER",
+    "hex": "#75786d",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7008 River",
+    "sku": "RAL-7008-RIVER",
+    "hex": "#937f51",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7003 River",
+    "sku": "RAL-7003-RIVER",
+    "hex": "#999684",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7002 River",
+    "sku": "RAL-7002-RIVER",
+    "hex": "#a49a7d",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 7000 River",
+    "sku": "RAL-7000-RIVER",
+    "hex": "#9da7ad",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6033 River",
+    "sku": "RAL-6033-RIVER",
+    "hex": "#26a799",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6032 River",
+    "sku": "RAL-6032-RIVER",
+    "hex": "#18a16b",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6029 River",
+    "sku": "RAL-6029-RIVER",
+    "hex": "#12955b",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6028 River",
+    "sku": "RAL-6028-RIVER",
+    "hex": "#1e7561",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6026 River",
+    "sku": "RAL-6026-RIVER",
+    "hex": "#198071",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6025 River",
+    "sku": "RAL-6025-RIVER",
+    "hex": "#67914a",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6024 River",
+    "sku": "RAL-6024-RIVER",
+    "hex": "#12a96f",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6017 River",
+    "sku": "RAL-6017-RIVER",
+    "hex": "#47a152",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6015 River",
+    "sku": "RAL-6015-RIVER",
+    "hex": "#535449",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6014 River",
+    "sku": "RAL-6014-RIVER",
+    "hex": "#5d5a40",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6012 River",
+    "sku": "RAL-6012-RIVER",
+    "hex": "#355b58",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6010 River",
+    "sku": "RAL-6010-RIVER",
+    "hex": "#1d913b",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6009 River",
+    "sku": "RAL-6009-RIVER",
+    "hex": "#204333",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6007 River",
+    "sku": "RAL-6007-RIVER",
+    "hex": "#344b35",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6006 River",
+    "sku": "RAL-6006-RIVER",
+    "hex": "#57564a",
+    "family": "Grey",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6005 River",
+    "sku": "RAL-6005-RIVER",
+    "hex": "#165f49",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6004 River",
+    "sku": "RAL-6004-RIVER",
+    "hex": "#146563",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 6001 River",
+    "sku": "RAL-6001-RIVER",
+    "hex": "#1a8a4f",
+    "family": "Green",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5024 River",
+    "sku": "RAL-5024-RIVER",
+    "hex": "#88b6d5",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5022 River",
+    "sku": "RAL-5022-RIVER",
+    "hex": "#3b4182",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5020 River",
+    "sku": "RAL-5020-RIVER",
+    "hex": "#1b5b6a",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5018 River",
+    "sku": "RAL-5018-RIVER",
+    "hex": "#1baeb7",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5014 River",
+    "sku": "RAL-5014-RIVER",
+    "hex": "#8295b5",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5009 River",
+    "sku": "RAL-5009-RIVER",
+    "hex": "#26739b",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5007 River",
+    "sku": "RAL-5007-RIVER",
+    "hex": "#5580b3",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5004 River",
+    "sku": "RAL-5004-RIVER",
+    "hex": "#2e3140",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5003 River",
+    "sku": "RAL-5003-RIVER",
+    "hex": "#2a4d81",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5001 River",
+    "sku": "RAL-5001-RIVER",
+    "hex": "#2b678f",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 5000 River",
+    "sku": "RAL-5000-RIVER",
+    "hex": "#436d9c",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Captive Blue River",
+    "sku": "PRB-11453",
+    "hex": "#6293af",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Danny Boy Blue River",
+    "sku": "PRB-11452",
+    "hex": "#496c96",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sail Blue River",
+    "sku": "PRB-11451",
+    "hex": "#1d2870",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Dunbar Teal River",
+    "sku": "PRB-11450",
+    "hex": "#109396",
+    "family": "Teal",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 4010 River",
+    "sku": "RAL-4010-RIVER",
+    "hex": "#f9708b",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 4008 River",
+    "sku": "RAL-4008-RIVER",
+    "hex": "#c76ba7",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 4007 River",
+    "sku": "RAL-4007-RIVER",
+    "hex": "#773859",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 4006 River",
+    "sku": "RAL-4006-RIVER",
+    "hex": "#d75b90",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 4004 River",
+    "sku": "RAL-4004-RIVER",
+    "hex": "#9c3c4e",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 4003 River",
+    "sku": "RAL-4003-RIVER",
+    "hex": "#fa8ba2",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3027 River",
+    "sku": "RAL-3027-RIVER",
+    "hex": "#f3514f",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3022 River",
+    "sku": "RAL-3022-RIVER",
+    "hex": "#fe886d",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3018 River",
+    "sku": "RAL-3018-RIVER",
+    "hex": "#fc6a59",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3017 River",
+    "sku": "RAL-3017-RIVER",
+    "hex": "#f97974",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3016 River",
+    "sku": "RAL-3016-RIVER",
+    "hex": "#e05a36",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3014 River",
+    "sku": "RAL-3014-RIVER",
+    "hex": "#fb9790",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3013 River",
+    "sku": "RAL-3013-RIVER",
+    "hex": "#df5338",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3012 River",
+    "sku": "RAL-3012-RIVER",
+    "hex": "#f6aa8b",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3011 River",
+    "sku": "RAL-3011-RIVER",
+    "hex": "#c34231",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3004 River",
+    "sku": "RAL-3004-RIVER",
+    "hex": "#aa3632",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 3000 River",
+    "sku": "RAL-3000-RIVER",
+    "hex": "#e94e32",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1032 River",
+    "sku": "RAL-1032-RIVER",
+    "hex": "#fbc743",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1028 River",
+    "sku": "RAL-1028-RIVER",
+    "hex": "#ffba2a",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1024 River",
+    "sku": "RAL-1024-RIVER",
+    "hex": "#e3b565",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1021 River",
+    "sku": "RAL-1021-RIVER",
+    "hex": "#fdd73b",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1012 River",
+    "sku": "RAL-1012-RIVER",
+    "hex": "#fbd153",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 2010 River",
+    "sku": "RAL-2010-RIVER",
+    "hex": "#fe7b39",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 2001 River",
+    "sku": "RAL-2001-RIVER",
+    "hex": "#f96b30",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 2000 River",
+    "sku": "RAL-2000-RIVER",
+    "hex": "#fe8f32",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1034 River",
+    "sku": "RAL-1034-RIVER",
+    "hex": "#feb552",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1033 River",
+    "sku": "RAL-1033-RIVER",
+    "hex": "#ffb536",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1027 River",
+    "sku": "RAL-1027-RIVER",
+    "hex": "#cfa633",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1020 River",
+    "sku": "RAL-1020-RIVER",
+    "hex": "#c2b77d",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1019 River",
+    "sku": "RAL-1019-RIVER",
+    "hex": "#d1b49b",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1018 River",
+    "sku": "RAL-1018-RIVER",
+    "hex": "#fdd34d",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1017 River",
+    "sku": "RAL-1017-RIVER",
+    "hex": "#f9b649",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1016 River",
+    "sku": "RAL-1016-RIVER",
+    "hex": "#f4eb68",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1015 River",
+    "sku": "RAL-1015-RIVER",
+    "hex": "#fdeeda",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1014 River",
+    "sku": "RAL-1014-RIVER",
+    "hex": "#eed3aa",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1005 River",
+    "sku": "RAL-1005-RIVER",
+    "hex": "#d9a62f",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1004 River",
+    "sku": "RAL-1004-RIVER",
+    "hex": "#fcae15",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1003 River",
+    "sku": "RAL-1003-RIVER",
+    "hex": "#e9a617",
+    "family": "Yellow",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1002 River",
+    "sku": "RAL-1002-RIVER",
+    "hex": "#edc383",
+    "family": "Orange",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "RAL 1001 River",
+    "sku": "RAL-1001-RIVER",
+    "hex": "#d5aa7a",
+    "family": "Tan/Beige",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Skiers Blue River",
+    "sku": "PRB-11121",
+    "hex": "#429dea",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "China Blue River",
+    "sku": "PRB-11117",
+    "hex": "#98add7",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Island Blue River",
+    "sku": "PRB-11113",
+    "hex": "#364576",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Boron Blue River",
+    "sku": "PRB-11103",
+    "hex": "#2563ab",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Bruski Blue River",
+    "sku": "PRB-11093",
+    "hex": "#597fb3",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Pinelake Blue River",
+    "sku": "PRB-11089",
+    "hex": "#2771cb",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Pro Blue River",
+    "sku": "PRB-11085",
+    "hex": "#2f313c",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sultan Blue River",
+    "sku": "PRB-11071",
+    "hex": "#576c97",
+    "family": "Blue",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Sweet Plum River",
+    "sku": "PRB-11059",
+    "hex": "#dd8fcd",
+    "family": "Pink",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Vampire Red River",
+    "sku": "PRB-10877",
+    "hex": "#b13d34",
+    "family": "Red",
+    "provenance": "swatch-verified"
+  }
+]

@@ -1,0 +1,175 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const mockGetOrderById = vi.fn();
+const mockPostTaggedUpdate = vi.fn().mockResolvedValue(undefined);
+const mockMarkSectionCompleteSafe = vi.fn().mockResolvedValue(true);
+const mockWriteColorSelectionSnapshot = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../../lib/monday', () => ({
+  getOrderById: (...args) => mockGetOrderById(...args),
+  postTaggedUpdate: (...args) => mockPostTaggedUpdate(...args),
+  markSectionCompleteSafe: (...args) => mockMarkSectionCompleteSafe(...args),
+  writeColorSelectionSnapshot: (...args) => mockWriteColorSelectionSnapshot(...args),
+}));
+
+const mockVerifyCustomerSession = vi.fn();
+vi.mock('../../../lib/auth', () => ({
+  verifyCustomerSession: (...args) => mockVerifyCustomerSession(...args),
+  SESSION_COOKIE: 'summit_customer_session',
+}));
+
+vi.mock('../../../lib/rateLimit', () => ({
+  allowRequest: () => true,
+}));
+
+const handlerModule = await import('../../../pages/api/portal/color-selection.js');
+const { default: handler, validateColorSelectionData, computeTotalUpcharge } = handlerModule;
+
+const ADVENTURE_SERIES = 'Summit Adventure Series: Custom Sensory Gym';
+
+function makeRes() {
+  const res = {};
+  res.statusCode = 200;
+  res.status = vi.fn((code) => { res.statusCode = code; return res; });
+  res.json = vi.fn((body) => { res.body = body; return res; });
+  res.end = vi.fn(() => res);
+  return res;
+}
+
+function fullValidSelections() {
+  return {
+    structure_frame_paint: {
+      legs: { brand: 'cardinal', code: 'T009-BG01' },
+      horizontal_beams: { brand: 'cardinal', code: 'T009-BG01' },
+      ladder_rungs_and_leg: { brand: 'cardinal', code: 'T009-BG01' },
+      slide_platform: { brand: 'cardinal', code: 'T009-BG01' },
+      slide_color: { brand: 'cardinal', code: 'T009-BG01' },
+      climbing_wall: { brand: 'cardinal', code: 'T009-BG01' },
+    },
+  };
+}
+
+describe('validateColorSelectionData (pure)', () => {
+  const order = { productType: ADVENTURE_SERIES };
+
+  it('accepts a fully valid submission', () => {
+    expect(validateColorSelectionData(order, fullValidSelections())).toBeNull();
+  });
+
+  it('rejects a submission missing a required part', () => {
+    const s = fullValidSelections();
+    delete s.structure_frame_paint.climbing_wall;
+    expect(validateColorSelectionData(order, s)).toMatch(/climbing_wall/);
+  });
+
+  it('rejects an unrecognized catalog code — never trusts a client-supplied color', () => {
+    const s = fullValidSelections();
+    s.structure_frame_paint.legs = { brand: 'cardinal', code: 'MADE-UP-CODE' };
+    expect(validateColorSelectionData(order, s)).toMatch(/legs/);
+  });
+
+  it('rejects an unsupported product type outright', () => {
+    expect(validateColorSelectionData({ productType: 'Ball Pit' }, fullValidSelections()))
+      .toMatch(/isn't available/);
+  });
+});
+
+describe('validateColorSelectionData — Mat & Pad Color (vinyl)', () => {
+  const matOrder = { productType: 'Therapy Mats & Pads' };
+
+  it('accepts a real, catalog-valid vinyl color', () => {
+    const s = { mat_pad_color: { mat_pad: { brand: 'vinyl', code: 'Kelly Green' } } };
+    expect(validateColorSelectionData(matOrder, s)).toBeNull();
+  });
+
+  it('rejects a made-up vinyl color name — never trusts client input', () => {
+    const s = { mat_pad_color: { mat_pad: { brand: 'vinyl', code: 'Mauve' } } };
+    expect(validateColorSelectionData(matOrder, s)).toMatch(/mat_pad/);
+  });
+
+  it('vinyl selections never contribute a Prismatic upcharge', () => {
+    const s = { mat_pad_color: { mat_pad: { brand: 'vinyl', code: 'Kelly Green' } } };
+    expect(computeTotalUpcharge(matOrder, s)).toBe(0);
+  });
+});
+
+describe('computeTotalUpcharge (pure)', () => {
+  const order = { productType: ADVENTURE_SERIES };
+
+  it('is $0 when every selection is Cardinal (no Prismatic upcharge)', () => {
+    expect(computeTotalUpcharge(order, fullValidSelections())).toBe(0);
+  });
+
+  it('prices the first Prismatic selection at $500', () => {
+    const s = fullValidSelections();
+    s.structure_frame_paint.legs = { brand: 'prismatic', code: 'PRB-10395' };
+    expect(computeTotalUpcharge(order, s)).toBe(500);
+  });
+
+  it('prices a second Prismatic selection at +$300, not another $500', () => {
+    const s = fullValidSelections();
+    s.structure_frame_paint.legs = { brand: 'prismatic', code: 'PRB-10395' };
+    s.structure_frame_paint.horizontal_beams = { brand: 'prismatic', code: 'PRB-4432' };
+    expect(computeTotalUpcharge(order, s)).toBe(800);
+  });
+});
+
+describe('handler — auth and customer isolation', () => {
+  beforeEach(() => {
+    mockGetOrderById.mockReset();
+    mockVerifyCustomerSession.mockReset();
+    mockWriteColorSelectionSnapshot.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('rejects an unauthenticated request', async () => {
+    mockVerifyCustomerSession.mockResolvedValue(null);
+    const req = { method: 'GET', headers: {}, query: {} };
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('rejects a session with no bound order', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: null });
+    const req = { method: 'GET', headers: {}, query: {} };
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('ONLY ever loads the order bound to the session — a client-supplied orderId in the body is ignored entirely', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const req = {
+      method: 'POST',
+      headers: {},
+      // An attacker-style attempt to target a different order via the body.
+      // The handler must never read this field — isolation comes entirely
+      // from the server-derived session.orderId, never from client input.
+      body: { orderId: 'someone-elses-order-999', selections: fullValidSelections(), confirm: false },
+    };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(mockGetOrderById).toHaveBeenCalledWith('real-order-123');
+    expect(mockGetOrderById).not.toHaveBeenCalledWith('someone-elses-order-999');
+    expect(mockWriteColorSelectionSnapshot).toHaveBeenCalledWith('real-order-123', expect.anything());
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('confirming with an incomplete selection is rejected server-side, even if the client thinks it is done', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const incomplete = fullValidSelections();
+    delete incomplete.structure_frame_paint.slide_color;
+
+    const req = { method: 'POST', headers: {}, body: { selections: incomplete, confirm: true } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(400);
+    expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
+    expect(mockMarkSectionCompleteSafe).not.toHaveBeenCalled();
+  });
+});

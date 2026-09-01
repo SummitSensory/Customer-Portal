@@ -1,0 +1,86 @@
+[
+  {
+    "name": "Black",
+    "hex": "#606567",
+    "photo": "/color-catalog/vinyl/black.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Charcoal",
+    "hex": "#898a7c",
+    "photo": "/color-catalog/vinyl/charcoal.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Kelly Green",
+    "hex": "#1b9669",
+    "photo": "/color-catalog/vinyl/kelly-green.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Light Gray",
+    "hex": "#909899",
+    "photo": "/color-catalog/vinyl/light-gray.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Lime",
+    "hex": "#67ae16",
+    "photo": "/color-catalog/vinyl/lime.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Navy",
+    "hex": "#376092",
+    "photo": "/color-catalog/vinyl/navy.png",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Orange",
+    "hex": "#ca4e2c",
+    "photo": "/color-catalog/vinyl/orange.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Pink",
+    "hex": "#b74162",
+    "photo": "/color-catalog/vinyl/pink.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Purple",
+    "hex": "#5c38b3",
+    "photo": "/color-catalog/vinyl/purple.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Red",
+    "hex": "#d52e26",
+    "photo": "/color-catalog/vinyl/red.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Royal Blue",
+    "hex": "#206aaa",
+    "photo": "/color-catalog/vinyl/royal-blue.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Tan",
+    "hex": "#aa7f4c",
+    "photo": "/color-catalog/vinyl/tan.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "White",
+    "hex": "#dedfda",
+    "photo": "/color-catalog/vinyl/white.png",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Yellow",
+    "hex": "#c3a029",
+    "photo": "/color-catalog/vinyl/yellow.jpg",
+    "provenance": "photo-verified"
+  }
+]

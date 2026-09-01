@@ -17,14 +17,20 @@ import {
 import { COLOR_INPUT, PART_LABELS } from '../../lib/colorRequirements';
 import { createSaveQueue } from '../../lib/saveQueue';
 
-async function fetchSelection() {
-  const res = await fetch('/api/portal/color-selection');
+const DEFAULT_API_BASE = '/api/portal/color-selection';
+
+// apiBase lets a demo/preview surface point this exact component at a
+// sandboxed endpoint instead of the real customer API — no separate copy
+// of the picker to keep in sync, no risk of drifting from what customers
+// actually get. See pages/portal/color-preview.js.
+async function fetchSelection(apiBase) {
+  const res = await fetch(apiBase);
   if (!res.ok) throw new Error('Failed to load color selections.');
   return res.json();
 }
 
-async function saveSelection(body) {
-  const res = await fetch('/api/portal/color-selection', {
+async function saveSelection(apiBase, body) {
+  const res = await fetch(apiBase, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -352,7 +358,7 @@ function Summary({ requiredInputs, selections, onConfirm, onBack, confirming }) 
   );
 }
 
-export default function ColorSelectionTab({ order, completions, markComplete, showToast, onNext, onBack }) {
+export default function ColorSelectionTab({ order, completions, markComplete, showToast, onNext, onBack, apiBase = DEFAULT_API_BASE }) {
   const [loading, setLoading] = useState(true);
   const [requiredInputs, setRequiredInputs] = useState([]);
   const [selections, setSelections] = useState({});
@@ -369,7 +375,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     // arriving, the mobile nav toggling, etc.), not just when the order
     // actually changes. Caught in review before this shipped.
     let cancelled = false;
-    fetchSelection()
+    fetchSelection(apiBase)
       .then((data) => {
         if (cancelled) return;
         setRequiredInputs(data.requiredInputs || []);
@@ -399,7 +405,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   // stale snapshot on exactly the rapid-selection case this exists to fix.
   const latestSelectionsRef = useRef(selections);
   const enqueueSaveRef = useRef(null);
-  if (!enqueueSaveRef.current) enqueueSaveRef.current = createSaveQueue(saveSelection);
+  if (!enqueueSaveRef.current) enqueueSaveRef.current = createSaveQueue((body) => saveSelection(apiBase, body));
 
   const queueSave = useCallback((confirm) => {
     return enqueueSaveRef.current(() => ({ selections: latestSelectionsRef.current, confirm }));

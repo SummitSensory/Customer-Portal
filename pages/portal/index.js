@@ -498,7 +498,11 @@ export default function CustomerPortal() {
             {activeTab === 'billing'      && <BillingTab      order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('delivery')} onBack={() => setActiveTab('contact')} onOrderRefresh={loadOrder} />}
             {activeTab === 'delivery'     && <DeliveryTab     order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('color')} onBack={() => setActiveTab('billing')} />}
             {activeTab === 'color' && (
-              isColorSelectionSupported(order?.productType)
+              // colorSelectionWritable guards against routing a customer into a
+              // picker that can never save — see lib/monday.js's parseOrderItem
+              // comment on colorSelectionWritable for the full incident this
+              // fixes (found in code review before it ever shipped).
+              isColorSelectionSupported(order?.productType) && order?.colorSelectionWritable
                 ? <ColorSelectionTab order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('documents')} onBack={() => setActiveTab('delivery')} />
                 : <ColorTab order={order} completions={completions} markComplete={markComplete} showToast={showToast} colorForms={colorForms} onNext={() => setActiveTab('documents')} onBack={() => setActiveTab('delivery')} />
             )}

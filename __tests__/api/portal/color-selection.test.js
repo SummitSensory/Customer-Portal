@@ -90,6 +90,19 @@ describe('validateColorSelectionData — Mat & Pad Color (vinyl)', () => {
     const s = { mat_pad_color: { mat_pad: { brand: 'vinyl', code: 'Kelly Green' } } };
     expect(computeTotalUpcharge(matOrder, s)).toBe(0);
   });
+
+  it('rejects a real, valid Prismatic PAINT sku on a Mat & Pad part — wrong category, even though the code itself is real (regression, found in code review 2026-09-01)', () => {
+    const s = { mat_pad_color: { mat_pad: { brand: 'prismatic', code: 'PRB-10395' } } };
+    expect(validateColorSelectionData(matOrder, s)).toMatch(/mat_pad/);
+  });
+});
+
+describe('validateColorSelectionData — brand must be allowed for the part (regression, found in code review 2026-09-01)', () => {
+  it('rejects a real, valid vinyl color on a structural paint part', () => {
+    const s = fullValidSelections();
+    s.structure_frame_paint.legs = { brand: 'vinyl', code: 'Kelly Green' };
+    expect(validateColorSelectionData({ productType: ADVENTURE_SERIES }, s)).toMatch(/legs/);
+  });
 });
 
 describe('computeTotalUpcharge (pure)', () => {
@@ -157,6 +170,21 @@ describe('handler — auth and customer isolation', () => {
     expect(mockGetOrderById).not.toHaveBeenCalledWith('someone-elses-order-999');
     expect(mockWriteColorSelectionSnapshot).toHaveBeenCalledWith('real-order-123', expect.anything());
     expect(res.statusCode).toBe(200);
+  });
+
+  it('rejects a fabricated catalog code on an ordinary AUTOSAVE (confirm:false) — never prices or persists it (regression, found in code review 2026-09-01)', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const s = fullValidSelections();
+    s.structure_frame_paint.legs = { brand: 'prismatic', code: 'FAKE-SKU-DOES-NOT-EXIST' };
+
+    const req = { method: 'POST', headers: {}, body: { selections: s, confirm: false } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(400);
+    expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
   });
 
   it('staff is notified when a customer changes selections after already confirming them — even though the picker does not yet block the edit', async () => {

@@ -14,19 +14,7 @@ import {
   listCardinalColors, listPrismaticColors, listVinylColors,
   cardinalFinishes, prismaticFamilies, prismaticUpcharge,
 } from '../../lib/colorCatalog';
-import { COLOR_INPUT } from '../../lib/colorRequirements';
-
-const PART_LABELS = {
-  legs: 'Legs',
-  horizontal_beams: 'Horizontal Beams',
-  ladder_rungs_and_leg: 'Ladder Rungs & Ladder Leg',
-  slide_platform: 'Slide Platform',
-  slide_color: 'Slide',
-  climbing_wall: 'Climbing Wall',
-  soar_frame: 'Soar Frame',
-  flex_frame: 'Flex Frame',
-  mat_pad: 'Mat & Pad',
-};
+import { COLOR_INPUT, PART_LABELS } from '../../lib/colorRequirements';
 
 async function fetchSelection() {
   const res = await fetch('/api/portal/color-selection');

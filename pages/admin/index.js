@@ -10,6 +10,8 @@ import Head from 'next/head';
 import dynamic from 'next/dynamic';
 import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
 import { isStaffMessage, stripPortalTags, messageDisplayName } from '../../lib/messageOrigin';
+import { requiredColorInputs, PART_LABELS } from '../../lib/colorRequirements';
+import { findCardinalByCode, findPrismaticBySku, findVinylByName } from '../../lib/colorCatalog';
 
 // Lazy-loaded — most staff sessions never open Settings in a given visit,
 // so its code (see components/admin/SettingsTab.js) shouldn't be part of
@@ -250,6 +252,7 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   // Submissions board in Monday and scan past blank rows for orders that
   // haven't submitted yet.
   const [expandedDelivery, setExpandedDelivery] = useState(null);
+  const [expandedColors, setExpandedColors] = useState(null);
   const [availableCols, setAvailableCols] = useState([]);
   const [selectedColIds, setSelectedColIds] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -559,6 +562,16 @@ function OrdersTab({ orders, onRefresh, showToast }) {
                                   🚚 Delivery {expandedDelivery === order.id ? '▲' : '▼'}
                                 </button>
                               )}
+                              {order.colorSelectionSnapshot && (
+                                <button
+                                  className="btn btn-ghost btn-sm"
+                                  title="View this customer's selected colors/finishes"
+                                  onClick={() => setExpandedColors(prev => (prev === order.id ? null : order.id))}
+                                  style={{ whiteSpace: 'nowrap' }}
+                                >
+                                  🎨 Colors {expandedColors === order.id ? '▲' : '▼'}
+                                </button>
+                              )}
                               <select
                                 className="btn btn-ghost btn-sm"
                                 value=""
@@ -624,6 +637,13 @@ function OrdersTab({ orders, onRefresh, showToast }) {
                     <tr>
                       <td colSpan={displayCols.length} style={{ background: '#f7f9f5', padding: 0 }}>
                         <DeliveryDetailPanel order={order} />
+                      </td>
+                    </tr>
+                  )}
+                  {expandedColors === order.id && order.colorSelectionSnapshot && (
+                    <tr>
+                      <td colSpan={displayCols.length} style={{ background: '#f7f9f5', padding: 0 }}>
+                        <ColorSelectionDetailPanel order={order} />
                       </td>
                     </tr>
                   )}
@@ -709,6 +729,71 @@ function DeliveryDetailPanel({ order }) {
       {s.ackName && (
         <div style={{ fontSize: 12, color: 'var(--mut)' }}>✓ Acknowledged by {s.ackName}</div>
       )}
+    </div>
+  );
+}
+
+// Details, rendered inline in the Orders table from order.colorSelectionSnapshot
+// — same reasoning as DeliveryDetailPanel above: staff can review exactly what
+// a customer picked without leaving this table (previously required opening
+// Jotform's own dashboard, with no link from here to the right submission at
+// all). Resolves each stored {brand, code} pair back to a real catalog entry
+// server-side data was already validated against, rather than trusting
+// whatever's in the snapshot at face value.
+function resolveColorSelection(sel) {
+  if (!sel) return null;
+  if (sel.brand === 'cardinal') return findCardinalByCode(sel.code);
+  if (sel.brand === 'prismatic') return findPrismaticBySku(sel.code);
+  if (sel.brand === 'vinyl') return findVinylByName(sel.code);
+  return null;
+}
+
+function ColorSelectionDetailPanel({ order }) {
+  const s = order.colorSelectionSnapshot || {};
+  const inputs = requiredColorInputs(order.productType) || [];
+
+  return (
+    <div style={{ padding: '16px 20px', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
+      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12 }}>
+        🎨 Color &amp; Product Selections — {order.name}
+      </div>
+
+      {inputs.length === 0 && (
+        <div style={{ fontSize: 13, color: 'var(--mut)' }}>
+          This order&apos;s product type isn&apos;t configured for the native picker — selections shown here may be incomplete or from an earlier configuration.
+        </div>
+      )}
+
+      {inputs.map((input) => (
+        <div key={input.input} style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: 'var(--mut)', textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: 6 }}>
+            {input.label}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 28px' }}>
+            {input.parts.map((part) => {
+              const color = resolveColorSelection(s.selections?.[input.input]?.[part]);
+              return (
+                <div key={part} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 160 }}>
+                  {color && (
+                    color.photo
+                      ? <img src={color.photo} alt="" style={{ width: 20, height: 20, borderRadius: 4, objectFit: 'cover', flex: 'none' }} />
+                      : <span style={{ width: 20, height: 20, borderRadius: 4, background: color.hex, border: '1px solid var(--line)', flex: 'none', display: 'inline-block' }} />
+                  )}
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--mut)' }}>{PART_LABELS[part] || part}</div>
+                    <div style={{ fontSize: 13 }}>{color ? `${color.name}${color.code || color.sku ? ` (${color.code || color.sku})` : ''}` : '—'}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+
+      <div style={{ display: 'flex', gap: '16px 28px', flexWrap: 'wrap', marginTop: 4 }}>
+        <DeliveryField label="Total Upcharge" value={typeof s.totalUpcharge === 'number' ? `$${s.totalUpcharge.toLocaleString()}` : undefined} />
+        <DeliveryField label="Confirmed" value={s.confirmedAt ? new Date(s.confirmedAt).toLocaleString() : 'Not yet confirmed'} />
+      </div>
     </div>
   );
 }

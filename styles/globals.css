@@ -725,6 +725,15 @@ tr:hover td { background: #fcfbf7; }
 }
 .cs-card-body { padding: 12px 14px 14px; text-align: center; }
 .cs-card-name { font-size: 14.5px; font-weight: 600; line-height: 1.3; }
+.cs-card-code { font-size: 11.5px; color: var(--mut); font-family: monospace; margin-top: 2px; }
+/* Flags a swatch that's an exact catalog-code match for a color already
+   picked on another part of this input — see cs-prior-picks below, the
+   two features answer the same "did I pick the wrong white?" requirement
+   from two different angles (a reference list, and an in-grid callout). */
+.cs-card-reuse {
+  display: inline-block; margin-top: 6px; font-size: 10.5px; font-weight: 700;
+  color: #1e4a7a; background: var(--sky-lt); border-radius: 6px; padding: 3px 7px;
+}
 .cs-card-inspect {
   width: 100%; display: block; padding: 10px 8px;
   background: var(--moss-lt); color: var(--moss-dk); font-size: 13px; font-weight: 600;
@@ -804,6 +813,47 @@ tr:hover td { background: #fcfbf7; }
   background: var(--sky-lt); border: 1px solid #b0c8e8; color: #1e4a7a;
   padding: 11px 16px; border-radius: 10px; font-size: 13px; margin-bottom: 18px;
 }
+
+/* Confirms a pick immediately and offers a one-click path to the next part
+   still needing a color — direct customer feedback (2026-09-02): after
+   choosing a color, customers weren't confident it had saved and had to
+   find their own way back to keep going. Sticky so it stays reachable as
+   the grid scrolls; the continue button uses .btn-sun (the same red already
+   used elsewhere for the un-done checklist icon) specifically to stand out
+   from the moss-green "selected" state instead of blending into it. */
+.cs-continue-bar {
+  position: sticky; bottom: 12px; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  background: #fff; border: 1px solid var(--ok); box-shadow: var(--shadow);
+  padding: 12px 16px; border-radius: 12px; margin-top: 16px;
+}
+.cs-continue-msg { font-size: 13.5px; color: var(--ok); font-weight: 600; }
+.cs-continue-msg strong { color: var(--ink); }
+.cs-continue-actions { display: flex; gap: 8px; flex: none; }
+
+/* Reference strip of what's already been picked for the other parts of
+   this input — always visible while browsing a part's grid. Direct
+   requirement (2026-09-02): "if they pick white for the legs, I want them
+   to be able to see that they picked white when they move on to the
+   horizontal beams" — eliminates having to remember or navigate away to
+   compare. */
+.cs-prior-picks { margin-bottom: 16px; }
+.cs-prior-picks-label {
+  display: block; margin-bottom: 8px; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--mut);
+}
+.cs-prior-picks-list { display: flex; gap: 10px; flex-wrap: wrap; }
+.cs-prior-pick {
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--paper);
+  padding: 6px 12px 6px 6px;
+}
+.cs-prior-pick-img, .cs-prior-pick-dot { width: 30px; height: 30px; border-radius: 6px; flex: none; object-fit: cover; }
+.cs-prior-pick-dot { border: 1px solid var(--line); }
+.cs-prior-pick-text { display: flex; flex-direction: column; gap: 1px; line-height: 1.25; }
+.cs-prior-pick-part { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--mut); }
+.cs-prior-pick-name { font-size: 12.5px; font-weight: 600; }
+.cs-prior-pick-code { margin-left: 5px; font-size: 11px; font-weight: 400; color: var(--mut); font-family: monospace; }
 
 @media (max-width: 560px) {
   .cs-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }

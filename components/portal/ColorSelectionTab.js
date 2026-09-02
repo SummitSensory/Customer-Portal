@@ -49,6 +49,44 @@ function inputIsComplete(input, selections) {
   return input.parts.every((p) => partIsFilled(selections, input.input, p));
 }
 
+// Where "Select & continue" lands: the rest of the parts in the input just
+// worked on (in order, wrapping past any earlier ones that got skipped),
+// then the next input on the checklist that still has something unfilled.
+// Doesn't scan backwards past the starting input — that's what the
+// checklist itself is for — this is only forward progress from where the
+// customer just was.
+function findNextIncompletePart(requiredInputs, selections, fromInputKey, fromPart) {
+  const inputIdx = requiredInputs.findIndex((i) => i.input === fromInputKey);
+  if (inputIdx === -1) return null;
+  const fromInput = requiredInputs[inputIdx];
+  const partIdx = fromInput.parts.indexOf(fromPart);
+  const rest = [...fromInput.parts.slice(partIdx + 1), ...fromInput.parts.slice(0, partIdx)];
+  const nextPart = rest.find((p) => !partIsFilled(selections, fromInputKey, p));
+  if (nextPart) return { input: fromInput, part: nextPart };
+
+  for (let i = inputIdx + 1; i < requiredInputs.length; i++) {
+    const candidate = requiredInputs[i];
+    const part = candidate.parts.find((p) => !partIsFilled(selections, candidate.input, p));
+    if (part) return { input: candidate, part };
+  }
+  return null;
+}
+
+// What's already been picked for the OTHER parts of this same input — e.g.
+// while choosing Horizontal Beams, what Legs was already set to. Direct
+// requirement (2026-09-02): "if they pick white for the legs, I want them
+// to be able to see that they picked white when they move on to the
+// horizontal beams... eliminate a possible mistake of choosing the wrong
+// white by accident." Scoped to this one input (not every input on the
+// order) — that's the comparison that actually matters; unrelated inputs
+// like Mat & Pad Color aren't a "did I pick the same white" risk.
+function getOtherPicks(input, selections, currentPart) {
+  return input.parts
+    .filter((p) => p !== currentPart)
+    .map((p) => ({ part: p, color: resolveSelectedColor(selections?.[input.input]?.[p]) }))
+    .filter((p) => p.color);
+}
+
 // ── Swatch grid (brand-aware: cardinal photos, prismatic/vinyl flat swatches) ──
 // REDESIGNED (real customer feedback from the preview, 2026-09-01): swatches
 // were too small, every card wasn't the same size, and the "view larger"
@@ -58,7 +96,7 @@ function inputIsComplete(input, selections) {
 // a full-width "View Larger" button in normal document flow — it can never
 // escape its own card because it's no longer position:absolute) so the
 // zoom action is impossible to miss and impossible to lose track of.
-function SwatchGrid({ colors, selected, onSelect, onInspect }) {
+function SwatchGrid({ colors, selected, onSelect, onInspect, otherPicks = [] }) {
   if (!colors.length) {
     return <div className="empty"><p>No colors match your search.</p></div>;
   }
@@ -67,6 +105,13 @@ function SwatchGrid({ colors, selected, onSelect, onInspect }) {
       {colors.map((c) => {
         const isSelected = selected?.code === (c.code || c.sku || c.name) && selected?.brand === c.brand;
         const id = c.code || c.sku || c.name;
+        // Direct requirement (2026-09-02): flag a swatch here that's an
+        // exact match (same catalog code, not just the same display name —
+        // two different codes can share a name, see displayColorName's own
+        // header) for a color already picked on another part of this
+        // input, so "is this the same white as Legs?" doesn't require an
+        // eyeballed comparison against the reference strip above.
+        const reusedFor = otherPicks.filter((op) => (op.color.code || op.color.sku || op.color.name) === id);
         return (
           <div className={`cs-card${isSelected ? ' selected' : ''}`} key={`${c.brand}-${id}`}>
             <button
@@ -85,6 +130,10 @@ function SwatchGrid({ colors, selected, onSelect, onInspect }) {
               </div>
               <div className="cs-card-body">
                 <div className="cs-card-name">{displayColorName(c)}</div>
+                {(c.code || c.sku) && <div className="cs-card-code">{c.code || c.sku}</div>}
+                {reusedFor.length > 0 && (
+                  <div className="cs-card-reuse">Also used for {reusedFor.map((r) => PART_LABELS[r.part] || r.part).join(', ')}</div>
+                )}
               </div>
             </button>
             <button
@@ -96,6 +145,55 @@ function SwatchGrid({ colors, selected, onSelect, onInspect }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// Confirms a pick and offers a one-click path to the next part still
+// needing a color. Direct customer feedback (2026-09-02): "once they select
+// a color, maybe add a button that pops up... that says 'select and
+// continue'... saves them from hitting the back button" — and separately,
+// something on-screen confirming the pick actually saved, not just the
+// small checkmark on the swatch itself. Shown fresh after every click (see
+// justPicked in the pickers below); "Keep browsing" just dismisses it in
+// case they want to compare against another color instead of moving on.
+function ContinueBar({ color, onContinue, onDismiss }) {
+  return (
+    <div className="cs-continue-bar" role="status">
+      <span className="cs-continue-msg">✓ <strong>{displayColorName(color)}</strong> selected — saved</span>
+      <div className="cs-continue-actions">
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onDismiss}>Keep browsing</button>
+        <button type="button" className="btn btn-sun btn-sm" onClick={onContinue}>Select &amp; continue →</button>
+      </div>
+    </div>
+  );
+}
+
+// Reference strip of what's already been picked for the other parts of
+// this same input — always visible while browsing this part's grid, so a
+// customer never has to leave the screen (or trust memory) to compare "is
+// this the same white I picked for Legs?" Direct requirement (2026-09-02).
+function PriorPicksStrip({ otherPicks }) {
+  if (!otherPicks.length) return null;
+  return (
+    <div className="cs-prior-picks">
+      <span className="cs-prior-picks-label">Already chosen for this input</span>
+      <div className="cs-prior-picks-list">
+        {otherPicks.map(({ part, color }) => (
+          <div className="cs-prior-pick" key={part}>
+            {color.photo
+              ? <img className="cs-prior-pick-img" src={color.photo} alt="" />
+              : <span className="cs-prior-pick-dot" style={{ background: color.hex }} />}
+            <span className="cs-prior-pick-text">
+              <span className="cs-prior-pick-part">{PART_LABELS[part] || part}</span>
+              <span className="cs-prior-pick-name">
+                {displayColorName(color)}
+                {(color.code || color.sku) && <span className="cs-prior-pick-code">{color.code || color.sku}</span>}
+              </span>
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -144,13 +242,20 @@ function InspectModal({ color, onClose }) {
 }
 
 // ── One structural part's picker (Cardinal/Prismatic toggle + search) ──
-function StructurePartPicker({ part, selection, onChange, onBack }) {
+function StructurePartPicker({ part, selection, onChange, onBack, onContinue, input, selections }) {
   const [brand, setBrand] = useState(selection?.brand || 'cardinal');
   const [search, setSearch] = useState('');
   const [finish, setFinish] = useState('');
   const [family, setFamily] = useState('');
   const [inspecting, setInspecting] = useState(null);
+  const [justPicked, setJustPicked] = useState(null);
 
+  function handleSelect(c) {
+    onChange({ brand: c.brand, code: c.code || c.sku });
+    setJustPicked(c);
+  }
+
+  const otherPicks = useMemo(() => getOtherPicks(input, selections, part), [input, selections, part]);
   const cardinal = useMemo(() => listCardinalColors(), []);
   const prismatic = useMemo(() => listPrismaticColors(), []);
   const finishes = useMemo(() => cardinalFinishes(), []);
@@ -197,22 +302,34 @@ function StructurePartPicker({ part, selection, onChange, onBack }) {
         )}
       </div>
 
+      <PriorPicksStrip otherPicks={otherPicks} />
       <SwatchGrid
         colors={filtered}
         selected={selection}
-        onSelect={(c) => onChange({ brand: c.brand, code: c.code || c.sku })}
+        onSelect={handleSelect}
         onInspect={setInspecting}
+        otherPicks={otherPicks}
       />
       <InspectModal color={inspecting} onClose={() => setInspecting(null)} />
+      {justPicked && (
+        <ContinueBar color={justPicked} onContinue={onContinue} onDismiss={() => setJustPicked(null)} />
+      )}
     </>
   );
 }
 
-function MatPadPartPicker({ part, selection, onChange, onBack }) {
+function MatPadPartPicker({ part, selection, onChange, onBack, onContinue, input, selections }) {
   const [search, setSearch] = useState('');
   const [inspecting, setInspecting] = useState(null);
+  const [justPicked, setJustPicked] = useState(null);
   const list = useMemo(() => listVinylColors(), []);
   const filtered = list.filter((c) => !search.trim() || c.name.toLowerCase().includes(search.trim().toLowerCase()));
+  const otherPicks = useMemo(() => getOtherPicks(input, selections, part), [input, selections, part]);
+
+  function handleSelect(c) {
+    onChange({ brand: 'vinyl', code: c.name });
+    setJustPicked(c);
+  }
 
   return (
     <>
@@ -225,13 +342,18 @@ function MatPadPartPicker({ part, selection, onChange, onBack }) {
         onChange={(e) => setSearch(e.target.value)}
         style={{ marginBottom: 14, maxWidth: 320 }}
       />
+      <PriorPicksStrip otherPicks={otherPicks} />
       <SwatchGrid
         colors={filtered}
         selected={selection}
-        onSelect={(c) => onChange({ brand: 'vinyl', code: c.name })}
+        onSelect={handleSelect}
         onInspect={setInspecting}
+        otherPicks={otherPicks}
       />
       <InspectModal color={inspecting} onClose={() => setInspecting(null)} />
+      {justPicked && (
+        <ContinueBar color={justPicked} onContinue={onContinue} onDismiss={() => setJustPicked(null)} />
+      )}
     </>
   );
 }
@@ -544,6 +666,27 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     }
   }, [queueSave, showToast]);
 
+  // Drives "Select & continue" — jumps straight to the next part still
+  // needing a color instead of leaving the customer to find their own way
+  // back via Back → part list → next part. Reads latestSelectionsRef (not
+  // the possibly-one-render-behind `selections` state) for the same
+  // stale-snapshot reason queueSave does.
+  const handleContinueAfterSelect = useCallback((inputKey, part) => {
+    const snapshot = latestSelectionsRef.current;
+    const next = findNextIncompletePart(requiredInputs, snapshot, inputKey, part);
+    if (next) {
+      setView(next.input);
+      setActivePart(next.part);
+      return;
+    }
+    if (requiredInputs.every((i) => inputIsComplete(i, snapshot))) {
+      setView('summary');
+      return;
+    }
+    setView(requiredInputs.find((i) => i.input === inputKey) || 'checklist');
+    setActivePart(null);
+  }, [requiredInputs]);
+
   async function handleConfirm() {
     setConfirming(true);
     try {
@@ -611,10 +754,14 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     const PartPicker = input.input === COLOR_INPUT.MAT_PAD_COLOR ? MatPadPartPicker : StructurePartPicker;
     body = (
       <PartPicker
+        key={`${input.input}-${activePart}`}
         part={activePart}
+        input={input}
+        selections={selections}
         selection={selections?.[input.input]?.[activePart]}
         onChange={(value) => handlePartChange(input.input, activePart, value)}
         onBack={() => setActivePart(null)}
+        onContinue={() => handleContinueAfterSelect(input.input, activePart)}
       />
     );
   } else if (view !== 'checklist') {

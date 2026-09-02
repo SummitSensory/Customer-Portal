@@ -12,7 +12,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   listCardinalColors, listPrismaticColors, listVinylColors,
-  cardinalFinishes, prismaticFamilies, resolveSelectedColor, computeLineItemPricing,
+  cardinalFinishes, prismaticFamilies, prismaticFinishes, resolveSelectedColor, computeLineItemPricing,
   displayColorName, standardDesignation,
 } from '../../lib/colorCatalog';
 import { COLOR_INPUT, PART_LABELS } from '../../lib/colorRequirements';
@@ -258,14 +258,26 @@ function StructurePartPicker({ part, selection, onChange, onBack, onContinue, in
   const otherPicks = useMemo(() => getOtherPicks(input, selections, part), [input, selections, part]);
   const cardinal = useMemo(() => listCardinalColors(), []);
   const prismatic = useMemo(() => listPrismaticColors(), []);
-  const finishes = useMemo(() => cardinalFinishes(), []);
+  const cardinalFinishOptions = useMemo(() => cardinalFinishes(), []);
+  const prismaticFinishOptions = useMemo(() => prismaticFinishes(), []);
   const families = useMemo(() => prismaticFamilies(), []);
 
+  // Switching brand resets both filters rather than carrying a stale value
+  // across — Cardinal and Prismatic have entirely different finish option
+  // sets (and only Prismatic has a family filter at all), so a value picked
+  // under one brand has no meaning under the other.
+  function handleBrandChange(next) {
+    setBrand(next);
+    setFinish('');
+    setFamily('');
+  }
+
   const list = brand === 'cardinal' ? cardinal : prismatic;
+  const finishOptions = brand === 'cardinal' ? cardinalFinishOptions : prismaticFinishOptions;
   const filtered = list.filter((c) => {
     const q = search.trim().toLowerCase();
     const matchesSearch = !q || c.name.toLowerCase().includes(q) || (c.code || c.sku || '').toLowerCase().includes(q);
-    const matchesFinish = brand !== 'cardinal' || !finish || c.finish === finish;
+    const matchesFinish = !finish || c.finish === finish;
     const matchesFamily = brand !== 'prismatic' || !family || c.family === family;
     return matchesSearch && matchesFinish && matchesFamily;
   });
@@ -276,8 +288,8 @@ function StructurePartPicker({ part, selection, onChange, onBack, onContinue, in
       <h3 style={{ fontSize: 16, marginBottom: 10 }}>{PART_LABELS[part] || part}</h3>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-        <button type="button" className={`chip${brand === 'cardinal' ? ' on' : ''}`} onClick={() => setBrand('cardinal')}>Cardinal Powder Coat</button>
-        <button type="button" className={`chip${brand === 'prismatic' ? ' on' : ''}`} onClick={() => setBrand('prismatic')}>Prismatic (+$500 first / +$300 each additional)</button>
+        <button type="button" className={`chip${brand === 'cardinal' ? ' on' : ''}`} onClick={() => handleBrandChange('cardinal')}>Cardinal Powder Coat</button>
+        <button type="button" className={`chip${brand === 'prismatic' ? ' on' : ''}`} onClick={() => handleBrandChange('prismatic')}>Prismatic (+$500 first / +$300 each additional)</button>
       </div>
 
       <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
@@ -288,18 +300,16 @@ function StructurePartPicker({ part, selection, onChange, onBack, onContinue, in
           onChange={(e) => setSearch(e.target.value)}
           style={{ flex: 1, minWidth: 200 }}
         />
-        {brand === 'cardinal' && (
-          <select value={finish} onChange={(e) => setFinish(e.target.value)} style={{ maxWidth: 180 }}>
-            <option value="">All finishes</option>
-            {finishes.map((f) => <option key={f} value={f}>{f}</option>)}
-          </select>
-        )}
         {brand === 'prismatic' && (
           <select value={family} onChange={(e) => setFamily(e.target.value)} style={{ maxWidth: 180 }}>
             <option value="">All color families</option>
             {families.map((f) => <option key={f} value={f}>{f}</option>)}
           </select>
         )}
+        <select value={finish} onChange={(e) => setFinish(e.target.value)} style={{ maxWidth: 180 }}>
+          <option value="">All finishes</option>
+          {finishOptions.map((f) => <option key={f} value={f}>{f}</option>)}
+        </select>
       </div>
 
       <PriorPicksStrip otherPicks={otherPicks} />

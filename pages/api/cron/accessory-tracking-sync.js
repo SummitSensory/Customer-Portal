@@ -31,7 +31,7 @@
 // item gets its first onboarding.
 
 import { getAllAccessoryItems, updateAccessoryCarrierStatus, getAllOrders, resolveDeliveryContacts } from '../../../lib/monday';
-import { trackShipment, onboardShipment } from '../../../lib/aftership';
+import { trackShipment, onboardShipment, buildTrackingTitle } from '../../../lib/aftership';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
 
@@ -87,8 +87,8 @@ export default async function handler(req, res) {
       const orders = await getAllOrders();
       await mapWithConcurrency(orders, SYNC_CONCURRENCY, async (order) => {
         const shipments = [
-          { slug: order.frameCarrierSlug, number: order.frameTrackingId },
-          { slug: order.matsCarrierSlug, number: order.matsTrackingId },
+          { key: 'frame', slug: order.frameCarrierSlug, number: order.frameTrackingId },
+          { key: 'mats', slug: order.matsCarrierSlug, number: order.matsTrackingId },
         ].filter((s) => s.slug && s.number);
         if (!shipments.length) return;
         // Direct requirement (2026-09-03): register the customer's own
@@ -100,7 +100,12 @@ export default async function handler(req, res) {
         const { primary, secondary } = resolveDeliveryContacts(order);
         const contacts = [primary, secondary].filter(Boolean);
         for (const s of shipments) {
-          const id = await onboardShipment(s.slug, s.number, { title: order.name, orderId: order.id, customerName: order.name, contacts });
+          // Disambiguated title (2026-09-03): a customer with both a Frame
+          // and a Mats shipment previously got the identical order name on
+          // both AfterShip trackings — nothing said which shipment a given
+          // notification was about. See lib/aftership.js's buildTrackingTitle.
+          const title = buildTrackingTitle(order.name, s.key);
+          const id = await onboardShipment(s.slug, s.number, { title, orderId: order.id, customerName: order.name, contacts });
           if (id) framesMatsOnboarded++;
         }
       });

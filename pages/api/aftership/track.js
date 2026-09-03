@@ -12,7 +12,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
 import { getOrderById, resolveDeliveryContacts } from '../../../lib/monday';
-import { trackShipment } from '../../../lib/aftership';
+import { trackShipment, buildTrackingTitle } from '../../../lib/aftership';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end();
@@ -23,6 +23,7 @@ export default async function handler(req, res) {
   // Auth — staff session bypasses the ownership check
   const staffSession = await getServerSession(req, res, authOptions);
   let order = null;
+  let shipmentKey = null;
 
   if (!staffSession) {
     const cookies = parse(req.headers.cookie || '');
@@ -31,14 +32,16 @@ export default async function handler(req, res) {
 
     order = await getOrderById(customerSession.orderId);
 
+    const matsNumbers = order?.matTracking && order.matTracking !== 'N/A'
+      ? order.matTracking.split(',').map(t => t.trim())
+      : [];
+
     // The requested number must belong to this order (any shipment field).
     const known = [
       order?.frameTrackingId,
       order?.matsTrackingId,
       order?.trackingNumber,
-      ...(order?.matTracking && order.matTracking !== 'N/A'
-        ? order.matTracking.split(',').map(t => t.trim())
-        : []),
+      ...matsNumbers,
       // Therapy Equipment & Accessories — tracking numbers from Monday subitems
       ...(order?.accessoryItems || []).map(a => a.trackingNumber),
     ].filter(Boolean);
@@ -46,6 +49,12 @@ export default async function handler(req, res) {
     if (!known.includes(number)) {
       return res.status(403).json({ error: 'Forbidden.' });
     }
+
+    // Which shipment this is, for a disambiguated AfterShip title (see
+    // buildTrackingTitle) — only Frame/Mats get one; a generic/accessory
+    // tracking number falls back to the bare order name, same as before.
+    if (number === order?.frameTrackingId) shipmentKey = 'frame';
+    else if (number === order?.matsTrackingId || matsNumbers.includes(number)) shipmentKey = 'mats';
   }
 
   try {
@@ -55,7 +64,7 @@ export default async function handler(req, res) {
     // for the customer-session path — a staff lookup has no `order` loaded.
     const { primary, secondary } = order ? resolveDeliveryContacts(order) : {};
     const tracking = await trackShipment(slug, number, {
-      title: order?.name,
+      title: buildTrackingTitle(order?.name, shipmentKey) || order?.name,
       orderId: order?.id,
       customerName: order?.name,
       contacts: [primary, secondary].filter(Boolean),

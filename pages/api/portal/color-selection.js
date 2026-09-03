@@ -126,20 +126,27 @@ export default async function handler(req, res) {
   // before the write narrows that window down to the gap between this read
   // and the write itself, instead of the whole request's duration — as
   // close to atomic as this architecture allows.
-  if (!confirm) {
-    let freshOrder;
-    try {
-      freshOrder = await getOrderById(order.id);
-    } catch (err) {
-      console.error('color-selection: re-check before save failed:', err.message);
-      return res.status(500).json({ error: 'Error saving. Please try again.' });
-    }
-    if (freshOrder?.colorSelectionSnapshot?.confirmedAt) {
-      return res.status(409).json({
-        error: 'Color selections were already confirmed and cannot be changed. Contact us if you need to make a correction.',
-        confirmedAt: freshOrder.colorSelectionSnapshot.confirmedAt,
-      });
-    }
+  //
+  // Runs for BOTH confirm and autosave (found in a later review pass,
+  // 2026-09-03, that this was originally scoped to autosave only): two
+  // concurrent CONFIRM requests (a double-click, two open tabs) both read
+  // confirmedAt as null at the top of this handler and, without this
+  // check applying to them too, would both proceed to write — a duplicate
+  // "PORTAL: Color Selections" audit entry and a redundant completion-sync
+  // call, with whichever write lands last silently winning. Re-checking
+  // here closes that the same way it already does for autosave.
+  let freshOrder;
+  try {
+    freshOrder = await getOrderById(order.id);
+  } catch (err) {
+    console.error('color-selection: re-check before save failed:', err.message);
+    return res.status(500).json({ error: 'Error saving. Please try again.' });
+  }
+  if (freshOrder?.colorSelectionSnapshot?.confirmedAt) {
+    return res.status(409).json({
+      error: 'Color selections were already confirmed and cannot be changed. Contact us if you need to make a correction.',
+      confirmedAt: freshOrder.colorSelectionSnapshot.confirmedAt,
+    });
   }
 
   try {

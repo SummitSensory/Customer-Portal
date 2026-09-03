@@ -573,7 +573,7 @@ function ConfirmedView({ requiredInputs, selections, confirmedAt }) {
         {lines.map((line) => (
           <div className="cs-summary-row" key={`${line.inputKey}-${line.part}`}>
             <span className="cs-summary-part">{PART_LABELS[line.part] || line.part}</span>
-            <span>{line.color ? (<><span className="cs-summary-brand">{line.selection.brand}</span> — {line.color.name}</>) : '—'}</span>
+            <span>{line.color ? (<><span className="cs-summary-brand">{line.selection.brand}</span> — {displayColorName(line.color)}</>) : '—'}</span>
             <span className="cs-summary-code">{line.color ? (line.color.code || line.color.sku || '—') : '—'}</span>
             <span className="cs-summary-amount">{line.amount > 0 ? `$${line.amount.toLocaleString()}` : '—'}</span>
           </div>
@@ -733,7 +733,17 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
       setView('summary');
       return;
     }
-    setView(requiredInputs.find((i) => i.input === inputKey) || 'checklist');
+    // Found by independent code review (2026-09-03): `inputKey` is always
+    // one of requiredInputs' own keys (it's the input the customer was just
+    // working on), so `requiredInputs.find((i) => i.input === inputKey)`
+    // always matches — the `|| 'checklist'` fallback was unreachable dead
+    // code. That meant landing back on the just-finished input's OWN part
+    // list (already fully complete, since findNextIncompletePart already
+    // confirmed nothing forward is left) instead of the checklist, exactly
+    // when some EARLIER input is still incomplete — contradicting this
+    // function's own intent (see findNextIncompletePart's comment: going
+    // to the checklist is "what the checklist itself is for").
+    setView('checklist');
     setActivePart(null);
   }, [requiredInputs]);
 
@@ -774,7 +784,19 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     );
   }
 
-  if (!requiredInputs.length) {
+  // Found by independent code review (2026-09-03): this used to run BEFORE
+  // the confirmedAt check below, so a customer whose order was already
+  // confirmed — but whose productType was later edited on Monday to a value
+  // requiredColorInputs() no longer recognizes — hit this "not yet
+  // available" card instead of their own locked ConfirmedView. Their real,
+  // paid, confirmed selections appeared to have vanished entirely, the same
+  // failure class findOrphanedSelections was built to prevent, just
+  // bypassed one guard earlier. Checking confirmedAt first means
+  // ConfirmedView always renders once an order is confirmed, regardless of
+  // what the CURRENT productType maps to — with empty requiredInputs,
+  // findOrphanedSelections correctly treats every stored selection as an
+  // orphan and still displays all of them, rather than showing nothing.
+  if (!requiredInputs.length && !confirmedAt) {
     return (
       <div className="card">
         <div className="empty">

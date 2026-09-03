@@ -22,7 +22,7 @@ import { requiredColorInputs } from '../../../lib/colorRequirements';
 // which throws at import time if NEXTAUTH_SECRET is unset. This route has
 // no business needing that at all; see the lib module's header comment for
 // the real, confirmed bug that came from getting this wrong the first time.
-import { validateColorSelectionData, computeTotalUpcharge } from '../../../lib/colorSelectionValidation';
+import { validatePresentSelections, validateColorSelectionData, sanitizeSelections, computeTotalUpcharge } from '../../../lib/colorSelectionValidation';
 
 const DEMO_PRODUCT_TYPE = 'Summit Adventure Series: Custom Sensory Gym';
 const VIEWER_COOKIE = 'summit_demo_viewer';
@@ -95,20 +95,34 @@ export default async function handler(req, res) {
   const { selections, confirm } = req.body || {};
   if (!selections || typeof selections !== 'object') return res.status(400).json({ error: 'selections required.' });
 
+  // Found by independent code review (2026-09-03): this file's own header
+  // claims it "behaves identically to what customers will eventually get,"
+  // but the autosave path (confirm falsy) skipped validation entirely —
+  // only confirm ran validateColorSelectionData — and never sanitized the
+  // stored object at all, unlike the real endpoint, which validates every
+  // present part on every save and whitelists to {brand, code} before
+  // persisting. Not a real security issue (in-memory, per-viewer, never
+  // touches Monday), but it made the demo genuinely behave differently
+  // from what it claims to demonstrate.
+  const presentSelectionsError = validatePresentSelections(demoOrder, selections);
+  if (presentSelectionsError) return res.status(400).json({ error: presentSelectionsError });
+
   if (confirm) {
     const validationError = validateColorSelectionData(demoOrder, selections);
     if (validationError) return res.status(400).json({ error: validationError });
   }
 
+  const cleanSelections = sanitizeSelections(demoOrder, selections);
+
   demoSnapshots.set(viewerId, {
-    selections,
+    selections: cleanSelections,
     confirmedAt: confirm ? new Date().toISOString() : null,
     lastSeenAt: Date.now(),
   });
 
   return res.status(200).json({
     ok: true,
-    totalUpcharge: computeTotalUpcharge(demoOrder, selections),
+    totalUpcharge: computeTotalUpcharge(demoOrder, cleanSelections),
     checklistSyncPending: false,
   });
 }

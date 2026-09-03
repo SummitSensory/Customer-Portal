@@ -271,7 +271,7 @@ describe('handler — auth and customer isolation', () => {
     expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
   });
 
-  it('does NOT re-check before write on a confirm request — only autosave needs the narrower race window closed, confirm already validates completeness itself', async () => {
+  it('DOES re-check before write on a confirm request too, not just autosave (found in a later review pass, 2026-09-03)', async () => {
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
     mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
 
@@ -279,8 +279,27 @@ describe('handler — auth and customer isolation', () => {
     const res = makeRes();
     await handler(req, res);
 
-    expect(mockGetOrderById).toHaveBeenCalledTimes(1);
+    expect(mockGetOrderById).toHaveBeenCalledTimes(2);
     expect(res.statusCode).toBe(200);
+  });
+
+  it('rejects a confirm request that was in flight when a DIFFERENT concurrent confirm already landed — closes the double-confirm race, not just the confirm-after-autosave one', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById
+      .mockResolvedValueOnce({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null })
+      .mockResolvedValueOnce({
+        id: 'real-order-123',
+        productType: ADVENTURE_SERIES,
+        colorSelectionSnapshot: { selections: fullValidSelections(), confirmedAt: '2026-09-03T12:00:00.000Z' },
+      });
+
+    const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(409);
+    expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
+    expect(mockPostTaggedUpdate).not.toHaveBeenCalled();
   });
 
   // Real gap found by independent code review (2026-09-02): neither

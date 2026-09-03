@@ -11,13 +11,11 @@
  * phase — see claude-project-docs's Color Selection Implementation Plan, §11.
  */
 
-import { parse } from 'cookie';
-import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
 import { getOrderById, postTaggedUpdate, markSectionCompleteSafe, writeColorSelectionSnapshot } from '../../../lib/monday';
-import { allowRequest } from '../../../lib/rateLimit';
 import { requiredColorInputs } from '../../../lib/colorRequirements';
 import { validatePresentSelections, validateColorSelectionData, computeTotalUpcharge, sanitizeSelections } from '../../../lib/colorSelectionValidation';
 import { reportCriticalFailure } from '../../../lib/monitoring';
+import { requireCustomerSession, loadSessionOrder, enforceRateLimit } from '../../../lib/apiAuth';
 
 // Re-exported for anything still importing these two from this file's own
 // module (kept for the existing test suite's import paths) — the real
@@ -29,19 +27,11 @@ import { reportCriticalFailure } from '../../../lib/monitoring';
 export { validateColorSelectionData, computeTotalUpcharge };
 
 export default async function handler(req, res) {
-  const cookies = parse(req.headers.cookie || '');
-  const session = await verifyCustomerSession(cookies[SESSION_COOKIE]);
-  if (!session) return res.status(401).json({ error: 'Not authenticated.' });
-  if (!session.orderId) return res.status(400).json({ error: 'No order selected for this session.' });
+  const session = await requireCustomerSession(req, res);
+  if (!session) return;
 
-  let order;
-  try {
-    order = await getOrderById(session.orderId);
-    if (!order) return res.status(404).json({ error: 'Order not found.' });
-  } catch (err) {
-    console.error('color-selection: failed to load order:', err.message);
-    return res.status(500).json({ error: 'Failed to load order.' });
-  }
+  const order = await loadSessionOrder(session, res, { logPrefix: 'color-selection' });
+  if (!order) return;
 
   if (req.method === 'GET') {
     const inputs = requiredColorInputs(order.productType);
@@ -67,9 +57,7 @@ export default async function handler(req, res) {
   // touch the caller's own order (session-bound), so a much higher ceiling
   // is safe here — still a real backstop against a runaway client loop,
   // just sized for how this specific endpoint is actually used.
-  if (!allowRequest(`color-selection:${session.email}`, { maxRequests: 100, windowMs: 60_000 })) {
-    return res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' });
-  }
+  if (!enforceRateLimit(res, `color-selection:${session.email}`, { maxRequests: 100, windowMs: 60_000 })) return;
 
   // Locked the moment confirmedAt is set — matches what the customer was
   // told before they confirmed ("This Cannot Be Undone"). The picker UI
@@ -157,6 +145,34 @@ export default async function handler(req, res) {
   }
 
   if (confirm) {
+    // Decision (2026-09-03): Monday's API has no compare-and-swap on a text
+    // column, so the re-check above narrows the confirm/autosave race to a
+    // single read-then-write gap but can't eliminate it outright — a real,
+    // permanent platform constraint, not something this app can code around.
+    // What CAN be done is detect the rare case a race actually lands: read
+    // back immediately after writing, and if what's now stored doesn't
+    // match what this request just wrote, a different concurrent request's
+    // write landed in between. This can't undo that (whichever write is
+    // stored now is the real, final state — last-write-wins is an
+    // acceptable resolution, not corruption), but it turns a silent,
+    // invisible race into one staff are actively alerted to and can check.
+    try {
+      const verifyOrder = await getOrderById(order.id);
+      const storedConfirmedAt = verifyOrder?.colorSelectionSnapshot?.confirmedAt;
+      if (storedConfirmedAt !== snapshot.confirmedAt) {
+        await reportCriticalFailure(
+          'color-selection-confirm-race',
+          `Order ${order.id}: two concurrent color-selection confirmations raced. This request wrote confirmedAt=${snapshot.confirmedAt}, but Monday now stores confirmedAt=${storedConfirmedAt} — a different request's write landed after this one. Worth a manual check that the stored selections are the intended final choice.`,
+          { orderId: order.id, thisRequestConfirmedAt: snapshot.confirmedAt, storedConfirmedAt }
+        );
+      }
+    } catch (err) {
+      // A failed verification READ doesn't mean the write itself failed —
+      // it already succeeded above. Log and move on rather than turning a
+      // successful confirmation into an error response over this.
+      console.error('color-selection: post-write race verification failed:', err.message);
+    }
+
     // Real gap found by independent code review (2026-09-02): this used to
     // be `.catch(console.error)` — the one write in this whole confirm path
     // that could fail silently with no signal to staff at all, unlike

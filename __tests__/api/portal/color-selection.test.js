@@ -40,6 +40,22 @@ function makeRes() {
   return res;
 }
 
+// The handler's confirm path now reads the order THREE times (initial load,
+// re-check-before-write, and a post-write race-detection verification —
+// 2026-09-03) — a plain mockResolvedValue(base) makes every call return the
+// same never-confirmed order, which the verification read would then
+// wrongly interpret as "a different request's write landed after mine"
+// (see the "confirm-race" test below for what a REAL mismatch looks like).
+// This reflects whatever was actually passed to writeColorSelectionSnapshot
+// once a write has happened, matching real behavior: Monday's read-your-
+// own-write is immediate, no eventual-consistency lag.
+function mockOrderReflectingWrites(base) {
+  mockGetOrderById.mockImplementation(() => {
+    const lastWrite = mockWriteColorSelectionSnapshot.mock.calls.at(-1);
+    return Promise.resolve(lastWrite ? { ...base, colorSelectionSnapshot: lastWrite[1] } : base);
+  });
+}
+
 function fullValidSelections() {
   return {
     structure_frame_paint: {
@@ -273,13 +289,14 @@ describe('handler — auth and customer isolation', () => {
 
   it('DOES re-check before write on a confirm request too, not just autosave (found in a later review pass, 2026-09-03)', async () => {
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
-    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockOrderReflectingWrites({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
 
     const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
     const res = makeRes();
     await handler(req, res);
 
-    expect(mockGetOrderById).toHaveBeenCalledTimes(2);
+    // 3 calls: initial load, re-check-before-write, post-write race check.
+    expect(mockGetOrderById).toHaveBeenCalledTimes(3);
     expect(res.statusCode).toBe(200);
   });
 
@@ -331,7 +348,7 @@ describe('handler — auth and customer isolation', () => {
   // alerting path as every other silent-failure class in this codebase.
   it('still returns success when the audit-trail update fails on confirm, but reports it rather than swallowing it', async () => {
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
-    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockOrderReflectingWrites({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
     mockPostTaggedUpdate.mockRejectedValue(new Error('Monday API unavailable'));
 
     const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
@@ -351,13 +368,57 @@ describe('handler — auth and customer isolation', () => {
 
   it('reports auditUpdatePending: false on the ordinary success path', async () => {
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
-    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockOrderReflectingWrites({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
 
     const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
     const res = makeRes();
     await handler(req, res);
 
     expect(res.body.auditUpdatePending).toBe(false);
+    expect(mockReportCriticalFailure).not.toHaveBeenCalled();
+  });
+
+  // Decision (2026-09-03): Monday's API has no compare-and-swap, so the
+  // re-check-before-write above narrows the confirm/autosave race to a
+  // single read-then-write gap but can't eliminate it outright. This is the
+  // additive detection layer: it can't prevent a genuinely simultaneous
+  // second write from landing after this one, but it does mean the race
+  // gets flagged for staff instead of silently going unnoticed.
+  it('reports a critical failure when a post-write read-back shows a DIFFERENT confirmation than this request just wrote — a race actually landed', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById
+      .mockResolvedValueOnce({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null }) // initial load
+      .mockResolvedValueOnce({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null }) // re-check
+      .mockResolvedValueOnce({ // post-write verification: a DIFFERENT confirmation is now stored
+        id: 'real-order-123',
+        productType: ADVENTURE_SERIES,
+        colorSelectionSnapshot: { selections: fullValidSelections(), confirmedAt: '2026-09-03T05:00:00.000Z' },
+      });
+
+    const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
+    const res = makeRes();
+    await handler(req, res);
+
+    // The write already succeeded from this request's own point of view —
+    // it must still report success, not retroactively fail the customer's
+    // action over a race it can only detect, not undo.
+    expect(res.statusCode).toBe(200);
+    expect(mockReportCriticalFailure).toHaveBeenCalledWith(
+      'color-selection-confirm-race',
+      expect.stringContaining('real-order-123'),
+      expect.objectContaining({ orderId: 'real-order-123' })
+    );
+  });
+
+  it('does NOT report a race when the post-write read-back correctly reflects the write that was just made', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockOrderReflectingWrites({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
     expect(mockReportCriticalFailure).not.toHaveBeenCalled();
   });
 });

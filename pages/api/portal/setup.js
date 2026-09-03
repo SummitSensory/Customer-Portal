@@ -11,10 +11,7 @@
  *   tax_exemption   — Yes/No status (color_mm55tjn2) + certificate upload (file_mm55t6kn)
  */
 
-import { parse } from 'cookie';
-import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
 import {
-  getOrderById,
   updateOrderColumn,
   postTaggedUpdate,
   markSectionCompleteSafe,
@@ -26,7 +23,7 @@ import {
   TAX_EXEMPT_YES_LABEL,
   TAX_EXEMPT_NO_LABEL,
 } from '../../../lib/monday';
-import { allowRequest } from '../../../lib/rateLimit';
+import { requireCustomerSession, loadSessionOrder, enforceRateLimit } from '../../../lib/apiAuth';
 
 // PORTAL-017: the Delivery tab's UI hides its form once an order has shipped
 // (order.stageIndex >= shippedIdx, see DeliveryTab in pages/portal/index.js),
@@ -117,15 +114,12 @@ export const config = {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
-  const cookies = parse(req.headers.cookie || '');
-  const session = await verifyCustomerSession(cookies[SESSION_COOKIE]);
-  if (!session) return res.status(401).json({ error: 'Not authenticated.' });
+  const session = await requireCustomerSession(req, res);
+  if (!session) return;
 
   // PORTAL-027: most tabs here trigger a team-notification email on every
   // save. See lib/rateLimit.js for the in-memory limiter's scope/limitations.
-  if (!allowRequest(`portal-setup:${session.email}`, { maxRequests: 20, windowMs: 60_000 })) {
-    return res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' });
-  }
+  if (!enforceRateLimit(res, `portal-setup:${session.email}`, { maxRequests: 20, windowMs: 60_000 })) return;
 
   const { tab, data } = req.body || {};
   if (!tab || !data) return res.status(400).json({ error: 'tab and data required.' });
@@ -133,13 +127,16 @@ export default async function handler(req, res) {
   const validationError = validateSetupData(tab, data);
   if (validationError) return res.status(400).json({ error: validationError });
 
-  let order;
-  try {
-    order = await getOrderById(session.orderId);
-    if (!order) return res.status(404).json({ error: 'Order not found.' });
-  } catch (err) {
-    return res.status(500).json({ error: 'Failed to load order.' });
-  }
+  // Extracted 2026-09-03 (shared with pages/api/portal/color-selection.js
+  // via lib/apiAuth.js) — now also fails closed with a clear 400 if a
+  // session somehow has no orderId (previously would have let
+  // getOrderById(undefined) behave however Monday's API responds to a
+  // missing item id), and logs a load failure instead of the previous
+  // silent 500. Real orderId is always present in practice (every session
+  // is created with one — see signCustomerSession in lib/auth.js), so this
+  // changes nothing for normal use.
+  const order = await loadSessionOrder(session, res, { logPrefix: 'portal-setup' });
+  if (!order) return;
 
   try {
     switch (tab) {

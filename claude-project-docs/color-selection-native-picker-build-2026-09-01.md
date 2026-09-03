@@ -52,7 +52,7 @@ Reported directly against the live `/color-preview` deployment (screenshot of du
 
 ## 2026-09-02/03 — pre-production audit, Monday column created, still blocked on 3 env vars
 
-Two full independent code-review passes against the branch (round 1 caught the Prismatic name collision, the confirm/autosave race, the payload whitelist, admin-panel orphan visibility, silent audit-trail failures, no rollback on failed autosave, the Resend crash blast radius, demo-endpoint cross-viewer collision; round 2 caught the identical orphan-visibility bug in the CUSTOMER-facing `ConfirmedView` — same root cause, missed on the first pass — plus a rate limit too low for real browsing, dead pricing code, and an unbounded demo-viewer map). All fixed, 105 tests passing, clean builds both times. Commits `ea4623b`, `efe0f3b`, `0956e52`, `9c96861`. **Fast-forward merged into `staging`** (safe — not customer-facing). Not yet merged to `main`, held for Bryan's explicit go per this doc's own established checkpoint culture.
+Two full independent code-review passes against the branch (round 1 caught the Prismatic name collision, the confirm/autosave race, the payload whitelist, admin-panel orphan visibility, silent audit-trail failures, no rollback on failed autosave, the Resend crash blast radius, demo-endpoint cross-viewer collision; round 2 caught the identical orphan-visibility bug in the CUSTOMER-facing `ConfirmedView` — same root cause, missed on the first pass — plus a rate limit too low for real browsing, dead pricing code, and an unbounded demo-viewer map). All fixed, 105 tests passing, clean builds both times. Commits `0956e52` (round 1) and `9c96861` (round 2) — NOT `ea4623b`/`efe0f3b`, which are the separate Cardinal-dedup/Prismatic-finish-filter work logged in the section above this one (a review of this doc itself caught this exact attribution wrong on a first pass; corrected here). **Fast-forward merged into `staging`** (safe — not customer-facing).
 
 **Verified directly against the real Manufacturing Process board (6533700776), not assumed:**
 - `MONDAY_COL_PORTAL_COLORS` (the DS-27 "customer finished this tab" checkmark) → already exists: `color_mm51hjph` ("Portal: Color"). Ready.
@@ -67,6 +67,19 @@ Two full independent code-review passes against the branch (round 1 caught the P
 
 All three need a Vercel redeploy after being set to take effect (env var changes don't apply retroactively to already-built deployments — same lesson as the original NEXTAUTH_SECRET incident earlier in this doc).
 
+## 2026-09-03 — all three env vars set, standalone lib/email.js hotfix, merged and LIVE
+
+All three env vars from the checklist above confirmed set by Bryan and verified working, not just claimed:
+- **Azure AD**: verified end-to-end against real production — pulled a live CSRF token, submitted an actual sign-in request, got back a valid Microsoft authorize URL with a properly-formed GUID `client_id`, followed it to Microsoft's own login server and got a real "Sign in to your account" page, zero AADSTS errors.
+- **Resend**: verified via Resend's own account (connected directly, `/mcp` → "claude.ai Resend") — domain `updates.summitsensory.com` shows verified, and a real login-code email to bryan@summitsensory.com shows `delivered` in Resend's log, timestamped after the redeploy. Two candidate API keys exist ("Customer Portal — Production" and "Vercel Integration," both created 2026-09-03 minutes apart) — sending works either way, which key is actually wired into Vercel is still unconfirmed but not blocking.
+- **`MONDAY_COL_COLOR_SNAPSHOT`**: confirmed set by Bryan.
+
+**Standalone hotfix, applied directly to `main` independently of the feature merge** (commit `8a7f0cd`): `lib/email.js` had the same eager-Resend-client-at-module-load fragility on `main` as the branch fixed — the key being correct again papered over it, didn't fix it. Applied the identical lazy-init fix straight to `main` as its own commit, verified clean build, deployed, confirmed `READY` and aliased to `portal.summitsensory.com` before touching anything else.
+
+**Merged `claude/color-selection-redesign` into `main`** (merge commit `e7f21ac`, `--no-ff`): clean merge, zero conflicts (main's standalone `lib/email.js` fix and the branch's identical fix converged automatically — verified byte-identical before merging). 105 tests passing on the actual merged tree, clean production build, both locally and on Vercel. Deployed and confirmed: `portal.summitsensory.com` alias points at this build, home page / admin redirect / auth providers all responding normally, zero new runtime errors in the following hours of real traffic.
+
+**Native Color Selection picker is live in production** for Adventure Series, Soar, Flex, and Therapy Mats & Pads orders. Every other product type is untouched (still Jotform).
+
 ## Repo state as of this doc
 
-Everything above lives on `claude/color-selection-redesign`, pushed to `origin/claude/color-selection-redesign` as of commit `9c96861`, and fast-forward merged into `staging` as of the same commit. **Not yet merged to `main`.** 105 tests passing, full production build clean. Deployed to a Vercel Preview URL (branch-linked) and to `staging`'s own preview; not to production.
+`main` is at merge commit `e7f21ac` (feature) on top of `8a7f0cd` (standalone `lib/email.js` hotfix) on top of `59bb80b` (prior main tip) — **deployed to production**, confirmed live and healthy. `staging` is at `cc432dd` (behind `main` by the `lib/email.js` hotfix and the merge itself, but functionally equivalent for anything staging is used for). `claude/color-selection-redesign` remains at `9c96861`, fully absorbed into `main`. 105 tests passing, full production build clean.

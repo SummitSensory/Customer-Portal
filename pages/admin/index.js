@@ -11,7 +11,7 @@ import dynamic from 'next/dynamic';
 import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
 import { isStaffMessage, stripPortalTags, messageDisplayName } from '../../lib/messageOrigin';
 import { requiredColorInputs, PART_LABELS } from '../../lib/colorRequirements';
-import { resolveSelectedColor, displayColorName } from '../../lib/colorCatalog';
+import { resolveSelectedColor, displayColorName, findOrphanedSelections } from '../../lib/colorCatalog';
 
 // Lazy-loaded — most staff sessions never open Settings in a given visit,
 // so its code (see components/admin/SettingsTab.js) shouldn't be part of
@@ -733,35 +733,6 @@ function DeliveryDetailPanel({ order }) {
   );
 }
 
-// Real bug found by independent code review (2026-09-02): this panel used
-// to derive which parts to render ONLY from requiredColorInputs(order.
-// productType) — the order's CURRENT productType. If that value is edited
-// on Monday after a customer already confirmed (e.g. a data correction,
-// or a genuine product-line change), the confirmed selections are still
-// sitting in the snapshot under the OLD productType's part keys (Adventure
-// Series's `legs`/`horizontal_beams`/etc. are entirely different keys from
-// Soar's `soar_frame` or Flex's `flex_frame` — see lib/colorRequirements.js)
-// — none of which match the NEW productType's parts, so every row silently
-// resolved to "—" with no indication anything was ever picked at all.
-// Scans the snapshot's OWN keys against the current requirements and
-// returns whatever isn't accounted for, so real confirmed data can never
-// go invisible just because productType changed after the fact.
-function findOrphanedSelections(order, currentInputs) {
-  const known = new Set();
-  currentInputs.forEach((input) => input.parts.forEach((part) => known.add(`${input.input}.${part}`)));
-
-  const orphans = [];
-  const selections = order.colorSelectionSnapshot?.selections || {};
-  for (const inputKey of Object.keys(selections)) {
-    for (const partKey of Object.keys(selections[inputKey] || {})) {
-      if (known.has(`${inputKey}.${partKey}`)) continue;
-      const color = resolveSelectedColor(selections[inputKey][partKey]);
-      if (color) orphans.push({ inputKey, partKey, color });
-    }
-  }
-  return orphans;
-}
-
 // Details, rendered inline in the Orders table from order.colorSelectionSnapshot
 // — same reasoning as DeliveryDetailPanel above: staff can review exactly what
 // a customer picked without leaving this table (previously required opening
@@ -776,7 +747,7 @@ function findOrphanedSelections(order, currentInputs) {
 function ColorSelectionDetailPanel({ order }) {
   const s = order.colorSelectionSnapshot || {};
   const inputs = requiredColorInputs(order.productType) || [];
-  const orphans = findOrphanedSelections(order, inputs);
+  const orphans = findOrphanedSelections(inputs, s.selections || {});
 
   return (
     <div style={{ padding: '16px 20px', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>

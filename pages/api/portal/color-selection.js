@@ -55,7 +55,19 @@ export default async function handler(req, res) {
 
   if (req.method !== 'POST') return res.status(405).end();
 
-  if (!allowRequest(`color-selection:${session.email}`, { maxRequests: 20, windowMs: 60_000 })) {
+  // Real gap found by independent code review (2026-09-02): every single
+  // swatch click autosaves (see handlePartChange in ColorSelectionTab.js) —
+  // unlike the other routes sharing lib/rateLimit.js's default (a form
+  // submitted once, or an email-triggering action worth throttling hard), a
+  // customer legitimately comparing colors across 131 Cardinal + 428
+  // Prismatic options can easily click through more than 20 in a minute.
+  // The 20/min default hitting a normal browsing session isn't a hardened
+  // limit, it's a false positive that silently reverted the customer's last
+  // pick with no retry. This route doesn't send email and can only ever
+  // touch the caller's own order (session-bound), so a much higher ceiling
+  // is safe here — still a real backstop against a runaway client loop,
+  // just sized for how this specific endpoint is actually used.
+  if (!allowRequest(`color-selection:${session.email}`, { maxRequests: 100, windowMs: 60_000 })) {
     return res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' });
   }
 

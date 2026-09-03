@@ -13,7 +13,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   listCardinalColors, listPrismaticColors, listVinylColors,
   cardinalFinishes, prismaticFamilies, prismaticFinishes, resolveSelectedColor, computeLineItemPricing,
-  displayColorName, standardDesignation,
+  displayColorName, standardDesignation, findOrphanedSelections,
 } from '../../lib/colorCatalog';
 import { COLOR_INPUT, PART_LABELS } from '../../lib/colorRequirements';
 import { createSaveQueue } from '../../lib/saveQueue';
@@ -551,6 +551,15 @@ function RunningTotal({ total }) {
 function ConfirmedView({ requiredInputs, selections, confirmedAt }) {
   const lines = computeLineItemPricing(requiredInputs, selections);
   const total = lines.reduce((sum, l) => sum + l.amount, 0);
+  // Real bug found by independent code review (2026-09-02) — the exact same
+  // gap already fixed on the admin side: requiredInputs reflects the
+  // order's CURRENT productType only. If productType is edited on Monday
+  // after a customer confirmed, their real selections are still sitting in
+  // the snapshot under the OLD productType's part keys — `lines` above
+  // would show every row as "—" and $0 total, making a customer's own paid,
+  // confirmed order look like nothing was ever picked, on the one screen
+  // that's supposed to be the permanent record of what they chose.
+  const orphans = findOrphanedSelections(requiredInputs, selections);
   return (
     <>
       <div className="alert success" style={{ marginBottom: 16 }}>
@@ -574,6 +583,21 @@ function ConfirmedView({ requiredInputs, selections, confirmedAt }) {
           <span>${total.toLocaleString()}</span>
         </div>
       </div>
+      {orphans.length > 0 && (
+        <div className="card" style={{ marginTop: 12 }}>
+          <div className="cs-summary-header">
+            <span>Part</span><span>Color</span><span>Code</span><span></span>
+          </div>
+          {orphans.map(({ inputKey, partKey, color }) => (
+            <div className="cs-summary-row" key={`${inputKey}-${partKey}`}>
+              <span className="cs-summary-part">{PART_LABELS[partKey] || partKey}</span>
+              <span>{displayColorName(color)}</span>
+              <span className="cs-summary-code">{color.code || color.sku || '—'}</span>
+              <span></span>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }

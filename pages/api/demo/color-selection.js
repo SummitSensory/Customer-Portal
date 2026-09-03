@@ -38,9 +38,10 @@ const VIEWER_COOKIE = 'summit_demo_viewer';
 // start/redeploy cleared it — a global outage triggered by any single
 // viewer, on a page whose whole purpose is being safe to click through.
 const demoSnapshots = new Map();
+const VIEWER_COOKIE_MAX_AGE_MS = 60 * 60 * 24 * 1000;
 
 function emptySnapshot() {
-  return { selections: {}, confirmedAt: null };
+  return { selections: {}, confirmedAt: null, lastSeenAt: Date.now() };
 }
 
 export default async function handler(req, res) {
@@ -51,10 +52,25 @@ export default async function handler(req, res) {
   if (!viewerId) {
     viewerId = randomUUID();
     res.setHeader('Set-Cookie', serialize(VIEWER_COOKIE, viewerId, {
-      httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24,
+      httpOnly: true, sameSite: 'lax', path: '/', maxAge: VIEWER_COOKIE_MAX_AGE_MS / 1000,
     }));
   }
   const demoSnapshot = demoSnapshots.get(viewerId) || emptySnapshot();
+
+  // Real gap found by independent code review (2026-09-02): unlike
+  // lib/rateLimit.js's own bucket map (which sweeps once it exceeds 5000
+  // keys), this one had no eviction at all — a bot/crawler hitting this
+  // public, unauthenticated page repeatedly without keeping the viewer
+  // cookie creates a permanent new entry every time, growing unbounded on
+  // a long-lived warm instance. Mirrors that same sweep pattern: once past
+  // a size threshold, drop anything a viewer's own cookie could no longer
+  // reach anyway (older than the cookie's own maxAge).
+  if (demoSnapshots.size > 2000) {
+    const cutoff = Date.now() - VIEWER_COOKIE_MAX_AGE_MS;
+    for (const [id, snap] of demoSnapshots) {
+      if ((snap.lastSeenAt || 0) < cutoff) demoSnapshots.delete(id);
+    }
+  }
 
   if (req.method === 'GET') {
     return res.status(200).json({
@@ -87,6 +103,7 @@ export default async function handler(req, res) {
   demoSnapshots.set(viewerId, {
     selections,
     confirmedAt: confirm ? new Date().toISOString() : null,
+    lastSeenAt: Date.now(),
   });
 
   return res.status(200).json({

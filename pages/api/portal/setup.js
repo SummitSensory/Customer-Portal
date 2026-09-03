@@ -264,12 +264,24 @@ export default async function handler(req, res) {
           ackRead, ackName: freightAckBy,
         }) });
 
-        // Save the confirmed/updated ship-to address on the order record if the
-        // customer entered a new one (long-text "Confirmed Delivery Address" column).
+        // Save the ship-to address on the order record — always, not just when
+        // the customer typed a brand-new one. PORTAL-BUG-2026-08-31: this used to
+        // gate on `addressConfirmed === false`, on the assumption that "confirmed"
+        // meant nothing changed. But shipToParts() (pages/portal/index.js) builds
+        // formattedAddress from the Billing Information tab's address whenever
+        // addressConfirmed !== false — so a customer who fixes their address on the
+        // Billing tab and then clicks "Yes, this is correct" here submits a fully
+        // correct formattedAddress that this handler silently discarded, leaving
+        // whatever wrong address was on file from an earlier submission. Real case:
+        // Waunakee Community School District confirmed "905 Bethel Circle" twice
+        // (8/31) and it never overwrote the original wrong "1025 Quinn Drive" (8/30)
+        // because addressConfirmed was true both times. formattedAddress is always
+        // populated by shipToParts() regardless of the confirm answer (see comment
+        // there), so it's always safe — and correct — to write it here.
         // Monday's long_text columns require the complex value wrapped as
         // {text: "..."} — a bare string throws "invalid value" (confirmed
         // 2026-07-28 via a live GraphQL error on this exact call).
-        if (addressConfirmed === false && formattedAddress) {
+        if (formattedAddress) {
           await updateOrderColumn(order.id, COLS.address, { text: formattedAddress });
         }
 

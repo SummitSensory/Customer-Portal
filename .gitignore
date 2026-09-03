@@ -37,3 +37,6 @@ Thumbs.db
 
 # TypeScript
 *.tsbuildinfo
+
+# Claude Code personal settings (not shared with the team)
+.claude/settings.local.json

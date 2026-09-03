@@ -13,6 +13,7 @@ import dynamic from 'next/dynamic';
 import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
 import { isStaffMessage, isStaffReply, isPortalChatMessage, stripPortalTags, STAFF_DISPLAY_NAME } from '../../lib/messageOrigin';
 import { isValidJotformId } from '../../lib/jotform';
+import { isColorSelectionSupported } from '../../lib/colorRequirements';
 
 // Lazy-loaded — most customers never open Referral/Showcase in a given
 // session (see components/portal/), so their code shouldn't ship as part
@@ -22,6 +23,13 @@ const ReferralTab = dynamic(() => import('../../components/portal/ReferralTab'),
   loading: () => <div className="card"><div className="spin" style={{ width: 24, height: 24 }} /></div>,
 });
 const ShowcaseTab = dynamic(() => import('../../components/portal/ShowcaseTab'), {
+  loading: () => <div className="card"><div className="spin" style={{ width: 24, height: 24 }} /></div>,
+});
+// Native color picker (Phase 1 of the color-selection redesign) — only
+// rendered for product types lib/colorRequirements.js actually supports;
+// every other product type keeps using the existing Jotform-based ColorTab
+// below, unchanged, until it migrates in a later phase.
+const ColorSelectionTab = dynamic(() => import('../../components/portal/ColorSelectionTab'), {
   loading: () => <div className="card"><div className="spin" style={{ width: 24, height: 24 }} /></div>,
 });
 
@@ -489,7 +497,15 @@ export default function CustomerPortal() {
             {activeTab === 'contact'      && <ContactTab      order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('billing')} />}
             {activeTab === 'billing'      && <BillingTab      order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('delivery')} onBack={() => setActiveTab('contact')} onOrderRefresh={loadOrder} />}
             {activeTab === 'delivery'     && <DeliveryTab     order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('color')} onBack={() => setActiveTab('billing')} />}
-            {activeTab === 'color'        && <ColorTab        order={order} completions={completions} markComplete={markComplete} showToast={showToast} colorForms={colorForms} onNext={() => setActiveTab('documents')} onBack={() => setActiveTab('delivery')} />}
+            {activeTab === 'color' && (
+              // colorSelectionWritable guards against routing a customer into a
+              // picker that can never save — see lib/monday.js's parseOrderItem
+              // comment on colorSelectionWritable for the full incident this
+              // fixes (found in code review before it ever shipped).
+              isColorSelectionSupported(order?.productType) && order?.colorSelectionWritable
+                ? <ColorSelectionTab order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('documents')} onBack={() => setActiveTab('delivery')} />
+                : <ColorTab order={order} completions={completions} markComplete={markComplete} showToast={showToast} colorForms={colorForms} onNext={() => setActiveTab('documents')} onBack={() => setActiveTab('delivery')} />
+            )}
             {activeTab === 'documents'    && <DocumentsTab    order={order} completions={completions} markComplete={markComplete} showToast={showToast} docForms={docForms} onNext={() => setActiveTab('dashboard')} onBack={() => setActiveTab('color')} />}
             {activeTab === 'dashboard'    && <DashboardTab    order={order} completions={completions} setupComplete={setupComplete} setupCount={setupCount} setupTotal={setupTotal} onNav={setActiveTab} />}
             {activeTab === 'status'       && <StatusTab       order={order} />}

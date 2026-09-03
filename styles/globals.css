@@ -675,3 +675,187 @@ tr:hover td { background: #fcfbf7; }
   .who > span { max-width: 110px; }
   .jf-embed { height: 65vh !important; min-height: 340px !important; }
 }
+
+/* ── Color Selection picker ── */
+.cs-checklist-item {
+  display: flex; align-items: center; gap: 14px;
+  padding: 16px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px;
+  cursor: pointer; background: #fff; text-align: left; width: 100%; font: inherit; color: inherit;
+}
+.cs-checklist-item:hover { border-color: var(--moss); }
+.cs-checklist-item.done { border-color: var(--ok); background: var(--ok-lt); }
+.cs-ci-icon {
+  width: 34px; height: 34px; border-radius: 9px; flex: none;
+  display: flex; align-items: center; justify-content: center; font-size: 16px;
+  background: var(--sun-lt); color: var(--sun);
+}
+.cs-checklist-item.done .cs-ci-icon { background: var(--ok); color: #fff; }
+.cs-ci-body { flex: 1; min-width: 0; }
+.cs-ci-body .t { font-weight: 600; font-size: 14.5px; }
+.cs-ci-body .d { font-size: 12.5px; color: var(--mut); margin-top: 1px; }
+.cs-ci-count { font-size: 12px; color: var(--mut); font-family: monospace; flex: none; }
+
+/* Card sizing driven by real customer feedback (2026-09-01 preview test):
+   swatches were "too small," cards weren't uniform, and the old
+   position:absolute zoom icon could drift outside its own card. Every card
+   below is a fixed-layout column — image, name, then a full-width "View
+   Larger" button in normal document flow, which by construction can never
+   escape the card the way an absolutely-positioned element could. */
+.cs-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px;
+}
+.cs-card {
+  border: 2px solid var(--line); border-radius: 12px; overflow: hidden;
+  background: #fff; display: flex; flex-direction: column; transition: border-color .12s;
+}
+.cs-card:hover { border-color: var(--moss); }
+.cs-card.selected { border-color: var(--moss); box-shadow: 0 0 0 2px var(--moss-lt); }
+.cs-card-select {
+  display: flex; flex-direction: column; width: 100%; padding: 0;
+  cursor: pointer; background: none; border: none; text-align: left; font: inherit; color: inherit;
+}
+.cs-card-select:focus-visible { outline: 2px solid var(--moss); outline-offset: -2px; }
+.cs-card-swatch { position: relative; width: 100%; }
+.cs-card-img { width: 100%; height: 170px; object-fit: cover; background: var(--paper); display: block; }
+.cs-card-color { width: 100%; height: 170px; }
+.cs-card-check {
+  position: absolute; bottom: 8px; left: 8px; right: 8px;
+  background: var(--moss); color: #fff; font-size: 12.5px; font-weight: 700;
+  padding: 6px 8px; border-radius: 8px; text-align: center;
+}
+.cs-card-body { padding: 12px 14px 14px; text-align: center; }
+.cs-card-name { font-size: 14.5px; font-weight: 600; line-height: 1.3; }
+.cs-card-code { font-size: 11.5px; color: var(--mut); font-family: monospace; margin-top: 2px; }
+/* Flags a swatch that's an exact catalog-code match for a color already
+   picked on another part of this input — see cs-prior-picks below, the
+   two features answer the same "did I pick the wrong white?" requirement
+   from two different angles (a reference list, and an in-grid callout). */
+.cs-card-reuse {
+  display: inline-block; margin-top: 6px; font-size: 10.5px; font-weight: 700;
+  color: #1e4a7a; background: var(--sky-lt); border-radius: 6px; padding: 3px 7px;
+}
+.cs-card-inspect {
+  width: 100%; display: block; padding: 10px 8px;
+  background: var(--moss-lt); color: var(--moss-dk); font-size: 13px; font-weight: 600;
+  border: none; border-top: 1px solid var(--line); cursor: pointer;
+}
+.cs-card-inspect:hover { background: var(--moss); color: #fff; }
+.cs-card-inspect:focus-visible { outline: 2px solid var(--moss); outline-offset: -2px; }
+
+/* Direct customer feedback (2026-09-02): the running total needs to be
+   visible WHILE colors are being picked, not just on the final review
+   screen. Sits right under the page header on every screen except Summary/
+   ConfirmedView, which already show the full priced breakdown. */
+.cs-running-total {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--moss-lt); color: var(--moss-dk); font-size: 13.5px; font-weight: 700;
+  padding: 10px 14px; border-radius: 10px; margin-bottom: 16px;
+}
+.cs-running-total strong { font-variant-numeric: tabular-nums; }
+
+.cs-part-card { border-bottom: 1px solid var(--line); padding: 20px 0; }
+.cs-part-card:last-child { border-bottom: none; }
+.cs-part-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 10px; flex-wrap: wrap; }
+.cs-part-title { font-weight: 600; font-size: 14.5px; }
+.cs-part-selected { font-size: 12.5px; color: var(--moss-dk); display: flex; align-items: center; gap: 8px; }
+.cs-part-selected .dot { width: 16px; height: 16px; border-radius: 4px; flex: none; border: 1px solid var(--line); }
+
+.cs-modal-overlay {
+  position: fixed; inset: 0; background: rgba(32,31,29,.6); z-index: 90;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+/* ~3x the original 220px image, per direct customer feedback (2026-09-01
+   preview test: "I want the image... much larger, I would say 3x the
+   current size"). max-height keeps it from overflowing a short viewport. */
+.cs-modal { background: #fff; border-radius: 16px; max-width: 680px; width: 100%; overflow: hidden; max-height: 90vh; display: flex; flex-direction: column; }
+.cs-modal-img { width: 100%; height: 640px; max-height: 65vh; object-fit: cover; background: var(--paper); }
+.cs-modal-color { width: 100%; height: 640px; max-height: 65vh; }
+.cs-modal-body { padding: 22px 26px; overflow-y: auto; }
+.cs-modal-close {
+  position: absolute; top: 14px; right: 14px; width: 38px; height: 38px; border-radius: 50%;
+  background: rgba(0,0,0,.55); color: #fff; display: flex; align-items: center; justify-content: center;
+  font-size: 18px; cursor: pointer; border: none;
+}
+@media (max-width: 560px) {
+  .cs-modal-img, .cs-modal-color { height: 50vh; }
+}
+
+/* Summary table — restructured from a two-column row to a real 3-field +
+   amount layout per direct customer feedback: "I need the summary page to
+   show the color brand selected, color name, and color code... Add an
+   amount column on the far right side." */
+.cs-summary-header {
+  display: grid; grid-template-columns: 1.1fr 1.6fr 1fr .8fr; gap: 10px;
+  padding: 8px 0; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--mut); border-bottom: 1px solid var(--line);
+}
+.cs-summary-row {
+  display: grid; grid-template-columns: 1.1fr 1.6fr 1fr .8fr; gap: 10px; align-items: center;
+  padding: 12px 0; border-bottom: 1px solid var(--line-soft, var(--line));
+  font-size: 13.5px;
+}
+.cs-summary-row:last-of-type { border-bottom: none; }
+.cs-summary-part { color: var(--mut); font-size: 12.5px; }
+.cs-summary-brand { text-transform: capitalize; }
+.cs-summary-code { font-family: monospace; font-size: 12px; color: var(--mut); }
+.cs-summary-amount { text-align: right; font-variant-numeric: tabular-nums; }
+.cs-summary-total {
+  display: flex; justify-content: space-between; font-weight: 700; font-size: 16px;
+  padding-top: 14px; margin-top: 6px; border-top: 2px solid var(--line);
+}
+.cs-lock-notice {
+  display: flex; gap: 10px; align-items: flex-start;
+  background: var(--sun-lt); border: 1px solid #f0c490; color: #7a4a1a;
+  padding: 13px 16px; border-radius: 10px; font-size: 13.5px; margin-bottom: 16px;
+}
+.cs-saved-banner {
+  display: flex; gap: 10px; align-items: center;
+  background: var(--sky-lt); border: 1px solid #b0c8e8; color: #1e4a7a;
+  padding: 11px 16px; border-radius: 10px; font-size: 13px; margin-bottom: 18px;
+}
+
+/* Confirms a pick immediately and offers a one-click path to the next part
+   still needing a color — direct customer feedback (2026-09-02): after
+   choosing a color, customers weren't confident it had saved and had to
+   find their own way back to keep going. Sticky so it stays reachable as
+   the grid scrolls; the continue button uses .btn-sun (the same red already
+   used elsewhere for the un-done checklist icon) specifically to stand out
+   from the moss-green "selected" state instead of blending into it. */
+.cs-continue-bar {
+  position: sticky; bottom: 12px; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  background: #fff; border: 1px solid var(--ok); box-shadow: var(--shadow);
+  padding: 12px 16px; border-radius: 12px; margin-top: 16px;
+}
+.cs-continue-msg { font-size: 13.5px; color: var(--ok); font-weight: 600; }
+.cs-continue-msg strong { color: var(--ink); }
+.cs-continue-actions { display: flex; gap: 8px; flex: none; }
+
+/* Reference strip of what's already been picked for the other parts of
+   this input — always visible while browsing a part's grid. Direct
+   requirement (2026-09-02): "if they pick white for the legs, I want them
+   to be able to see that they picked white when they move on to the
+   horizontal beams" — eliminates having to remember or navigate away to
+   compare. */
+.cs-prior-picks { margin-bottom: 16px; }
+.cs-prior-picks-label {
+  display: block; margin-bottom: 8px; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--mut);
+}
+.cs-prior-picks-list { display: flex; gap: 10px; flex-wrap: wrap; }
+.cs-prior-pick {
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--paper);
+  padding: 6px 12px 6px 6px;
+}
+.cs-prior-pick-img, .cs-prior-pick-dot { width: 30px; height: 30px; border-radius: 6px; flex: none; object-fit: cover; }
+.cs-prior-pick-dot { border: 1px solid var(--line); }
+.cs-prior-pick-text { display: flex; flex-direction: column; gap: 1px; line-height: 1.25; }
+.cs-prior-pick-part { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--mut); }
+.cs-prior-pick-name { font-size: 12.5px; font-weight: 600; }
+.cs-prior-pick-code { margin-left: 5px; font-size: 11px; font-weight: 400; color: var(--mut); font-family: monospace; }
+
+@media (max-width: 560px) {
+  .cs-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+  .cs-swatch-img, .cs-swatch-color { height: 60px; }
+}

@@ -1,0 +1,1181 @@
+[
+  {
+    "name": "Almond 90 Gloss",
+    "code": "T009-BG01",
+    "hex": "#e7d8ad",
+    "category": "Cardinal Beige",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-bg01.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Beige 90 Gloss",
+    "code": "P009-BG02",
+    "hex": "#dfd1a4",
+    "category": "Cardinal Beige",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p009-bg02.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Beige Texture",
+    "code": "T032-BG03",
+    "hex": "#c4d6b9",
+    "category": "Cardinal Beige",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t032-bg03.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Designer Beige 90 Gloss",
+    "code": "T009-BG16",
+    "hex": "#caa777",
+    "category": "Cardinal Beige",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-bg16.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "FS 33446 Desert Sand Flat",
+    "code": "P000-BG631",
+    "hex": "#9d856b",
+    "category": "FDS Beige",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p000-bg631.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Putty Texture",
+    "code": "C241-BG218",
+    "hex": "#a89a6d",
+    "category": "Cardinal Beige",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c241-bg218.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black 10 Gloss",
+    "code": "T001-BK120",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t001-bk120.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black 20 Gloss",
+    "code": "H302-BK46",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "Suggested as interior topcoat only",
+    "photo": "/color-catalog/cardinal/h302-bk46.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black 40 Gloss",
+    "code": "P004-BK02",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p004-bk02.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black 50 Gloss",
+    "code": "T005-BK78",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t005-bk78.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black 60 Gloss",
+    "code": "T006-BK05",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t006-bk05.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black 60 Gloss",
+    "code": "C206-BK266",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c206-bk266.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black 80+ Gloss",
+    "code": "T008-BK181",
+    "hex": "#150a0e",
+    "category": "Cardinal Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t008-bk181.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black Fine Texture",
+    "code": "C241-BK303",
+    "hex": "#272e2d",
+    "category": "Cardinal Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c241-bk303.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black Fine Texture",
+    "code": "C241-BK110",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c241-bk110.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black Flat",
+    "code": "E300-BK11",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "Suggested as interior topcoat only",
+    "photo": "/color-catalog/cardinal/e300-bk11.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black Flat",
+    "code": "E300-BK147",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "Suggested as interior topcoat only",
+    "photo": "/color-catalog/cardinal/e300-bk147.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black Texture",
+    "code": "E141-BK19",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "Suggested as interior topcoat only",
+    "photo": "/color-catalog/cardinal/e141-bk19.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black Texture",
+    "code": "C241-BK01",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c241-bk01.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black Texture",
+    "code": "T241-BK59",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t241-bk59.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black Texture",
+    "code": "C241-BK109",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c241-bk109.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black Wrinkle",
+    "code": "C081-BK176",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c081-bk176.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black Wrinkle",
+    "code": "E381-BK173",
+    "hex": "#2a2c2b",
+    "category": "Cardinal Black",
+    "note": "Suggested as interior topcoat only",
+    "photo": "/color-catalog/cardinal/e381-bk173.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "FS 17038 Black 90 Gloss",
+    "code": "T009-BK12",
+    "hex": "#000000",
+    "category": "FDS Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-bk12.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "FS 27038 Black 20 Gloss",
+    "code": "T002-BK08",
+    "hex": "#000000",
+    "category": "Cardinal Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t002-bk08.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "FS 37038 Black Flat",
+    "code": "P000-BK247",
+    "hex": "#141414",
+    "category": "FDS Black",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p000-bk247.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Blue 80 Gloss",
+    "code": "H308-BL03",
+    "hex": "#3f8682",
+    "category": "Cardinal Blue",
+    "note": "Suggested as interior topcoat only",
+    "photo": "/color-catalog/cardinal/h308-bl03.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Blue 90 Gloss",
+    "code": "T009-BL01",
+    "hex": "#01559e",
+    "category": "Cardinal Blue",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-bl01.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Blue 90 Gloss",
+    "code": "T009-BL05",
+    "hex": "#0182a2",
+    "category": "Cardinal Blue",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-bl05.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Blue Texture",
+    "code": "C241-BL544",
+    "hex": "#00216e",
+    "category": "Cardinal Blue",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c241-bl544.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Blue Texture",
+    "code": "C241-BL210",
+    "hex": "#275179",
+    "category": "Cardinal Blue",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c241-bl210.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Dark Blue 80 Gloss",
+    "code": "T008-BL20",
+    "hex": "#011c37",
+    "category": "Cardinal Blue",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t008-bl20.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "FS 25109 Blue Texture",
+    "code": "T032-BL04",
+    "hex": "#6a7c83",
+    "category": "FDS Blue",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t032-bl04.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Bronze 40 Gloss",
+    "code": "P004-BR23",
+    "hex": "#2a2311",
+    "category": "Cardinal Brown",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p004-br23.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Brown Texture",
+    "code": "T032-BR62",
+    "hex": "#000000",
+    "category": "Cardinal Brown",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t032-br62.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "RAL 8028 Terra Brown 90 Gloss",
+    "code": "C209-BR358",
+    "hex": "#432718",
+    "category": "RAL Brown",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c209-br358.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "ANSI 49 Gray 40 Gloss",
+    "code": "P004-GR09",
+    "hex": "#717775",
+    "category": "ANSI Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p004-gr09.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "ANSI 61 Gray 40 Gloss",
+    "code": "P004-GR16",
+    "hex": "#717775",
+    "category": "ANSI Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p004-gr16.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "ANSI 61 Gray 80 Gloss",
+    "code": "T008-GR736",
+    "hex": "#787e7e",
+    "category": "ANSI Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t008-gr736.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Bay Gray Texture",
+    "code": "C241-GR305",
+    "hex": "#666f68",
+    "category": "Cardinal Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c241-gr305.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Beige Texture",
+    "code": "T241-BG137",
+    "hex": "#d2d0c3",
+    "category": "Cardinal Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t241-bg137.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Dark Gray Texture",
+    "code": "C241-GR484",
+    "hex": "#1f2934",
+    "category": "Cardinal Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c241-gr484.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "FS 26307 Gray 30 Gloss",
+    "code": "P003-GR01",
+    "hex": "#7e7d78",
+    "category": "FDS Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p003-gr01.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Flint Gray Texture",
+    "code": "T243-GR522",
+    "hex": "#a5a6a0",
+    "category": "Cardinal Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t243-gr522.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Gray Texture",
+    "code": "C241-GR07",
+    "hex": "#505a51",
+    "category": "Cardinal Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c241-gr07.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Light Gray Texture",
+    "code": "T241-GR142",
+    "hex": "#c6c7bc",
+    "category": "Cardinal Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t241-gr142.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Light Gunmetal Gray 50 Gloss",
+    "code": "H305-GR10",
+    "hex": "#9ba59c",
+    "category": "Cardinal Gray",
+    "note": "Suggested as interior topcoat only",
+    "photo": "/color-catalog/cardinal/h305-gr10.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "PMS 427C Gray Texture",
+    "code": "C241-GR487",
+    "hex": "#bdbdbd",
+    "category": "PMS Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c241-gr487.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "PMS 431C Gray Texture",
+    "code": "C241-GR483",
+    "hex": "#575757",
+    "category": "PMS Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c241-gr483.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Pearl White Texture",
+    "code": "T031-WH06",
+    "hex": "#b7b4a1",
+    "category": "Cardinal Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t031-wh06.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Platinum Gray Texture",
+    "code": "T241-GR11",
+    "hex": "#b7b5a8",
+    "category": "Cardinal Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t241-gr11.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Quartz Gray Texture",
+    "code": "T243-GR301",
+    "hex": "#b7b7b0",
+    "category": "Cardinal Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t243-gr301.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "RAL 7035 Gray 90 Gloss",
+    "code": "T009-GR230",
+    "hex": "#d6d7d2",
+    "category": "RAL Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-gr230.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "RAL 7035 Light Gray Texture",
+    "code": "T241-GR851",
+    "hex": "#9d9d9d",
+    "category": "RAL Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t241-gr851.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "RAL 7042 Grey 80 Gloss",
+    "code": "P008-GR21",
+    "hex": "#9ba1a1",
+    "category": "RAL Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p008-gr21.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Telephone Gray Texture",
+    "code": "C241-GR85",
+    "hex": "#b7b5aa",
+    "category": "Cardinal Gray",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c241-gr85.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "FS 34094 OD Green Flat",
+    "code": "P000-GN264",
+    "hex": "#505d4b",
+    "category": "FDS Green",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p000-gn264.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "FS14066 D.O.T Green 70 Gloss",
+    "code": "T007-GN13",
+    "hex": "#004e2c",
+    "category": "FDS Green",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t007-gn13.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Green 60 Gloss",
+    "code": "C006-GN03",
+    "hex": "#1c331f",
+    "category": "Cardinal Green",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c006-gn03.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Tractor Green 90 Gloss",
+    "code": "C209-GN411",
+    "hex": "#2a5b18",
+    "category": "Cardinal Green",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c209-gn411.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Traffic Green 70 Gloss",
+    "code": "T007-GN16",
+    "hex": "#002406",
+    "category": "Cardinal Green",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t007-gn16.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Beige Hammer",
+    "code": "T013-BG38",
+    "hex": "#d0c9b7",
+    "category": "Cardinal Hammer Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t013-bg38.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black Hammer",
+    "code": "T013-BK62",
+    "hex": "#000000",
+    "category": "Cardinal Hammer Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t013-bk62.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black Hammer Low Gloss",
+    "code": "E311-BK04",
+    "hex": "#000000",
+    "category": "Cardinal Hammer Finishes",
+    "note": "Suggested as interior topcoat only",
+    "photo": "/color-catalog/cardinal/e311-bk04.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Blue Hammer",
+    "code": "T013-BL468",
+    "hex": "#032e77",
+    "category": "Cardinal Hammer Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t013-bl468.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Bronze Hammer",
+    "code": "T012-BR161",
+    "hex": "#45372a",
+    "category": "Cardinal Hammer Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t012-br161.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Green Hammer",
+    "code": "T013-GN220",
+    "hex": "#273d33",
+    "category": "Cardinal Hammer Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t013-gn220.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Grey Hammer",
+    "code": "C013-GR08",
+    "hex": "#6b7171",
+    "category": "Cardinal Hammer Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c013-gr08.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "RAL 7035 Light Grey Hammer",
+    "code": "T013-GR185",
+    "hex": "#878c86",
+    "category": "RAL Hammer Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t013-gr185.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Red Hammer",
+    "code": "T013-RD15",
+    "hex": "#a50008",
+    "category": "Cardinal Hammer Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t013-rd15.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "White Hammer",
+    "code": "T012-WH260",
+    "hex": "#f0f1ec",
+    "category": "Cardinal Hammer Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t012-wh260.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "White Hammer",
+    "code": "T013-WH09",
+    "hex": "#e5e5e5",
+    "category": "Cardinal Hammer Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t013-wh09.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Dark Red 90 Gloss",
+    "code": "P009-RD02",
+    "hex": "#a00910",
+    "category": "Cardinal Red-Orange-Yellow",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p009-rd02.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "FS 13538 Yellow 90 Gloss",
+    "code": "T009-YL14",
+    "hex": "#f8a01a",
+    "category": "FDS Red-Orange-Yellow",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-yl14.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "International Orange 90 Gloss",
+    "code": "T009-OG26",
+    "hex": "#cc501a",
+    "category": "Cardinal Red-Orange-Yellow",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-og26.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Red 90 Gloss",
+    "code": "T009-RD03",
+    "hex": "#940202",
+    "category": "Cardinal Red-Orange-Yellow",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-rd03.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Red 90 Gloss",
+    "code": "T009-RD01",
+    "hex": "#b42f1e",
+    "category": "Cardinal Red-Orange-Yellow",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-rd01.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Red Texture",
+    "code": "T241-RD129",
+    "hex": "#910001",
+    "category": "Cardinal Red-Orange-Yellow",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t241-rd129.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Safety Orange 90 Gloss",
+    "code": "T009-OG01",
+    "hex": "#f37520",
+    "category": "Cardinal Red-Orange-Yellow",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-og01.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Tractor Yellow 90 Gloss",
+    "code": "C209-YL130",
+    "hex": "#ad6d01",
+    "category": "Cardinal Red-Orange-Yellow",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c209-yl130.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Yellow 90 Gloss",
+    "code": "T009-YL71",
+    "hex": "#f9941e",
+    "category": "Cardinal Red-Orange-Yellow",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-yl71.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Yellow 90 Gloss",
+    "code": "T009-YL01",
+    "hex": "#fcd202",
+    "category": "Cardinal Red-Orange-Yellow",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-yl01.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black/White Vein",
+    "code": "T075-WH34",
+    "hex": "#aaabab",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t075-wh34.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Blue Hammertone",
+    "code": "T064-BL95",
+    "hex": "#113f4e",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t064-bl95.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Brass Metallic 30 Gloss",
+    "code": "T353-YL02",
+    "hex": "#919646",
+    "category": "Cardinal Specialty Finishes",
+    "note": "Exterior metallic - clear topcoat recommended",
+    "photo": "/color-catalog/cardinal/t353-yl02.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Bronze 50 Gloss",
+    "code": "T025-BR01",
+    "hex": "#323628",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t025-br01.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Bronze Hammertone",
+    "code": "T064-BR24",
+    "hex": "#6d4c22",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t064-br24.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Bronze Metallic Texture",
+    "code": "T391-BG290",
+    "hex": "#a49c8f",
+    "category": "Cardinal Specialty Finishes",
+    "note": "Exterior metallic - clear topcoat recommended",
+    "photo": "/color-catalog/cardinal/t391-bg290.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Chrome Metallic 80 Gloss",
+    "code": "T358-GR539",
+    "hex": "#8e9595",
+    "category": "Cardinal Specialty Finishes",
+    "note": "Exterior metallic - clear topcoat recommended",
+    "photo": "/color-catalog/cardinal/t358-gr539.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Copper Vein",
+    "code": "T375-BK07",
+    "hex": "#1f1819",
+    "category": "Cardinal Specialty Finishes",
+    "note": "Exterior metallic - clear topcoat recommended",
+    "photo": "/color-catalog/cardinal/t375-bk07.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Gold Vein",
+    "code": "T375-BK10",
+    "hex": "#373023",
+    "category": "Cardinal Specialty Finishes",
+    "note": "Exterior metallic - clear topcoat recommended",
+    "photo": "/color-catalog/cardinal/t375-bk10.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Gray Hammertone",
+    "code": "T064-GR660",
+    "hex": "#453e3d",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t064-gr660.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Green Hammertone",
+    "code": "T064-GN81",
+    "hex": "#2a6856",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t064-gn81.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Mock Rock Texture",
+    "code": "T091-GR309",
+    "hex": "#868686",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t091-gr309.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Oil Bronze 20 Gloss",
+    "code": "T022-BR189",
+    "hex": "#403732",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t022-br189.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Oil Rubbed Bronze Texture",
+    "code": "T291-BR251",
+    "hex": "#231f13",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t291-br251.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Patina Texture",
+    "code": "C291-GN20",
+    "hex": "#447964",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c291-gn20.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Rust Texture",
+    "code": "T091-BR47",
+    "hex": "#523e34",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t091-br47.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Silver Hammertone",
+    "code": "T064-GR05",
+    "hex": "#616161",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t064-gr05.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Silver Metallic 30 Gloss",
+    "code": "T353-GR06",
+    "hex": "#a3b6ad",
+    "category": "Cardinal Specialty Finishes",
+    "note": "Exterior metallic - clear topcoat recommended",
+    "photo": "/color-catalog/cardinal/t353-gr06.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Silver Metallic 60 Gloss",
+    "code": "C356-GR1342",
+    "hex": "#747b77",
+    "category": "Cardinal Specialty Finishes",
+    "note": "Exterior metallic - clear topcoat recommended",
+    "photo": "/color-catalog/cardinal/c356-gr1342.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Silver Metallic 70 Gloss",
+    "code": "T357-GR105",
+    "hex": "#a7a7a5",
+    "category": "Cardinal Specialty Finishes",
+    "note": "Exterior metallic - clear topcoat recommended",
+    "photo": "/color-catalog/cardinal/t357-gr105.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Silver Metallic Texture",
+    "code": "T391-GR1031",
+    "hex": "#8b8886",
+    "category": "Cardinal Specialty Finishes",
+    "note": "Exterior metallic - clear topcoat recommended",
+    "photo": "/color-catalog/cardinal/t391-gr1031.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Silver Vein",
+    "code": "T375-BK26",
+    "hex": "#474746",
+    "category": "Cardinal Specialty Finishes",
+    "note": "Exterior metallic - clear topcoat recommended",
+    "photo": "/color-catalog/cardinal/t375-bk26.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Statuary Bronze 60 Gloss",
+    "code": "T026-BR340",
+    "hex": "#382a21",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t026-br340.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Steel Gray 80 Gloss",
+    "code": "T028-GR02",
+    "hex": "#4a4a4a",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t028-gr02.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Steel Gray Texture",
+    "code": "C292-GR494",
+    "hex": "#3a3839",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c292-gr494.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Verdigris Texture",
+    "code": "T091-GN57",
+    "hex": "#29433d",
+    "category": "Cardinal Specialty Finishes",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t091-gn57.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black Superdurable 20 Gloss",
+    "code": "T902-BK208",
+    "hex": "#171717",
+    "category": "Cardinal Superdurable",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t902-bk208.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Black Superdurable 90 Gloss",
+    "code": "P009-BK180",
+    "hex": "#000000",
+    "category": "Cardinal Superdurable",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p009-bk180.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Orange Superdurable 90 Gloss",
+    "code": "C909-OG201",
+    "hex": "#984801",
+    "category": "Cardinal Superdurable",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c909-og201.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Red Superdurable 90 Gloss",
+    "code": "C909-RD203",
+    "hex": "#801616",
+    "category": "Cardinal Superdurable",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c909-rd203.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "White Superdurable 90 Gloss",
+    "code": "C909-WH485",
+    "hex": "#d0dad2",
+    "category": "Cardinal Superdurable",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c909-wh485.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Yellow Superdurable 90 Gloss",
+    "code": "C909-YL201",
+    "hex": "#cba400",
+    "category": "Cardinal Superdurable",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c909-yl201.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Antique White 30 Gloss",
+    "code": "H303-WH16",
+    "hex": "#e7e8da",
+    "category": "Cardinal White",
+    "note": "Suggested as interior topcoat only",
+    "photo": "/color-catalog/cardinal/h303-wh16.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "FS 27875 White 50 Gloss",
+    "code": "P005-WH01",
+    "hex": "#f7f2ec",
+    "category": "FDS White",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p005-wh01.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Frost White 90 Gloss",
+    "code": "H309-WH27",
+    "hex": "#ffffff",
+    "category": "Cardinal White",
+    "note": "Suggested as interior topcoat only",
+    "photo": "/color-catalog/cardinal/h309-wh27.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "Hi-Reflective White 90 Gloss",
+    "code": "T009-WH12",
+    "hex": "#ffffff",
+    "category": "Cardinal White",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-wh12.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "LC White 90 Gloss",
+    "code": "C209-WH486",
+    "hex": "#dbe0da",
+    "category": "Cardinal White",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c209-wh486.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "RAL 9002 Grey White 90 Gloss",
+    "code": "C209-WH490",
+    "hex": "#c3bea0",
+    "category": "RAL White",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c209-wh490.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "RAL 9010 Pure White 90 Gloss",
+    "code": "C209-WH492",
+    "hex": "#eddebe",
+    "category": "RAL White",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c209-wh492.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "RAL 9010 Pure White Texture",
+    "code": "C241-WH493",
+    "hex": "#e4d5ae",
+    "category": "RAL White",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c241-wh493.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "White 20 Gloss",
+    "code": "T002-WH08",
+    "hex": "#ffffff",
+    "category": "Cardinal White",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t002-wh08.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "White 70 Gloss",
+    "code": "T007-WH121",
+    "hex": "#ffffff",
+    "category": "Cardinal White",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t007-wh121.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "White 80 Gloss",
+    "code": "H308-WH25",
+    "hex": "#f3f1c0",
+    "category": "Cardinal White",
+    "note": "Suggested as interior topcoat only",
+    "photo": "/color-catalog/cardinal/h308-wh25.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "White 90 Gloss",
+    "code": "T009-WH13",
+    "hex": "#ffffff",
+    "category": "Cardinal White",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-wh13.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "White 90 Gloss",
+    "code": "P009-WH14",
+    "hex": "#ffffff",
+    "category": "Cardinal White",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p009-wh14.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "White 90 Gloss",
+    "code": "P009-WH04",
+    "hex": "#ffffff",
+    "category": "Cardinal White",
+    "note": "",
+    "photo": "/color-catalog/cardinal/p009-wh04.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "White 90 Gloss",
+    "code": "T009-WH11",
+    "hex": "#ffffff",
+    "category": "Cardinal White",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t009-wh11.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "White Texture",
+    "code": "T032-WH15",
+    "hex": "#f3f2e2",
+    "category": "Cardinal White",
+    "note": "",
+    "photo": "/color-catalog/cardinal/t032-wh15.jpg",
+    "provenance": "photo-verified"
+  },
+  {
+    "name": "White Texture",
+    "code": "C031-WH120",
+    "hex": "#f3f8eb",
+    "category": "Cardinal White",
+    "note": "",
+    "photo": "/color-catalog/cardinal/c031-wh120.jpg",
+    "provenance": "photo-verified"
+  }
+]

@@ -83,6 +83,9 @@ export default function Landing() {
     <>
       <Head>
         <title>Summit Sensory Gym — Customer Portal</title>
+        {/* TEMPORARY — staging preview-deployment test marker, added 2026-08-28.
+            Safe to delete any time; only confirms Vercel is building this branch. */}
+        <meta name="staging-preview-test" content="added-2026-08-28" />
       </Head>
 
       {/* Page background */}

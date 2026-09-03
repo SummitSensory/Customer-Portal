@@ -11,7 +11,7 @@ import { parse } from 'cookie';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { getOrderById } from '../../../lib/monday';
+import { getOrderById, resolveDeliveryContacts } from '../../../lib/monday';
 import { trackShipment } from '../../../lib/aftership';
 
 export default async function handler(req, res) {
@@ -49,10 +49,16 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Direct requirement (2026-09-03): register the customer's own approved
+    // delivery contact(s) with AfterShip so its own native notifications
+    // have a real recipient, not just this order's title. Only meaningful
+    // for the customer-session path — a staff lookup has no `order` loaded.
+    const { primary, secondary } = order ? resolveDeliveryContacts(order) : {};
     const tracking = await trackShipment(slug, number, {
       title: order?.name,
       orderId: order?.id,
       customerName: order?.name,
+      contacts: [primary, secondary].filter(Boolean),
     });
     if (!tracking) return res.status(404).json({ error: 'Tracking info not available.' });
     return res.status(200).json({ tracking });

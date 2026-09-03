@@ -663,6 +663,16 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   }, []);
 
   const handlePartChange = useCallback(async (inputKey, part, value) => {
+    // Real gap found by independent code review (2026-09-02): a failed
+    // autosave only ever showed a toast — the optimistic UI update below
+    // was never rolled back, so the swatch kept showing "✓ Selected" for a
+    // pick the server never actually saved. Captured here so a failure can
+    // revert JUST this one part back to what it was, not the customer's
+    // whole selection set: a later, unrelated edit could already be sitting
+    // in latestSelectionsRef by the time this save's failure is handled
+    // (the queue serializes SAVES, not the instant optimistic UI update),
+    // and reverting the entire snapshot would silently discard that too.
+    const previousValue = latestSelectionsRef.current[inputKey]?.[part];
     const next = {
       ...latestSelectionsRef.current,
       [inputKey]: { ...latestSelectionsRef.current[inputKey], [part]: value },
@@ -672,7 +682,13 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     try {
       await queueSave(false);
     } catch (err) {
-      showToast(err.message || 'Error saving. Please try again.');
+      const reverted = {
+        ...latestSelectionsRef.current,
+        [inputKey]: { ...latestSelectionsRef.current[inputKey], [part]: previousValue },
+      };
+      latestSelectionsRef.current = reverted;
+      setSelections(reverted);
+      showToast(err.message || 'Error saving — your last pick was not saved. Please try again.');
     }
   }, [queueSave, showToast]);
 

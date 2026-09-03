@@ -21,6 +21,11 @@ vi.mock('../../../lib/rateLimit', () => ({
   allowRequest: () => true,
 }));
 
+const mockReportCriticalFailure = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../../lib/monitoring', () => ({
+  reportCriticalFailure: (...args) => mockReportCriticalFailure(...args),
+}));
+
 const handlerModule = await import('../../../pages/api/portal/color-selection.js');
 const { default: handler, validateColorSelectionData, computeTotalUpcharge } = handlerModule;
 
@@ -133,6 +138,7 @@ describe('handler — auth and customer isolation', () => {
     mockWriteColorSelectionSnapshot.mockReset().mockResolvedValue(undefined);
     mockPostTaggedUpdate.mockReset().mockResolvedValue(undefined);
     mockMarkSectionCompleteSafe.mockReset().mockResolvedValue(true);
+    mockReportCriticalFailure.mockReset().mockResolvedValue(undefined);
   });
 
   it('rejects an unauthenticated request', async () => {
@@ -237,5 +243,102 @@ describe('handler — auth and customer isolation', () => {
     expect(res.statusCode).toBe(400);
     expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
     expect(mockMarkSectionCompleteSafe).not.toHaveBeenCalled();
+  });
+
+  // Real race found by independent code review (2026-09-02): the confirmedAt
+  // check at the top of the request reads `order` once — there's no
+  // compare-and-swap on a Monday text column, so a request that read
+  // "not yet confirmed" can still be mid-flight when a DIFFERENT request
+  // (another tab, a duplicate/retried request) confirms in between. The fix
+  // re-reads immediately before the write; this simulates exactly that
+  // window by making the two getOrderById calls return different answers.
+  it('rejects an autosave that was already in flight when a DIFFERENT request confirmed in between (re-check-before-write)', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById
+      .mockResolvedValueOnce({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null })
+      .mockResolvedValueOnce({
+        id: 'real-order-123',
+        productType: ADVENTURE_SERIES,
+        colorSelectionSnapshot: { selections: fullValidSelections(), confirmedAt: '2026-09-02T12:00:00.000Z' },
+      });
+
+    const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: false } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(mockGetOrderById).toHaveBeenCalledTimes(2);
+    expect(res.statusCode).toBe(409);
+    expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('does NOT re-check before write on a confirm request — only autosave needs the narrower race window closed, confirm already validates completeness itself', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(mockGetOrderById).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
+  });
+
+  // Real gap found by independent code review (2026-09-02): neither
+  // validation function rejects extra top-level keys or oversized values —
+  // this proves the handler itself strips them before persisting, via
+  // sanitizeSelections, regardless of what a request body contains.
+  it('never persists an unrecognized extra key in the request body, however large', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const s = fullValidSelections();
+    s.junk = 'x'.repeat(500_000);
+
+    const req = { method: 'POST', headers: {}, body: { selections: s, confirm: false } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const [, persisted] = mockWriteColorSelectionSnapshot.mock.calls[0];
+    expect(persisted.selections.junk).toBeUndefined();
+    expect(persisted.selections.structure_frame_paint.legs).toEqual({ brand: 'cardinal', code: 'T009-BG01' });
+  });
+
+  // Real gap found by independent code review (2026-09-02): this used to be
+  // `.catch(console.error)` — a real confirmation with no signal to staff at
+  // all if the audit-trail update failed. The snapshot write and completion
+  // flag (the parts that actually matter) must still succeed for the
+  // customer; staff visibility into the failure goes through the same
+  // alerting path as every other silent-failure class in this codebase.
+  it('still returns success when the audit-trail update fails on confirm, but reports it rather than swallowing it', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockPostTaggedUpdate.mockRejectedValue(new Error('Monday API unavailable'));
+
+    const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.auditUpdatePending).toBe(true);
+    expect(mockWriteColorSelectionSnapshot).toHaveBeenCalled();
+    expect(mockMarkSectionCompleteSafe).toHaveBeenCalled();
+    expect(mockReportCriticalFailure).toHaveBeenCalledWith(
+      'color-selection-confirm',
+      expect.stringContaining('real-order-123'),
+      expect.objectContaining({ orderId: 'real-order-123' })
+    );
+  });
+
+  it('reports auditUpdatePending: false on the ordinary success path', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.body.auditUpdatePending).toBe(false);
+    expect(mockReportCriticalFailure).not.toHaveBeenCalled();
   });
 });

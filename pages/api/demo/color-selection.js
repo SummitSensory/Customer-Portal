@@ -14,6 +14,8 @@
  * it's no longer useful — it has no dependency on live data to go stale.
  */
 
+import { parse, serialize } from 'cookie';
+import { randomUUID } from 'crypto';
 import { requiredColorInputs } from '../../../lib/colorRequirements';
 // Imports from lib/colorSelectionValidation.js, NOT from
 // pages/api/portal/color-selection.js — that file pulls in lib/auth.js,
@@ -23,16 +25,36 @@ import { requiredColorInputs } from '../../../lib/colorRequirements';
 import { validateColorSelectionData, computeTotalUpcharge } from '../../../lib/colorSelectionValidation';
 
 const DEMO_PRODUCT_TYPE = 'Summit Adventure Series: Custom Sensory Gym';
+const VIEWER_COOKIE = 'summit_demo_viewer';
 
 // In-memory only — resets on cold start/redeploy, never touches Monday.com.
-// This exists so the demo can actually PROVE the "cannot be modified once
-// submitted" rule works (confirm here, then try to change it) rather than
-// just asserting it in copy. Module-scope state is fine for a single-user
-// click-through demo; it is never meant to be a real multi-user store.
-let demoSnapshot = { selections: {}, confirmedAt: null };
+// Keyed per-viewer (a random id in a same-origin cookie, not tied to any
+// real identity) rather than one shared module-scope object. Found by
+// independent code review (2026-09-02): a single shared snapshot meant any
+// two people who opened /color-preview at the same time (two prospects
+// shown the demo, a colleague testing while someone else demos it live)
+// clobbered each other's picks, and the moment either one confirmed, the
+// SAME shared snapshot locked (409) for every other visitor until a cold
+// start/redeploy cleared it — a global outage triggered by any single
+// viewer, on a page whose whole purpose is being safe to click through.
+const demoSnapshots = new Map();
+
+function emptySnapshot() {
+  return { selections: {}, confirmedAt: null };
+}
 
 export default async function handler(req, res) {
   const demoOrder = { productType: DEMO_PRODUCT_TYPE };
+
+  const cookies = parse(req.headers.cookie || '');
+  let viewerId = cookies[VIEWER_COOKIE];
+  if (!viewerId) {
+    viewerId = randomUUID();
+    res.setHeader('Set-Cookie', serialize(VIEWER_COOKIE, viewerId, {
+      httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24,
+    }));
+  }
+  const demoSnapshot = demoSnapshots.get(viewerId) || emptySnapshot();
 
   if (req.method === 'GET') {
     return res.status(200).json({
@@ -62,10 +84,10 @@ export default async function handler(req, res) {
     if (validationError) return res.status(400).json({ error: validationError });
   }
 
-  demoSnapshot = {
+  demoSnapshots.set(viewerId, {
     selections,
     confirmedAt: confirm ? new Date().toISOString() : null,
-  };
+  });
 
   return res.status(200).json({
     ok: true,
@@ -77,5 +99,5 @@ export default async function handler(req, res) {
 // Reset hook for local/demo convenience — not exposed as a route, just
 // importable by tests that want a clean slate between cases.
 export function __resetDemoSnapshot() {
-  demoSnapshot = { selections: {}, confirmedAt: null };
+  demoSnapshots.clear();
 }

@@ -16,7 +16,8 @@ import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
 import { getOrderById, postTaggedUpdate, markSectionCompleteSafe, writeColorSelectionSnapshot } from '../../../lib/monday';
 import { allowRequest } from '../../../lib/rateLimit';
 import { requiredColorInputs } from '../../../lib/colorRequirements';
-import { validatePresentSelections, validateColorSelectionData, computeTotalUpcharge } from '../../../lib/colorSelectionValidation';
+import { validatePresentSelections, validateColorSelectionData, computeTotalUpcharge, sanitizeSelections } from '../../../lib/colorSelectionValidation';
+import { reportCriticalFailure } from '../../../lib/monitoring';
 
 // Re-exported for anything still importing these two from this file's own
 // module (kept for the existing test suite's import paths) — the real
@@ -88,12 +89,46 @@ export default async function handler(req, res) {
     if (validationError) return res.status(400).json({ error: validationError });
   }
 
-  const totalUpcharge = computeTotalUpcharge(order, selections);
+  // Real gap found by independent code review (2026-09-02): validation above
+  // only ever inspects the known input/part keys — it never rejects extra
+  // top-level keys or oversized values a client might include alongside
+  // them, and the whole `selections` object was persisted verbatim into
+  // Monday's long-text snapshot column. Rebuilding a clean object here,
+  // keeping only the exact {brand, code} shape for exactly the parts this
+  // order's productType actually has, means nothing but that ever reaches
+  // Monday regardless of what a request body actually contained.
+  const cleanSelections = sanitizeSelections(order, selections);
+
+  const totalUpcharge = computeTotalUpcharge(order, cleanSelections);
   const snapshot = {
-    selections,
+    selections: cleanSelections,
     totalUpcharge,
     confirmedAt: confirm ? new Date().toISOString() : null,
   };
+
+  // Real race found by independent code review (2026-09-02): the
+  // confirmedAt check above reads `order` from the top of this request —
+  // there's no compare-and-swap on a Monday text column, so two requests
+  // that both start before either write lands (two tabs, a duplicated/
+  // retried request) can both pass that check. Re-reading immediately
+  // before the write narrows that window down to the gap between this read
+  // and the write itself, instead of the whole request's duration — as
+  // close to atomic as this architecture allows.
+  if (!confirm) {
+    let freshOrder;
+    try {
+      freshOrder = await getOrderById(order.id);
+    } catch (err) {
+      console.error('color-selection: re-check before save failed:', err.message);
+      return res.status(500).json({ error: 'Error saving. Please try again.' });
+    }
+    if (freshOrder?.colorSelectionSnapshot?.confirmedAt) {
+      return res.status(409).json({
+        error: 'Color selections were already confirmed and cannot be changed. Contact us if you need to make a correction.',
+        confirmedAt: freshOrder.colorSelectionSnapshot.confirmedAt,
+      });
+    }
+  }
 
   try {
     await writeColorSelectionSnapshot(order.id, snapshot);
@@ -103,14 +138,35 @@ export default async function handler(req, res) {
   }
 
   if (confirm) {
-    await postTaggedUpdate(
-      order.id,
-      'PORTAL: Color Selections',
-      `Customer confirmed color/finish selections on ${new Date().toLocaleDateString()}. Total upcharge: $${totalUpcharge}.`
-    ).catch(console.error);
+    // Real gap found by independent code review (2026-09-02): this used to
+    // be `.catch(console.error)` — the one write in this whole confirm path
+    // that could fail silently with no signal to staff at all, unlike
+    // every other write here (which either fails the request or reports
+    // via checklistSyncPending). The snapshot write and the completion
+    // flag are the two things that actually matter to the customer/business
+    // logic and have already succeeded by this point, so a failure here
+    // must not turn a real, successful confirmation into an error response
+    // — but staff still need to know the audit-trail update never landed,
+    // via the same alerting path already used for other silent-failure
+    // classes in this codebase (markSectionCompleteSafe, cron runs).
+    let auditUpdatePending = false;
+    try {
+      await postTaggedUpdate(
+        order.id,
+        'PORTAL: Color Selections',
+        `Customer confirmed color/finish selections on ${new Date().toLocaleDateString()}. Total upcharge: $${totalUpcharge}.`
+      );
+    } catch (err) {
+      auditUpdatePending = true;
+      await reportCriticalFailure(
+        'color-selection-confirm',
+        `Order ${order.id} confirmed color selections, but the audit-trail update to Monday failed.`,
+        { orderId: order.id, error: err.message }
+      );
+    }
 
     const synced = await markSectionCompleteSafe(order.id, 'portalColors');
-    return res.status(200).json({ ok: true, totalUpcharge, checklistSyncPending: !synced });
+    return res.status(200).json({ ok: true, totalUpcharge, checklistSyncPending: !synced, auditUpdatePending });
   }
 
   return res.status(200).json({ ok: true, totalUpcharge, checklistSyncPending: false });

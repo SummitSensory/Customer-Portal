@@ -11,7 +11,7 @@ import dynamic from 'next/dynamic';
 import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
 import { isStaffMessage, stripPortalTags, messageDisplayName } from '../../lib/messageOrigin';
 import { requiredColorInputs, PART_LABELS } from '../../lib/colorRequirements';
-import { findCardinalByCode, findPrismaticBySku, findVinylByName } from '../../lib/colorCatalog';
+import { resolveSelectedColor, displayColorName } from '../../lib/colorCatalog';
 
 // Lazy-loaded — most staff sessions never open Settings in a given visit,
 // so its code (see components/admin/SettingsTab.js) shouldn't be part of
@@ -733,24 +733,50 @@ function DeliveryDetailPanel({ order }) {
   );
 }
 
+// Real bug found by independent code review (2026-09-02): this panel used
+// to derive which parts to render ONLY from requiredColorInputs(order.
+// productType) — the order's CURRENT productType. If that value is edited
+// on Monday after a customer already confirmed (e.g. a data correction,
+// or a genuine product-line change), the confirmed selections are still
+// sitting in the snapshot under the OLD productType's part keys (Adventure
+// Series's `legs`/`horizontal_beams`/etc. are entirely different keys from
+// Soar's `soar_frame` or Flex's `flex_frame` — see lib/colorRequirements.js)
+// — none of which match the NEW productType's parts, so every row silently
+// resolved to "—" with no indication anything was ever picked at all.
+// Scans the snapshot's OWN keys against the current requirements and
+// returns whatever isn't accounted for, so real confirmed data can never
+// go invisible just because productType changed after the fact.
+function findOrphanedSelections(order, currentInputs) {
+  const known = new Set();
+  currentInputs.forEach((input) => input.parts.forEach((part) => known.add(`${input.input}.${part}`)));
+
+  const orphans = [];
+  const selections = order.colorSelectionSnapshot?.selections || {};
+  for (const inputKey of Object.keys(selections)) {
+    for (const partKey of Object.keys(selections[inputKey] || {})) {
+      if (known.has(`${inputKey}.${partKey}`)) continue;
+      const color = resolveSelectedColor(selections[inputKey][partKey]);
+      if (color) orphans.push({ inputKey, partKey, color });
+    }
+  }
+  return orphans;
+}
+
 // Details, rendered inline in the Orders table from order.colorSelectionSnapshot
 // — same reasoning as DeliveryDetailPanel above: staff can review exactly what
 // a customer picked without leaving this table (previously required opening
 // Jotform's own dashboard, with no link from here to the right submission at
 // all). Resolves each stored {brand, code} pair back to a real catalog entry
 // server-side data was already validated against, rather than trusting
-// whatever's in the snapshot at face value.
-function resolveColorSelection(sel) {
-  if (!sel) return null;
-  if (sel.brand === 'cardinal') return findCardinalByCode(sel.code);
-  if (sel.brand === 'prismatic') return findPrismaticBySku(sel.code);
-  if (sel.brand === 'vinyl') return findVinylByName(sel.code);
-  return null;
-}
-
+// whatever's in the snapshot at face value — via the same resolveSelectedColor
+// lib/colorCatalog.js already exports (this file used to reimplement the
+// identical brand-switch lookup under a local name; a real duplication a
+// code review flagged, since a future change to brand-resolution could be
+// applied everywhere except here).
 function ColorSelectionDetailPanel({ order }) {
   const s = order.colorSelectionSnapshot || {};
   const inputs = requiredColorInputs(order.productType) || [];
+  const orphans = findOrphanedSelections(order, inputs);
 
   return (
     <div style={{ padding: '16px 20px', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
@@ -771,7 +797,7 @@ function ColorSelectionDetailPanel({ order }) {
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 28px' }}>
             {input.parts.map((part) => {
-              const color = resolveColorSelection(s.selections?.[input.input]?.[part]);
+              const color = resolveSelectedColor(s.selections?.[input.input]?.[part]);
               return (
                 <div key={part} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 160 }}>
                   {color && (
@@ -781,7 +807,7 @@ function ColorSelectionDetailPanel({ order }) {
                   )}
                   <div>
                     <div style={{ fontSize: 11, color: 'var(--mut)' }}>{PART_LABELS[part] || part}</div>
-                    <div style={{ fontSize: 13 }}>{color ? `${color.name}${color.code || color.sku ? ` (${color.code || color.sku})` : ''}` : '—'}</div>
+                    <div style={{ fontSize: 13 }}>{color ? `${displayColorName(color)}${color.code || color.sku ? ` (${color.code || color.sku})` : ''}` : '—'}</div>
                   </div>
                 </div>
               );
@@ -789,6 +815,27 @@ function ColorSelectionDetailPanel({ order }) {
           </div>
         </div>
       ))}
+
+      {orphans.length > 0 && (
+        <div style={{ marginBottom: 14, padding: '10px 12px', background: 'var(--sun-lt, #FEF3C7)', borderRadius: 6, border: '1px solid var(--sun, #F59E0B)' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--ink)', textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: 6 }}>
+            ⚠️ Other saved selections (don&apos;t match this order&apos;s current product type)
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 28px' }}>
+            {orphans.map(({ inputKey, partKey, color }) => (
+              <div key={`${inputKey}.${partKey}`} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 160 }}>
+                {color.photo
+                  ? <img src={color.photo} alt="" style={{ width: 20, height: 20, borderRadius: 4, objectFit: 'cover', flex: 'none' }} />
+                  : <span style={{ width: 20, height: 20, borderRadius: 4, background: color.hex, border: '1px solid var(--line)', flex: 'none', display: 'inline-block' }} />}
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--mut)' }}>{PART_LABELS[partKey] || partKey}</div>
+                  <div style={{ fontSize: 13 }}>{displayColorName(color)}{color.code || color.sku ? ` (${color.code || color.sku})` : ''}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: '16px 28px', flexWrap: 'wrap', marginTop: 4 }}>
         <DeliveryField label="Total Upcharge" value={typeof s.totalUpcharge === 'number' ? `$${s.totalUpcharge.toLocaleString()}` : undefined} />

@@ -12,7 +12,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
 import { getOrderById, resolveDeliveryContacts } from '../../../lib/monday';
-import { trackShipment, buildTrackingTitle } from '../../../lib/aftership';
+import { trackShipment, buildTrackingTitle, buildShipmentTypeCustomField } from '../../../lib/aftership';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end();
@@ -68,6 +68,7 @@ export default async function handler(req, res) {
       orderId: order?.id,
       customerName: order?.name,
       contacts: [primary, secondary].filter(Boolean),
+      customFields: buildShipmentTypeCustomField(shipmentKey),
     });
     if (!tracking) return res.status(404).json({ error: 'Tracking info not available.' });
     return res.status(200).json({ tracking });

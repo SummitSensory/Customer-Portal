@@ -31,7 +31,7 @@
 // item gets its first onboarding.
 
 import { getAllAccessoryItems, updateAccessoryCarrierStatus, getAllOrders, resolveDeliveryContacts } from '../../../lib/monday';
-import { trackShipment, onboardShipment, buildTrackingTitle } from '../../../lib/aftership';
+import { trackShipment, onboardShipment, buildTrackingTitle, buildShipmentTypeCustomField } from '../../../lib/aftership';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
 
@@ -105,7 +105,12 @@ export default async function handler(req, res) {
           // both AfterShip trackings — nothing said which shipment a given
           // notification was about. See lib/aftership.js's buildTrackingTitle.
           const title = buildTrackingTitle(order.name, s.key);
-          const id = await onboardShipment(s.slug, s.number, { title, orderId: order.id, customerName: order.name, contacts });
+          // A standalone SHIPMENT_TYPE-style merge tag, separate from the
+          // combined title, so an AfterShip email template can read
+          // naturally (e.g. "Your Therapy Mats & Padding shipment is on
+          // its way!") instead of quoting the whole order-name+type title.
+          const customFields = buildShipmentTypeCustomField(s.key);
+          const id = await onboardShipment(s.slug, s.number, { title, orderId: order.id, customerName: order.name, contacts, customFields });
           if (id) framesMatsOnboarded++;
         }
       });

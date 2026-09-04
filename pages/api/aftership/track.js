@@ -12,7 +12,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
 import { getOrderById, resolveDeliveryContacts } from '../../../lib/monday';
-import { trackShipment, buildTrackingTitle, buildShipmentTypeCustomField } from '../../../lib/aftership';
+import { trackShipment, buildTrackingTitle, buildCustomFields } from '../../../lib/aftership';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end();
@@ -24,6 +24,7 @@ export default async function handler(req, res) {
   const staffSession = await getServerSession(req, res, authOptions);
   let order = null;
   let shipmentKey = null;
+  let accessoryItemName = null;
 
   if (!staffSession) {
     const cookies = parse(req.headers.cookie || '');
@@ -51,10 +52,16 @@ export default async function handler(req, res) {
     }
 
     // Which shipment this is, for a disambiguated AfterShip title (see
-    // buildTrackingTitle) — only Frame/Mats get one; a generic/accessory
-    // tracking number falls back to the bare order name, same as before.
+    // buildTrackingTitle) and the SHIPMENT_TYPE/first_name custom fields.
+    // A generic/legacy tracking number (order.trackingNumber /
+    // order.matTracking with no live column behind it — see lib/monday.js's
+    // COLS.matTracking) falls back to the bare order name, same as before.
     if (number === order?.frameTrackingId) shipmentKey = 'frame';
     else if (number === order?.matsTrackingId || matsNumbers.includes(number)) shipmentKey = 'mats';
+    else {
+      const accessoryMatch = (order?.accessoryItems || []).find((a) => a.trackingNumber === number);
+      if (accessoryMatch) { shipmentKey = 'accessory'; accessoryItemName = accessoryMatch.name; }
+    }
   }
 
   try {
@@ -63,12 +70,13 @@ export default async function handler(req, res) {
     // have a real recipient, not just this order's title. Only meaningful
     // for the customer-session path — a staff lookup has no `order` loaded.
     const { primary, secondary } = order ? resolveDeliveryContacts(order) : {};
+    const contacts = [primary, secondary].filter(Boolean);
     const tracking = await trackShipment(slug, number, {
-      title: buildTrackingTitle(order?.name, shipmentKey) || order?.name,
+      title: buildTrackingTitle(order?.name, shipmentKey, accessoryItemName) || order?.name,
       orderId: order?.id,
       customerName: order?.name,
-      contacts: [primary, secondary].filter(Boolean),
-      customFields: buildShipmentTypeCustomField(shipmentKey),
+      contacts,
+      customFields: buildCustomFields(shipmentKey, contacts),
     });
     if (!tracking) return res.status(404).json({ error: 'Tracking info not available.' });
     return res.status(200).json({ tracking });

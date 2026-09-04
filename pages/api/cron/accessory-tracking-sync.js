@@ -31,7 +31,7 @@
 // item gets its first onboarding.
 
 import { getAllAccessoryItems, updateAccessoryCarrierStatus, getAllOrders, resolveDeliveryContacts } from '../../../lib/monday';
-import { trackShipment, onboardShipment, buildTrackingTitle, buildShipmentTypeCustomField } from '../../../lib/aftership';
+import { trackShipment, onboardShipment, buildTrackingTitle, buildCustomFields } from '../../../lib/aftership';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
 
@@ -56,6 +56,24 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Fetched once, shared by both loops below. Accessory items need this
+    // too as of 2026-09-03: the Accessories board is confirmed (via the
+    // live Monday board schema) to be Monday's own native subitems board
+    // for Manufacturing Process, so every accessory item has a real,
+    // reliable parent order — not an unrelated dataset with no link back,
+    // as CLAUDE.md flags for the separate GB/Manufacturing board_relation.
+    // A failure here degrades gracefully: the accessory Carrier-Status sync
+    // below (this cron's original purpose) still runs, just without
+    // contact enrichment / a real title for that run, and the Frame/Mats
+    // loop simply has nothing to do.
+    let orders = [];
+    try {
+      orders = await getAllOrders();
+    } catch (err) {
+      console.error('accessory-tracking-sync: failed to load orders (accessory contact enrichment + Frame/Mats onboarding both skipped this run):', err.message);
+    }
+    const ordersById = new Map(orders.map((o) => [String(o.id), o]));
+
     const items = await getAllAccessoryItems();
     const candidates = items.filter((i) => i.carrierSlug && i.trackingNumber);
 
@@ -63,10 +81,24 @@ export default async function handler(req, res) {
     let errors = 0;
     await mapWithConcurrency(candidates, SYNC_CONCURRENCY, async (item) => {
       try {
+        // Direct requirement (2026-09-03): Therapy Equipment & Accessories
+        // is now a real third AfterShip shipment type, alongside Frame and
+        // Mats — register the item's real parent-order delivery contact
+        // (when resolvable) the same way Frame/Mats already do.
+        const order = item.orderId ? ordersById.get(String(item.orderId)) : null;
+        const { primary, secondary } = order ? resolveDeliveryContacts(order) : {};
+        const contacts = [primary, secondary].filter(Boolean);
+        // The item's own specific name (e.g. "Weighted Blanket") is more
+        // useful in the title than the generic "Therapy Equipment &
+        // Accessories" bucket label — see buildTrackingTitle's `detail` param.
+        const title = buildTrackingTitle(order?.name, 'accessory', item.name);
+        const customFields = buildCustomFields('accessory', contacts);
         const tracking = await trackShipment(item.carrierSlug, item.trackingNumber, {
-          title: item.name,
+          title,
           orderId: item.id,
           customerName: item.name,
+          contacts,
+          customFields,
         });
         if (tracking?.status && tracking.status !== item.carrierStatus) {
           await updateAccessoryCarrierStatus(item.id, tracking.status);
@@ -84,7 +116,6 @@ export default async function handler(req, res) {
     // Mats: text_mm51pap1/text_mm51wdm5.
     let framesMatsOnboarded = 0;
     try {
-      const orders = await getAllOrders();
       await mapWithConcurrency(orders, SYNC_CONCURRENCY, async (order) => {
         const shipments = [
           { key: 'frame', slug: order.frameCarrierSlug, number: order.frameTrackingId },
@@ -109,7 +140,7 @@ export default async function handler(req, res) {
           // combined title, so an AfterShip email template can read
           // naturally (e.g. "Your Therapy Mats & Padding shipment is on
           // its way!") instead of quoting the whole order-name+type title.
-          const customFields = buildShipmentTypeCustomField(s.key);
+          const customFields = buildCustomFields(s.key, contacts);
           const id = await onboardShipment(s.slug, s.number, { title, orderId: order.id, customerName: order.name, contacts, customFields });
           if (id) framesMatsOnboarded++;
         }

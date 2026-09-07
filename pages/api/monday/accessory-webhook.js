@@ -32,6 +32,7 @@
 
 import { getAccessorySubitemById, updateAccessoryCarrierStatus, ACCESSORY_COLS } from '../../../lib/monday';
 import { trackShipment } from '../../../lib/aftership';
+import { secretsMatch } from '../../../lib/auth';
 
 // Columns that should trigger a push to AfterShip when they change. Anything
 // else (Order Status, Date Ordered, Carrier Status itself, etc.) is ignored.
@@ -64,7 +65,7 @@ export default async function handler(req, res) {
   // AfterShip webhook's isAuthorized().
   const secret = process.env.MONDAY_ACCESSORY_WEBHOOK_SECRET;
   const provided = extractProvidedSecret(req);
-  if (!secret || provided !== secret) {
+  if (!secretsMatch(provided, secret)) {
     console.error('Monday accessory-webhook: authorization failed (missing or mismatched secret).');
     return res.status(401).json({ error: 'Invalid secret.' });
   }

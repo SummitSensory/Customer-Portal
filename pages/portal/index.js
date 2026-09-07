@@ -1674,8 +1674,15 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
       document.body.appendChild(script);
     }
 
-    // Detect form submission via postMessage
+    // Detect form submission via postMessage.
+    // PORTAL-043: had no origin check at all — ANY window/frame could
+    // postMessage a spoofed "submission-completed" payload and flip
+    // formSubmitted client-side. Restricting to Jotform's own real embed
+    // origin closes that; a client-side-only UI state, not a substitute for
+    // real server-side validation (the actual checklist flip happens via
+    // the Jotform webhook, server-side).
     function onMessage(e) {
+      if (e.origin !== 'https://form.jotform.com') return;
       const raw = e.data;
       const data = typeof raw === 'string' ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : raw;
       if (data?.action === 'submission-completed') setFormSubmitted(true);

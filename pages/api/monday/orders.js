@@ -75,7 +75,14 @@ export default async function handler(req, res) {
       // and re-notify the customer on every save even when nothing changed.
       // Compare numerically instead.
       const nextBalance = balance !== undefined ? parseFloat(balance) : undefined;
-      if (nextBalance !== undefined && Number.isFinite(nextBalance) && nextBalance !== order.balance) {
+      // PORTAL-042: a non-numeric balance (parseFloat -> NaN) used to fail
+      // the Number.isFinite check and silently no-op with zero warning —
+      // unlike the sibling "column not configured" case just above, which
+      // does warn. An admin typo (or a stray non-numeric value from the
+      // edit UI) looked exactly like a successful save.
+      if (nextBalance !== undefined && !Number.isFinite(nextBalance)) {
+        warnings.push(`Balance was NOT saved — "${balance}" is not a valid number.`);
+      } else if (nextBalance !== undefined && nextBalance !== order.balance) {
         const balanceResult = await updateBalance(id, nextBalance);
         if (balanceResult === null) {
           warnings.push('Balance was NOT saved to Monday.com — MONDAY_COL_BALANCE is not configured. Set it in Vercel env vars to enable this field.');

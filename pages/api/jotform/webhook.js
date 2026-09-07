@@ -15,6 +15,7 @@
 
 import { getOrderByEmail, getOrderMessages, postTaggedUpdate, markSectionCompleteSafe, attachUgcFile, incrementUgcCounts } from '../../../lib/monday';
 import { notifyTeamFormCompleted, notifyTeamUgcThreshold } from '../../../lib/email';
+import { secretsMatch } from '../../../lib/auth';
 
 // Parse the form→checklist map from env
 function getFormMap() {
@@ -118,7 +119,7 @@ export default async function handler(req, res) {
   // PORTAL-006) as if they came from a real Jotform. Fails CLOSED now.
   const configuredSecret = process.env.JOTFORM_WEBHOOK_SECRET;
   const secret = req.headers['x-jotform-secret'] || req.body?.secret;
-  if (!configuredSecret || secret !== configuredSecret) {
+  if (!secretsMatch(secret, configuredSecret)) {
     console.error('Jotform webhook: authorization failed (missing or mismatched secret).');
     return res.status(401).json({ error: 'Invalid webhook secret.' });
   }

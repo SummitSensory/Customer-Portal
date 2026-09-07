@@ -22,7 +22,8 @@
 
 import { getOrderById, getOrderByEmail, setStatusLabel } from '../../../lib/monday';
 import { sendCustomerReplyNotification } from '../../../lib/email';
-import { isStaffEmail } from '../../../lib/auth';
+import { isStaffEmail, secretsMatch } from '../../../lib/auth';
+import { isPortalChatMessage, isStaffMessage } from '../../../lib/messageOrigin';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -35,7 +36,7 @@ export default async function handler(req, res) {
   // Fails CLOSED: if the secret isn't configured, reject rather than accept
   // unauthenticated requests. Mirrors accessory-webhook.js.
   const secret = process.env.MONDAY_UPDATE_WEBHOOK_SECRET;
-  if (!secret || req.query.secret !== secret) {
+  if (!secretsMatch(req.query.secret, secret)) {
     console.error('Monday update-webhook: authorization failed (missing or mismatched secret).');
     return res.status(401).json({ error: 'Invalid secret.' });
   }
@@ -43,15 +44,38 @@ export default async function handler(req, res) {
   const { itemId, updateBody, creatorEmail } = req.body || {};
   if (!itemId || !creatorEmail) return res.status(400).json({ error: 'Missing fields.' });
 
-  // Only notify customer when a staff member replied. Uses the shared
-  // isStaffEmail() helper (lib/auth.js) rather than a locally duplicated
-  // domain check — this file previously hardcoded a single fallback domain
-  // (summitsensorygym.com) that didn't include summitsensory.com, so a staff
-  // reply from an @summitsensory.com address (e.g. bryan@summitsensory.com)
-  // would have been misclassified as a non-staff update whenever
-  // STAFF_EMAIL_DOMAIN wasn't set in Vercel — found 2026-07-28 during a full
-  // QA pass, alongside the Message Status automation gap (OPEN-3).
-  const isStaff = isStaffEmail(creatorEmail);
+  // PORTAL-031: Monday's "when an update is created" automation fires for
+  // EVERY update on the item, including ones this app itself posted via the
+  // API — real customer chat (postOrderMessage) and every automated
+  // audit-trail tag (postTaggedUpdate: color-selection confirmations,
+  // contact-info changes, referrals, reminders, impersonation logs, etc.).
+  // Monday's create_update API always attributes an API-created update to
+  // whoever owns MONDAY_API_TOKEN, never the real sender (see
+  // lib/messageOrigin.js's header) — so creatorEmail on ANY of those looks
+  // exactly like a staff reply. Using isStaffEmail(creatorEmail) alone meant
+  // a customer's own portal message (or a routine automated log) flipped
+  // "Needs Reply" straight back to "Replied" the instant it was posted, and
+  // triggered a "new message from Summit Sensory Gym" email that just
+  // echoed the customer's own text or an internal log back at them.
+  //
+  // Tag-based first, exactly like messageOrigin.js's own read-side logic:
+  //   - A real Messages-tab post starts with the literal "[PORTAL]" prefix
+  //     (see /api/monday/messages.js) — trust its explicit
+  //     [PORTAL:STAFF]/[PORTAL:CUSTOMER] tag instead of creatorEmail.
+  //   - One of this app's own automated tags starts "[PORTAL: ...]"
+  //     (postTaggedUpdate) — never a real reply, never worth notifying the
+  //     customer about.
+  //   - Only a genuinely untagged update — staff replying directly inside
+  //     Monday, not through this app — falls back to creatorEmail, which is
+  //     trustworthy in that one case (see isStaffReply's own reasoning).
+  let isStaff;
+  if (isPortalChatMessage({ body: updateBody })) {
+    isStaff = isStaffMessage({ body: updateBody });
+  } else if (/^\[PORTAL:/.test(updateBody || '')) {
+    isStaff = false;
+  } else {
+    isStaff = isStaffEmail(creatorEmail);
+  }
   if (!isStaff) return res.status(200).json({ skipped: 'Non-staff update, no notification sent.' });
 
   try {

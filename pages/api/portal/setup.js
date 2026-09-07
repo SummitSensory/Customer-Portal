@@ -242,6 +242,20 @@ export default async function handler(req, res) {
           freightAckBy, freightAckDate,
         } = data;
 
+        // PORTAL-034: changedRestricted used to be passed straight from the
+        // client into notifyTeamContactChange's HTML email and the
+        // submissions board with no validation at all — RESTRICTED_FIELDS
+        // above exists for exactly this purpose (the real, known set of
+        // fields that actually require staff confirmation) but was never
+        // actually applied to it. An authenticated customer session could
+        // otherwise inject arbitrary text — including a crafted HTML
+        // link — straight into a trusted-domain internal email. Whitelisting
+        // here closes both that injection vector and the more basic bug of
+        // treating any client-supplied string as a "restricted field."
+        const safeChangedRestricted = Array.isArray(changedRestricted)
+          ? changedRestricted.filter((f) => RESTRICTED_FIELDS.includes(f))
+          : [];
+
         // Snapshot every field exactly as submitted (including the raw
         // yes/no + asap/scheduled control values, not just the human-readable
         // labels above) so the Delivery tab can restore what the customer
@@ -337,18 +351,18 @@ export default async function handler(req, res) {
           addressConfirmed, addressLine1, addressLine2, addressCity, addressState, addressZip, addressCountry,
           formattedAddress,
           loadingDock, deliveryTiming, preferredDeliveryDate,
-          changedRestricted,
+          changedRestricted: safeChangedRestricted,
           freightAckBy, freightAckDate,
         }).catch(err => console.error('createDeliverySubmissionItem failed:', err));
 
         // Notify team of delivery submission (always) + flag restricted changes
-        const notifyFields = changedRestricted?.length > 0
-          ? changedRestricted
+        const notifyFields = safeChangedRestricted.length > 0
+          ? safeChangedRestricted
           : ['Delivery Details'];
         await notifyTeamContactChange(order.name, session.email, notifyFields).catch(console.error);
         const deliverySynced = await markSectionCompleteSafe(order.id, 'portalDelivery');
 
-        return res.status(200).json({ ok: true, requiresConfirmation: changedRestricted?.length > 0, checklistSyncPending: !deliverySynced });
+        return res.status(200).json({ ok: true, requiresConfirmation: safeChangedRestricted.length > 0, checklistSyncPending: !deliverySynced });
       }
 
       // ── Freight Acknowledgment ──────────────────────────────────────────

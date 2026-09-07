@@ -51,7 +51,11 @@ const SYNC_CONCURRENCY = 4;
 
 export default async function handler(req, res) {
   const authHeader = req.headers['authorization'];
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // PORTAL-033: an unset CRON_SECRET used to make this a literal string
+  // comparison against "Bearer undefined" — trivially satisfiable by
+  // anyone. Fail closed when the secret itself isn't configured, matching
+  // the discipline lib/auth.js already applies to NEXTAUTH_SECRET.
+  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: 'Unauthorized.' });
   }
 

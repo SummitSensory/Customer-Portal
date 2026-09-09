@@ -753,7 +753,14 @@ function ContactTab({ order, completions, markComplete, showToast, onNext }) {
         )}
       </div>
 
-      <TabNav onNext={confirm} nextLabel={saving && !editing ? 'Saving…' : 'Confirm & Continue'} saving={saving && !editing} />
+      {/* PORTAL-053: this used to gate on `saving && !editing`, which is
+          always false while editing===true — so while submitUpdate() was
+          mid-flight (saving=true, editing=true) this button stayed fully
+          enabled and could fire a second, concurrent saveSetup call (confirm,
+          tab:'contact') racing the shared `saving` state against the
+          in-flight edit submission (submitUpdate, tab:'contact_update').
+          Gating on `saving` alone disables it during EITHER submit path. */}
+      <TabNav onNext={confirm} nextLabel={saving ? 'Saving…' : 'Confirm & Continue'} saving={saving} />
     </>
   );
 }
@@ -1156,11 +1163,31 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
     return e;
   }
 
+  // PORTAL-045: this used to flag a field as "changed" just because it was
+  // PRESENT (addressConfirmed===false, a non-empty deliveryTiming, any
+  // hasLoadingDock value) rather than actually different from what was
+  // already on file. deliveryTiming is a required field and hasLoadingDock
+  // always has a default, so both were true on essentially every
+  // submission — including a customer's very first one, or a resubmission
+  // where nothing actually changed — firing the "Changes Submitted for
+  // Confirmation" interstitial (below) and stamping changedRestricted into
+  // the Monday-bound payload almost every time, defeating the whole point
+  // of the flag for staff triage. Now compares against `saved`
+  // (order.deliverySnapshot, the last submission actually on file) and only
+  // flags a real difference; a first-ever submission has nothing to compare
+  // against, so nothing is flagged as "changed" for it.
   function getChangedRestricted() {
     const changed = [];
-    if (addressConfirmed === false) changed.push('Ship-To Address');
-    if (deliveryTiming) changed.push('Preferred Delivery Timing');
-    if (hasLoadingDock) changed.push('Loading Dock / Liftgate Requirement');
+    if (!saved) return changed;
+
+    const ship = shipToParts();
+    const newAddress = [ship.line1, ship.line2, ship.city, ship.state, ship.zip, ship.country].join('|');
+    const savedAddress = [saved.addressLine1, saved.addressLine2, saved.addressCity, saved.addressState, saved.addressZip, saved.addressCountry]
+      .map(v => v || '').join('|');
+    if (newAddress !== savedAddress) changed.push('Ship-To Address');
+
+    if (deliveryTiming && deliveryTiming !== (saved.deliveryTimingOption || '')) changed.push('Preferred Delivery Timing');
+    if (hasLoadingDock !== (saved.hasLoadingDock || 'no')) changed.push('Loading Dock / Liftgate Requirement');
     return changed;
   }
 

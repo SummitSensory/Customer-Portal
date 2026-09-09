@@ -38,8 +38,21 @@ function isOrderShipped(order) {
 }
 import { notifyTeamContactChange, notifyTeamFormCompleted } from '../../../lib/email';
 
-// Fields that require Summit confirmation when changed
-const RESTRICTED_FIELDS = ['deliveryAddress', 'liftgate', 'loadingDock', 'deliveryWindow'];
+// Fields that require Summit confirmation when changed.
+// PORTAL-046: these values must match EXACTLY what DeliveryTab's
+// getChangedRestricted() in pages/portal/index.js actually pushes into
+// changedRestricted ('Ship-To Address' / 'Preferred Delivery Timing' /
+// 'Loading Dock / Liftgate Requirement') — this list previously used
+// unrelated machine-style keys ('deliveryAddress', 'liftgate', 'loadingDock',
+// 'deliveryWindow') that never matched any real client value, so the
+// .filter() below silently produced an empty array on every single
+// submission. Since the PORTAL-034 fix, that meant: safeChangedRestricted
+// was always [], requiresConfirmation was always false in the API response,
+// the Monday-bound submission item's changedRestricted was always [], and
+// staff's "Contact Information Updated" email always fell through to the
+// generic "Delivery Details" fallback (see notifyFields below) instead of
+// ever naming which specific restricted field actually changed.
+const RESTRICTED_FIELDS = ['Ship-To Address', 'Preferred Delivery Timing', 'Loading Dock / Liftgate Requirement'];
 
 // PORTAL-010: this handler previously did zero validation beyond "tab and
 // data required" — any authenticated session could POST empty strings or

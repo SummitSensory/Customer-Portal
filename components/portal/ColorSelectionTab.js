@@ -823,7 +823,15 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     );
   } else if (view !== 'checklist' && activePart) {
     const input = view;
-    const PartPicker = input.input === COLOR_INPUT.MAT_PAD_COLOR ? MatPadPartPicker : StructurePartPicker;
+    // Both MAT_PAD_COLOR and BALL_PIT are vinyl-only inputs (see ALLOWED_BRANDS
+    // in lib/colorRequirements.js) — BALL_PIT is kept as its own COLOR_INPUT
+    // bucket (not folded into MAT_PAD_COLOR) so Adventure Series' checklist
+    // shows "Ball Pit" as its own row, distinct from "Column Wraps & Pads",
+    // matching the real Jotform form's own separate Yes/No gates — but both
+    // render with the same vinyl swatch picker, not the Cardinal/Prismatic one.
+    const PartPicker = (input.input === COLOR_INPUT.MAT_PAD_COLOR || input.input === COLOR_INPUT.BALL_PIT)
+      ? MatPadPartPicker
+      : StructurePartPicker;
     body = (
       <PartPicker
         key={`${input.input}-${activePart}`}

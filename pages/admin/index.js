@@ -245,6 +245,14 @@ function getCellValue(order, colId) {
 function OrdersTab({ orders, onRefresh, showToast }) {
   const [editing, setEditing] = useState({});
   const [saving, setSaving] = useState(null);
+  // PORTAL-052: sendInvite/notifyByEmail/viewAsCustomer had no in-flight
+  // guard, unlike saveOrder (which correctly gates on `saving === order.id`).
+  // Each requires a confirm() accept, but nothing stopped a fast second
+  // click (and a second confirm accept) from firing before the first
+  // request resolved — a duplicate invitation/notification email, or a
+  // duplicate 2-hour impersonation session. Keyed per-order so acting on one
+  // order never blocks acting on another.
+  const [pendingAction, setPendingAction] = useState({});
   const [showPicker, setShowPicker] = useState(false);
   // PORTAL-021: lets staff see a completed Delivery & Site Details submission
   // right in the Orders table (from order.deliverySnapshot, already parsed
@@ -308,8 +316,10 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   }
 
   async function sendInvite(order) {
+    if (pendingAction[order.id]) return;
     if (!order.customerEmail) { showToast('This order has no customer email.'); return; }
     if (!confirm(`Send portal invitation to ${order.customerEmail}?`)) return;
+    setPendingAction(prev => ({ ...prev, [order.id]: true }));
     try {
       const res = await fetch('/api/portal/invite', {
         method: 'POST',
@@ -320,6 +330,8 @@ function OrdersTab({ orders, onRefresh, showToast }) {
       showToast(`✅ Invitation sent to ${order.customerEmail}`);
     } catch {
       showToast('Failed to send invitation. Please try again.');
+    } finally {
+      setPendingAction(prev => { const n = { ...prev }; delete n[order.id]; return n; });
     }
   }
 
@@ -329,8 +341,10 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   // built but literally unwired to any trigger at all (Customer-Portal-Process-Flow.md
   // OPEN-2). All three now share one small "Notify…" control below.
   async function notifyByEmail(order, endpoint, label, extraBody) {
+    if (pendingAction[order.id]) return;
     if (!order.customerEmail) { showToast('This order has no customer email.'); return; }
     if (!confirm(`Send "${label}" email to ${order.customerEmail}?`)) return;
+    setPendingAction(prev => ({ ...prev, [order.id]: true }));
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -342,6 +356,8 @@ function OrdersTab({ orders, onRefresh, showToast }) {
       showToast(`✅ ${label} sent to ${order.customerEmail}`);
     } catch (err) {
       showToast(err.message || 'Failed to send. Please try again.');
+    } finally {
+      setPendingAction(prev => { const n = { ...prev }; delete n[order.id]; return n; });
     }
   }
 
@@ -359,8 +375,10 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   }
 
   async function viewAsCustomer(order) {
+    if (pendingAction[order.id]) return;
     if (!order.customerEmail) { showToast('This order has no customer email — nothing to view as.'); return; }
     if (!confirm(`View the portal as ${order.customerEmail} for "${order.name}"? This starts a 2-hour session logged to the order.`)) return;
+    setPendingAction(prev => ({ ...prev, [order.id]: true }));
     try {
       const res = await fetch('/api/admin/impersonate', {
         method: 'POST',
@@ -370,8 +388,13 @@ function OrdersTab({ orders, onRefresh, showToast }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to start session.');
       window.location.href = data.redirectTo || '/portal';
+      // Deliberately not clearing pendingAction in a finally here — the page
+      // is navigating away on success, and clearing it would just let a
+      // double-click race the redirect. It's naturally reset by the
+      // navigation itself; the catch below still clears it on failure.
     } catch (err) {
       showToast(err.message || 'Failed to start viewing session. Please try again.');
+      setPendingAction(prev => { const n = { ...prev }; delete n[order.id]; return n; });
     }
   }
 
@@ -546,11 +569,11 @@ function OrdersTab({ orders, onRefresh, showToast }) {
                           ) : (
                             <div style={{ display: 'flex', gap: 6 }}>
                               <button className="btn btn-ghost btn-sm" onClick={() => startEdit(order)}>Edit</button>
-                              <button className="btn btn-ghost btn-sm" title="Send portal invitation" onClick={() => sendInvite(order)} style={{ whiteSpace: 'nowrap' }}>
-                                ✉️ Invite
+                              <button className="btn btn-ghost btn-sm" title="Send portal invitation" onClick={() => sendInvite(order)} disabled={!!pendingAction[order.id]} style={{ whiteSpace: 'nowrap' }}>
+                                {pendingAction[order.id] ? '…' : '✉️ Invite'}
                               </button>
-                              <button className="btn btn-ghost btn-sm" title="View/act in this customer's portal to help them complete a step or troubleshoot an issue" onClick={() => viewAsCustomer(order)} style={{ whiteSpace: 'nowrap' }}>
-                                👁️ View as Customer
+                              <button className="btn btn-ghost btn-sm" title="View/act in this customer's portal to help them complete a step or troubleshoot an issue" onClick={() => viewAsCustomer(order)} disabled={!!pendingAction[order.id]} style={{ whiteSpace: 'nowrap' }}>
+                                {pendingAction[order.id] ? '…' : '👁️ View as Customer'}
                               </button>
                               {order.deliverySnapshot && (
                                 <button
@@ -576,6 +599,7 @@ function OrdersTab({ orders, onRefresh, showToast }) {
                                 className="btn btn-ghost btn-sm"
                                 value=""
                                 title="Send a one-off customer notification"
+                                disabled={!!pendingAction[order.id]}
                                 style={{ whiteSpace: 'nowrap' }}
                                 onChange={e => { const action = e.target.value; e.target.value = ''; if (action) handleNotifyChoice(order, action); }}
                               >
@@ -708,7 +732,12 @@ function DeliveryDetailPanel({ order }) {
       )}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px 28px', marginBottom: 14 }}>
-        <DeliveryField label="Loading Dock" value={isChecked(s.hasLoadingDock) ? 'Yes' : 'No'} />
+        {/* PORTAL-047: hasLoadingDock is stored as the plain string 'yes'/'no'
+            (see pages/portal/index.js DeliveryTab's useState(saved?.hasLoadingDock
+            || 'no')), never as true/'v'/{checked:true} — isChecked() doesn't
+            recognize that shape, so this panel showed "No" for every single
+            order regardless of what the customer actually answered. */}
+        <DeliveryField label="Loading Dock" value={s.hasLoadingDock === 'yes' ? 'Yes' : 'No'} />
         <DeliveryField label="Delivery Timing" value={s.deliveryTiming} />
         <DeliveryField label="Preferred Date" value={s.preferredDeliveryDate} />
       </div>

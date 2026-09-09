@@ -23,6 +23,7 @@ import { requiredColorInputs } from '../../../lib/colorRequirements';
 // no business needing that at all; see the lib module's header comment for
 // the real, confirmed bug that came from getting this wrong the first time.
 import { validatePresentSelections, validateColorSelectionData, sanitizeSelections, computeTotalUpcharge } from '../../../lib/colorSelectionValidation';
+import { allowRequest, getClientIp } from '../../../lib/rateLimit';
 
 const DEMO_PRODUCT_TYPE = 'Summit Adventure Series: Custom Sensory Gym';
 const VIEWER_COOKIE = 'summit_demo_viewer';
@@ -45,6 +46,15 @@ function emptySnapshot() {
 }
 
 export default async function handler(req, res) {
+  // PORTAL-054: this public, unauthenticated demo endpoint had no rate limit
+  // at all, unlike every other public route in this codebase. Real-world
+  // impact is bounded (no Monday/real data involved, and demoSnapshots is
+  // already sweep-capped above), but it costs nothing to close and keeps
+  // this route consistent with the rest of the app's public surface.
+  if (!allowRequest(`demo-color-selection:${getClientIp(req)}`, { maxRequests: 60, windowMs: 60_000 })) {
+    return res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' });
+  }
+
   const demoOrder = { productType: DEMO_PRODUCT_TYPE };
 
   const cookies = parse(req.headers.cookie || '');

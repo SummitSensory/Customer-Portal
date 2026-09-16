@@ -3,7 +3,7 @@
  * Sections: Dashboard, Orders, Customers, Files, Messages, Settings
  */
 
-import { useState, useEffect, useCallback, Fragment } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
@@ -242,6 +242,41 @@ function getCellValue(order, colId) {
   return { type: 'text', value: order.rawColumns?.[colId]?.text || '' };
 }
 
+function progressIsComplete(progress) {
+  return PROGRESS_STEPS.every(step => {
+    const v = progress?.[step.key];
+    return v === '✅' || v === 'N/A' || v === '' || v == null;
+  });
+}
+
+// Sort key per column — numeric for balance/progress so they order
+// naturally instead of as strings, lowercased text for everything else.
+function getSortValue(order, colId) {
+  if (colId === '_balance') return order.balance == null ? -1 : order.balance;
+  if (colId === '_progress') return PROGRESS_STEPS.filter(s => order.progress?.[s.key] === '✅').length;
+  if (colId === '_name') return (order.name || '').toLowerCase();
+  if (colId === '_actions') return '';
+  const cell = getCellValue(order, colId);
+  return typeof cell.value === 'string' ? cell.value.toLowerCase() : (cell.value ?? '');
+}
+
+// Per-column filter match. Status/Balance/Progress get dropdowns with
+// fixed values (matched against the real order fields); everything else
+// gets a free-text substring match against the same text the cell renders.
+function matchesColumnFilter(order, colId, filterValue) {
+  if (!filterValue) return true;
+  if (colId === 'status__1') return order.status === filterValue;
+  if (colId === '_balance') {
+    const hasBalanceDue = order.balance != null && order.balance > 0;
+    return filterValue === 'due' ? hasBalanceDue : !hasBalanceDue;
+  }
+  if (colId === '_progress') {
+    return filterValue === 'complete' ? progressIsComplete(order.progress) : !progressIsComplete(order.progress);
+  }
+  const cell = getCellValue(order, colId);
+  return (cell.value ?? '').toString().toLowerCase().includes(filterValue.toLowerCase());
+}
+
 function OrdersTab({ orders, onRefresh, showToast }) {
   const [editing, setEditing] = useState({});
   const [saving, setSaving] = useState(null);
@@ -262,6 +297,8 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   const [expandedDelivery, setExpandedDelivery] = useState(null);
   const [expandedColors, setExpandedColors] = useState(null);
   const [availableCols, setAvailableCols] = useState([]);
+  const [sortConfig, setSortConfig] = useState({ colId: null, dir: 'asc' });
+  const [columnFilters, setColumnFilters] = useState({});
   const [selectedColIds, setSelectedColIds] = useState(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -429,20 +466,61 @@ function OrdersTab({ orders, onRefresh, showToast }) {
     ? selectedColIds.map(id => availableCols.find(c => c.id === id)).filter(Boolean)
     : selectedColIds.map(id => ({ id, title: id === '_name' ? 'Order' : id === '_balance' ? 'Balance' : id === '_actions' ? '' : id }));
 
+  function handleSort(colId) {
+    if (colId === '_actions') return;
+    setSortConfig(prev => (
+      prev.colId === colId ? { colId, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { colId, dir: 'asc' }
+    ));
+  }
+
+  const activeFilterCount = Object.values(columnFilters).filter(Boolean).length;
+
+  // Filter first (against every currently-visible column), then sort —
+  // column visibility changes (Customize Columns) naturally drop that
+  // column's filter's effect since matchesColumnFilter is only run for
+  // displayCols.
+  const visibleOrders = useMemo(() => {
+    let result = orders.filter(order =>
+      displayCols.every(col => matchesColumnFilter(order, col.id, columnFilters[col.id]))
+    );
+    if (sortConfig.colId) {
+      const { colId, dir } = sortConfig;
+      result = [...result].sort((a, b) => {
+        const av = getSortValue(a, colId);
+        const bv = getSortValue(b, colId);
+        if (av < bv) return dir === 'asc' ? -1 : 1;
+        if (av > bv) return dir === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+    return result;
+  }, [orders, displayCols, columnFilters, sortConfig]);
+
   return (
     <>
       <div className="ph" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
           <h2>Orders</h2>
-          <p>All active orders. Edit status and tracking numbers inline.</p>
+          <p>All active orders. Click a column header to sort; use the filter row to narrow results. Edit status and tracking numbers inline.</p>
         </div>
-        <button
-          className="btn btn-ghost btn-sm"
-          onClick={() => setShowPicker(true)}
-          style={{ marginTop: 4, whiteSpace: 'nowrap' }}
-        >
-          ⚙️ Customize Columns
-        </button>
+        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+          {activeFilterCount > 0 && (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setColumnFilters({})}
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              ✕ Clear Filters ({activeFilterCount})
+            </button>
+          )}
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setShowPicker(true)}
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            ⚙️ Customize Columns
+          </button>
+        </div>
       </div>
 
       {/* Column picker drawer */}
@@ -519,13 +597,85 @@ function OrdersTab({ orders, onRefresh, showToast }) {
           <table>
             <thead>
               <tr>
-                {displayCols.map(col => (
-                  <th key={col.id}>{col.id === '_actions' ? '' : col.title}</th>
-                ))}
+                {displayCols.map(col => {
+                  const sortable = col.id !== '_actions';
+                  const isSorted = sortConfig.colId === col.id;
+                  return (
+                    <th
+                      key={col.id}
+                      onClick={sortable ? () => handleSort(col.id) : undefined}
+                      style={sortable ? { cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' } : undefined}
+                      title={sortable ? `Sort by ${col.title}` : undefined}
+                    >
+                      {col.id === '_actions' ? '' : (
+                        <>
+                          {col.title}
+                          <span style={{ marginLeft: 4, fontSize: 10, color: isSorted ? 'inherit' : 'var(--mut)', opacity: isSorted ? 1 : 0.4 }}>
+                            {isSorted ? (sortConfig.dir === 'asc' ? '▲' : '▼') : '↕'}
+                          </span>
+                        </>
+                      )}
+                    </th>
+                  );
+                })}
+              </tr>
+              <tr>
+                {displayCols.map(col => {
+                  if (col.id === '_actions') return <th key={col.id} style={{ padding: '4px 8px' }} />;
+                  if (col.id === 'status__1') return (
+                    <th key={col.id} style={{ padding: '4px 8px', fontWeight: 400 }}>
+                      <select
+                        value={columnFilters[col.id] || ''}
+                        onChange={e => setColumnFilters(prev => ({ ...prev, [col.id]: e.target.value }))}
+                        style={{ width: '100%', fontSize: 12 }}
+                      >
+                        <option value="">All</option>
+                        {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </th>
+                  );
+                  if (col.id === '_balance') return (
+                    <th key={col.id} style={{ padding: '4px 8px', fontWeight: 400 }}>
+                      <select
+                        value={columnFilters[col.id] || ''}
+                        onChange={e => setColumnFilters(prev => ({ ...prev, [col.id]: e.target.value }))}
+                        style={{ width: '100%', fontSize: 12 }}
+                      >
+                        <option value="">All</option>
+                        <option value="due">Balance Due</option>
+                        <option value="paid">Paid</option>
+                      </select>
+                    </th>
+                  );
+                  if (col.id === '_progress') return (
+                    <th key={col.id} style={{ padding: '4px 8px', fontWeight: 400 }}>
+                      <select
+                        value={columnFilters[col.id] || ''}
+                        onChange={e => setColumnFilters(prev => ({ ...prev, [col.id]: e.target.value }))}
+                        style={{ width: '100%', fontSize: 12 }}
+                      >
+                        <option value="">All</option>
+                        <option value="complete">Complete</option>
+                        <option value="incomplete">Incomplete</option>
+                      </select>
+                    </th>
+                  );
+                  return (
+                    <th key={col.id} style={{ padding: '4px 8px', fontWeight: 400 }}>
+                      <input
+                        type="text"
+                        placeholder="Filter…"
+                        value={columnFilters[col.id] || ''}
+                        onChange={e => setColumnFilters(prev => ({ ...prev, [col.id]: e.target.value }))}
+                        style={{ width: '100%', fontSize: 12, padding: '3px 6px', boxSizing: 'border-box' }}
+                      />
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
-              {orders.map(order => {
+              {visibleOrders.map(order => {
                 const ed = editing[order.id];
                 return (
                   <Fragment key={order.id}>
@@ -679,6 +829,15 @@ function OrdersTab({ orders, onRefresh, showToast }) {
         </div>
         {orders.length === 0 && (
           <div className="empty"><div className="ei">📦</div><h3>No orders</h3><p>Orders from Monday.com will appear here.</p></div>
+        )}
+        {orders.length > 0 && visibleOrders.length === 0 && (
+          <div className="empty">
+            <div className="ei">🔍</div>
+            <h3>No orders match your filters</h3>
+            <p>
+              <button className="lk" onClick={() => setColumnFilters({})}>Clear filters</button> to see all {orders.length} orders.
+            </p>
+          </div>
         )}
       </div>
     </>

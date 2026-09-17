@@ -28,11 +28,13 @@ Ran `/code-review` (high effort) against the real diff on this branch. Full find
 | Autosave skipped catalog validation entirely — a fabricated code could be priced and persisted before any confirm | High | **Fixed** — `validatePresentSelections()` runs on every save |
 | No check that a color's brand was allowed on the part it was assigned to (e.g. a Prismatic paint SKU confirmable as a Mat & Pad color) | High | **Fixed** — `ALLOWED_BRANDS` map in `lib/colorRequirements.js` |
 | Backend work started before Bryan's explicit confirmation on the completion-tracking option | High (process) | **Resolved 2026-09-01** — see "Decisions now on record" above |
-| Admin panel can hide real, confirmed selections if `productType` is later edited on Monday (the "Colors" button shows regardless; the panel content doesn't) | Medium | **Not yet fixed** |
-| A post-confirmation autosave leaves a stale `confirmedAt` attached to now-unvalidated `selections` | Medium | **Not yet fixed** |
-| No shape/size whitelist on the autosave payload (bounded only by Next's 1MB default body limit) | Medium | **Not yet fixed** |
-| Real duplication across `ColorSelectionTab.js`/`pages/admin/index.js`/`lib/colorCatalogSync.js` (4 separate spots reimplementing the same lookup/derivation logic) | Low | **Not yet fixed** |
-| `pages/api/portal/color-selection.js` reimplements `setup.js`'s auth/session/rate-limit boilerplate as a second parallel pattern | Low | **Not yet fixed** |
+| Admin panel can hide real, confirmed selections if `productType` is later edited on Monday (the "Colors" button shows regardless; the panel content doesn't) | Medium | **Fixed** — `findOrphanedSelections()` (`lib/colorCatalog.js`) + explicit "not configured for native picker" messaging in the admin panel |
+| A post-confirmation autosave leaves a stale `confirmedAt` attached to now-unvalidated `selections` | Medium | **Fixed** — re-read-before-write plus post-write verification |
+| No shape/size whitelist on the autosave payload (bounded only by Next's 1MB default body limit) | Medium | **Fixed** — `sanitizeSelections()` (`lib/colorSelectionValidation.js`) whitelists the payload shape |
+| Real duplication across `ColorSelectionTab.js`/`pages/admin/index.js`/`lib/colorCatalogSync.js` (4 separate spots reimplementing the same lookup/derivation logic) | Low | **Fixed** — consolidated into shared helpers in `lib/colorCatalog.js` |
+| `pages/api/portal/color-selection.js` reimplements `setup.js`'s auth/session/rate-limit boilerplate as a second parallel pattern | Low | **Fixed** — both now share `lib/apiAuth.js` |
+
+Correction (2026-09-17): this table went stale — every row above was actually fixed in the 2026-09-02/03 work described later in this doc, but this summary table was never updated to reflect it. Verified against current code, not just doc prose, before making this correction.
 
 ## What Option 4 still actually requires (not yet started)
 

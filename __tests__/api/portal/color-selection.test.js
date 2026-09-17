@@ -73,6 +73,9 @@ function fullValidSelections() {
     mat_pad_color: {
       column_wraps_pads: { brand: 'vinyl', code: 'Black' },
     },
+    climbing_wall_mat: {
+      climbing_wall_mat: { brand: 'vinyl', code: 'Black' },
+    },
     ball_pit: {
       ball_pit_vinyl: { brand: 'vinyl', code: 'Black' },
       mat_section_1: { brand: 'vinyl', code: 'Black' },

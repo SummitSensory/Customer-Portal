@@ -20,7 +20,7 @@
  * var isn't configured.
  */
 
-import { getOrderById, getOrderByEmail, setStatusLabel } from '../../../lib/monday';
+import { getOrderById, getOrderByEmail, setStatusLabel, postTaggedUpdate } from '../../../lib/monday';
 import { sendCustomerReplyNotification } from '../../../lib/email';
 import { isStaffEmail, secretsMatch } from '../../../lib/auth';
 import { isPortalChatMessage, isStaffMessage } from '../../../lib/messageOrigin';
@@ -104,6 +104,20 @@ export default async function handler(req, res) {
       order.name,
       preview
     );
+
+    // Marker for cron/message-reply-safety-net.js: this is the ONLY place
+    // EM-11 gets sent from, entirely dependent on the Monday "when an update
+    // is created" automation staying registered on this board (see OPEN-3's
+    // resolution history — it's been disabled/misconfigured before). The
+    // safety-net cron compares the timestamp of this tag against the
+    // timestamp of the most recent staff reply to spot a gap; a failure to
+    // log it is non-fatal to this request (the customer already got their
+    // email) but is loud so it isn't silently invisible either.
+    await postTaggedUpdate(
+      itemId,
+      'PORTAL: Reply Notified',
+      `Staff reply notification emailed to ${order.customerEmail} on ${new Date().toLocaleDateString()}.`
+    ).catch(err => console.error(`Reply notification sent to ${order.customerEmail}, but the "[PORTAL: Reply Notified]" log write FAILED for order ${itemId} — cron/message-reply-safety-net may falsely flag this as a gap:`, err.message));
 
     return res.status(200).json({ ok: true });
   } catch (err) {

@@ -75,6 +75,18 @@ export default async function handler(req, res) {
       orders = await getAllOrders();
     } catch (err) {
       console.error('accessory-tracking-sync: failed to load orders (accessory contact enrichment + Frame/Mats onboarding both skipped this run):', err.message);
+      // PORTAL-057: this used to be console.error only, which is why a real
+      // 13-day-long outage (getAllOrders timing out on every single run,
+      // 2026-09-04 through 2026-09-17 — silently skipping Frame/Mats
+      // AfterShip onboarding the whole time) went completely unnoticed until
+      // a customer-facing symptom ("AfterShip isn't updating") surfaced it.
+      // Degrading gracefully (see comment above) is still correct — but a
+      // recurrence of this specific failure should page, not just log.
+      await reportCriticalFailure(
+        'cron/accessory-tracking-sync',
+        `Failed to load the orders board — Frame/Mats AfterShip onboarding and accessory contact enrichment were both skipped this run: ${err.message}`,
+        { error: err.message }
+      );
     }
     const ordersById = new Map(orders.map((o) => [String(o.id), o]));
 

@@ -2,6 +2,22 @@
  * GET /api/cron/invite-safety-net
  * Vercel Cron Job — runs every 6 hours.
  *
+ * PORTAL-058 — PAUSED 2026-09-18 (removed from vercel.json's crons list,
+ * endpoint itself left intact): its first real run flagged 263 of 378 orders
+ * on the board — an obvious false-positive flood, not 263 real gaps. Root
+ * cause: the "has a real Manufacturing Phase value set at all" check below
+ * treats ANY non-blank status as "should have an invite by now," but the
+ * real statuses seen in that run include values like "Wait to Push Order,"
+ * "No Action Needed," and "GB Fab Details Sent" — pre-sales/administrative
+ * pipeline stages on this same shared board, not confirmed customer orders
+ * past the "Incoming Order" trigger point this cron's own header describes.
+ * STATUS_STAGES (lib/monday.js) only documents 5 labels; the real Manufacturing
+ * Phase column clearly has many more, undocumented here — the exact class of
+ * "verify against the real Monday column values first" mistake CLAUDE.md
+ * warns about. Needs the real, complete list of Manufacturing Phase values
+ * (and which ones actually follow "Incoming Order" in the pipeline) before
+ * this can be fixed correctly — do not re-enable by guessing at a whitelist.
+ *
  * Direct requirement from Bryan (2026-09-11): the customer portal invite is
  * the one thing that starts the entire customer-facing setup process — if
  * it's never sent, the customer never even knows the portal exists, and

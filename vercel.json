@@ -13,10 +13,6 @@
       "schedule": "0 8 * * *"
     },
     {
-      "path": "/api/cron/invite-safety-net",
-      "schedule": "0 */6 * * *"
-    },
-    {
       "path": "/api/cron/message-reply-safety-net",
       "schedule": "*/30 * * * *"
     }

@@ -43,6 +43,19 @@ import { mapWithConcurrency } from '../../../lib/concurrency';
 const GRACE_PERIOD_MINUTES = 30;
 const CHECK_CONCURRENCY = 8;
 
+// PORTAL-058: update-webhook.js only started posting "[PORTAL: Reply
+// Notified]" markers when this cron itself shipped (2026-09-17T21:11Z, PR
+// #6) — before that, EM-11 was still sent correctly by the (working) Monday
+// automation, it just left no marker behind. Without this cutoff, this
+// cron's very first runs flagged every pre-existing staff reply across the
+// whole board as a "gap" — real example: 6 orders spanning 2026-07-28 to
+// 2026-09-16, none of them an actual notification failure, re-alerted every
+// 30 minutes with no way to ever self-resolve (there's no code path that
+// could retroactively write the marker for history that predates it). Only
+// evaluate replies at or after this cutoff, where "no marker" is actually
+// informative.
+const MARKER_LIVE_SINCE = new Date('2026-09-17T21:11:00Z');
+
 // Mirrors update-webhook.js's own trigger classification (see that file's
 // PORTAL-031 comment) so this can't silently drift from what actually
 // counts as a notifiable staff reply there.
@@ -78,6 +91,8 @@ export default async function handler(req, res) {
 
         const lastStaffReply = [...sorted].reverse().find(isNotifiableStaffReply);
         if (!lastStaffReply) { results.skipped++; return; }
+
+        if (new Date(lastStaffReply.created_at) < MARKER_LIVE_SINCE) { results.skipped++; return; }
 
         const replyAgeMinutes = (now - new Date(lastStaffReply.created_at)) / (1000 * 60);
         if (replyAgeMinutes < GRACE_PERIOD_MINUTES) { results.skipped++; return; }

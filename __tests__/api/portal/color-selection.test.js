@@ -56,21 +56,27 @@ function mockOrderReflectingWrites(base) {
   });
 }
 
-// Matches the 2026-09-21 redesign (lib/colorRequirements.js): Adventure
-// Series' base frame (legs/beams/ladder/zip line) is now a VINYL
-// (adventure_mat) input, not Cardinal/Prismatic — only Climbing Wall
-// remains structure_frame_paint. Built with no colorGates set on `order`,
-// so every buildable gate is required (the fail-closed default).
+// Matches the final 2026-09-21 model (lib/colorRequirements.js), after a
+// real back-and-forth with Bryan: the steel frame (legs/horizontal beams/
+// ladder) is Cardinal/Prismatic (structure_frame_paint), restored to match
+// the original pre-redesign behavior. Climbing Wall is its own separate
+// Cardinal/Prismatic gate (climbing_wall_color). Zip Line is vinyl, folded
+// into Adventure-Mat Color (adventure_mat) — its only part. Built with no
+// colorGates/colorFrameType set on `order`, so every buildable gate AND
+// the steel frame (inferred from productType) are required — the
+// fail-closed default.
 function fullValidSelections() {
   return {
-    adventure_mat: {
-      legs: { brand: 'vinyl', code: 'Black' },
-      horizontal_beams: { brand: 'vinyl', code: 'Black' },
-      ladder_rungs_and_leg: { brand: 'vinyl', code: 'Black' },
-      zip_line: { brand: 'vinyl', code: 'Black' },
-    },
     structure_frame_paint: {
+      legs: { brand: 'cardinal', code: 'T009-BG01' },
+      horizontal_beams: { brand: 'cardinal', code: 'T009-BG01' },
+      ladder_rungs_and_leg: { brand: 'cardinal', code: 'T009-BG01' },
+    },
+    climbing_wall_color: {
       climbing_wall: { brand: 'cardinal', code: 'T009-BG01' },
+    },
+    adventure_mat: {
+      zip_line: { brand: 'vinyl', code: 'Black' },
     },
     wall_padding_mat: {
       column_wraps_pads: { brand: 'vinyl', code: 'Black' },
@@ -104,14 +110,14 @@ describe('validateColorSelectionData (pure)', () => {
 
   it('rejects a submission missing a required part', () => {
     const s = fullValidSelections();
-    delete s.structure_frame_paint.climbing_wall;
-    expect(validateColorSelectionData(order, s)).toMatch(/climbing_wall/);
+    delete s.structure_frame_paint.legs;
+    expect(validateColorSelectionData(order, s)).toMatch(/legs/);
   });
 
   it('rejects an unrecognized catalog code — never trusts a client-supplied color', () => {
     const s = fullValidSelections();
-    s.adventure_mat.legs = { brand: 'vinyl', code: 'MADE-UP-COLOR' };
-    expect(validateColorSelectionData(order, s)).toMatch(/legs/);
+    s.adventure_mat.zip_line = { brand: 'vinyl', code: 'MADE-UP-COLOR' };
+    expect(validateColorSelectionData(order, s)).toMatch(/zip_line/);
   });
 
   it('rejects an unsupported product type outright', () => {
@@ -147,14 +153,14 @@ describe('validateColorSelectionData — Mat & Pad Color (vinyl)', () => {
 describe('validateColorSelectionData — brand must be allowed for the part (regression, found in code review 2026-09-01)', () => {
   it('rejects a real, valid vinyl color on a structural paint part', () => {
     const s = fullValidSelections();
-    s.structure_frame_paint.climbing_wall = { brand: 'vinyl', code: 'Kelly Green' };
-    expect(validateColorSelectionData({ productType: ADVENTURE_SERIES }, s)).toMatch(/climbing_wall/);
+    s.structure_frame_paint.legs = { brand: 'vinyl', code: 'Kelly Green' };
+    expect(validateColorSelectionData({ productType: ADVENTURE_SERIES }, s)).toMatch(/legs/);
   });
 
   it('rejects a real, valid Cardinal paint code on a vinyl (adventure_mat) part', () => {
     const s = fullValidSelections();
-    s.adventure_mat.legs = { brand: 'cardinal', code: 'T009-BG01' };
-    expect(validateColorSelectionData({ productType: ADVENTURE_SERIES }, s)).toMatch(/legs/);
+    s.adventure_mat.zip_line = { brand: 'cardinal', code: 'T009-BG01' };
+    expect(validateColorSelectionData({ productType: ADVENTURE_SERIES }, s)).toMatch(/zip_line/);
   });
 });
 
@@ -165,10 +171,17 @@ describe('computeTotalUpcharge (pure)', () => {
     expect(computeTotalUpcharge(order, fullValidSelections())).toBe(0);
   });
 
-  it('prices the first Prismatic selection at $500 — only Climbing Wall can carry it, since Adventure-Mat Color is vinyl', () => {
+  it('prices the first Prismatic selection at $500 (steel frame legs)', () => {
     const s = fullValidSelections();
-    s.structure_frame_paint.climbing_wall = { brand: 'prismatic', code: 'PRB-10395' };
+    s.structure_frame_paint.legs = { brand: 'prismatic', code: 'PRB-10395' };
     expect(computeTotalUpcharge(order, s)).toBe(500);
+  });
+
+  it('prices a second, distinct Prismatic selection at +$300 — Climbing Wall is its own independent Cardinal/Prismatic gate', () => {
+    const s = fullValidSelections();
+    s.structure_frame_paint.legs = { brand: 'prismatic', code: 'PRB-10395' };
+    s.climbing_wall_color.climbing_wall = { brand: 'prismatic', code: 'PRB-4432' };
+    expect(computeTotalUpcharge(order, s)).toBe(800);
   });
 });
 
@@ -224,7 +237,7 @@ describe('handler — auth and customer isolation', () => {
     mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
 
     const s = fullValidSelections();
-    s.structure_frame_paint.climbing_wall = { brand: 'prismatic', code: 'FAKE-SKU-DOES-NOT-EXIST' };
+    s.structure_frame_paint.legs = { brand: 'prismatic', code: 'FAKE-SKU-DOES-NOT-EXIST' };
 
     const req = { method: 'POST', headers: {}, body: { selections: s, confirm: false } };
     const res = makeRes();
@@ -243,7 +256,7 @@ describe('handler — auth and customer isolation', () => {
     });
 
     const changed = fullValidSelections();
-    changed.structure_frame_paint.climbing_wall = { brand: 'cardinal', code: 'P009-BG02' };
+    changed.structure_frame_paint.legs = { brand: 'cardinal', code: 'P009-BG02' };
 
     const req = { method: 'POST', headers: {}, body: { selections: changed, confirm: false } };
     const res = makeRes();
@@ -362,7 +375,7 @@ describe('handler — auth and customer isolation', () => {
     expect(res.statusCode).toBe(200);
     const [, persisted] = mockWriteColorSelectionSnapshot.mock.calls[0];
     expect(persisted.selections.junk).toBeUndefined();
-    expect(persisted.selections.adventure_mat.legs).toEqual({ brand: 'vinyl', code: 'Black' });
+    expect(persisted.selections.structure_frame_paint.legs).toEqual({ brand: 'cardinal', code: 'T009-BG01' });
   });
 
   // Real gap found by independent code review (2026-09-02): this used to be

@@ -67,7 +67,7 @@ export default async function handler(req, res) {
     return res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' });
   }
 
-  const demoOrder = { productType: DEMO_PRODUCT_TYPE, colorGates: DEMO_COLOR_GATES };
+  const demoOrder = { productType: DEMO_PRODUCT_TYPE, colorFrameType: 'Adventure', colorGates: DEMO_COLOR_GATES };
 
   const cookies = parse(req.headers.cookie || '');
   let viewerId = cookies[VIEWER_COOKIE];

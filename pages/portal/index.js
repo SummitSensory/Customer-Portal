@@ -1869,6 +1869,32 @@ function DocumentsTab({ order, completions, markComplete, showToast, docForms, o
 function DashboardTab({ order, completions, setupComplete, setupCount, setupTotal, onNav }) {
   const firstName = order.firstName || order.pocName?.split(' ')[0] || '';
 
+  // Direct requirement (2026-09-21): Color & Product Selections is often the
+  // last setup step a customer completes and the single biggest reason an
+  // order doesn't move into manufacturing — a returning customer with
+  // unfinished steps should see a clear callout, not just the detailed
+  // checklist below. Suppressed on the very first time this browser opens
+  // the dashboard for this order, so a brand-new customer isn't greeted
+  // with a "you're behind" message before they've had any chance to act.
+  // No server-side login/visit history exists anywhere in this codebase to
+  // check instead (confirmed before building this) — this uses the same
+  // per-order localStorage pattern already established for `completions`
+  // caching above, so it resets per browser/device, not per account; a
+  // durable cross-device version would need a real Monday-tracked signal.
+  const [hasSeenDashboardBefore, setHasSeenDashboardBefore] = useState(false);
+  useEffect(() => {
+    if (!order?.id || typeof window === 'undefined') return;
+    const key = `summit_dashboard_seen_${order.id}`;
+    let seenBefore = false;
+    try { seenBefore = localStorage.getItem(key) === 'true'; } catch {}
+    setHasSeenDashboardBefore(seenBefore);
+    if (!seenBefore) {
+      try { localStorage.setItem(key, 'true'); } catch {}
+    }
+  }, [order?.id]);
+  const incompleteCount = setupTotal - setupCount;
+  const showIncompleteReturnBanner = hasSeenDashboardBefore && !setupComplete;
+
   return (
     <>
       {/* Welcome header */}
@@ -1880,6 +1906,16 @@ function DashboardTab({ order, completions, setupComplete, setupCount, setupTota
           Here's an overview of your order and what's needed to move it into manufacturing.
         </p>
       </div>
+
+      {showIncompleteReturnBanner && (
+        <div className="alert warn" style={{ marginBottom: 16 }}>
+          <span>📋</span>
+          <span>
+            <strong>You have {incompleteCount} item{incompleteCount === 1 ? '' : 's'} still incomplete.</strong>{' '}
+            Finishing these — especially Color &amp; Product Selections — is the fastest way to move your order into manufacturing.
+          </span>
+        </div>
+      )}
 
       {/* Setup progress */}
       {!setupComplete ? (

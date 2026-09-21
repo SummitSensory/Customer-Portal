@@ -246,6 +246,45 @@ function InspectModal({ color, onClose }) {
   );
 }
 
+// ── "Continue to the next color selection form?" prompt ──
+// Direct requirement (2026-09-21): shown the moment a customer finishes
+// every part of one required input and there's another still ahead —
+// color selection is often the last setup step before manufacturing, and
+// an order silently stalling here (a customer closing the tab mid-way,
+// assuming they're done) is the single biggest reason an order doesn't
+// move forward. Declining doesn't block anything — it just sends them back
+// to the checklist with an explicit "not complete" notice (see
+// declineContinueToNextInput / the Checklist banner below) instead of
+// silently dropping them with no acknowledgement.
+function NextFormPrompt({ completedLabel, nextLabel, onContinue, onDecline }) {
+  const continueBtnRef = useRef(null);
+  useEffect(() => {
+    continueBtnRef.current?.focus();
+    function onKeyDown(e) {
+      if (e.key === 'Escape') onDecline();
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onDecline]);
+
+  return (
+    <div className="cs-modal-overlay" role="presentation">
+      <div className="cs-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Continue to the next color selection form?">
+        <div className="cs-modal-body">
+          <h3 style={{ fontSize: 18, marginBottom: 8 }}>✓ {completedLabel} complete</h3>
+          <p style={{ fontSize: 14, color: 'var(--mut)', marginBottom: 20 }}>
+            Would you like to continue to the next color selection form — <strong>{nextLabel}</strong>?
+          </p>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn-ghost" onClick={onDecline}>Not now</button>
+            <button type="button" className="btn btn-moss" ref={continueBtnRef} onClick={onContinue}>Continue →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── One structural part's picker (Cardinal/Prismatic toggle + search) ──
 function StructurePartPicker({ part, selection, onChange, onBack, onContinue, input, selections }) {
   const [brand, setBrand] = useState(selection?.brand || 'cardinal');
@@ -443,7 +482,7 @@ function InputPartList({ input, requiredInputs, selections, onOpenPart, onBack }
 }
 
 // ── Checklist (index screen) ──
-function Checklist({ requiredInputs, selections, onOpenInput, onReview, allComplete }) {
+function Checklist({ requiredInputs, selections, onOpenInput, onReview, allComplete, showIncompleteNotice }) {
   return (
     <>
       {/* Direct customer feedback (2026-09-01): "I need there to be a way
@@ -456,6 +495,17 @@ function Checklist({ requiredInputs, selections, onOpenInput, onReview, allCompl
         <span>💾</span>
         <span>Your progress saves automatically as you go — you can leave and come back anytime before confirming.</span>
       </div>
+      {/* Shown after the customer explicitly declines the "continue to the
+          next form?" prompt (see NextFormPrompt) — an explicit
+          acknowledgement that this section isn't done yet, not just a
+          silent return to the checklist. Clears itself once everything's
+          actually complete. */}
+      {showIncompleteNotice && !allComplete && (
+        <div className="alert warn" style={{ marginBottom: 16 }}>
+          <span>⚠️</span>
+          <span>Your color &amp; product selection isn&apos;t complete yet. Come back anytime to finish the remaining items below before confirming.</span>
+        </div>
+      )}
       {requiredInputs.map((input) => {
         const done = inputIsComplete(input, selections);
         const filledCount = input.parts.filter((p) => partIsFilled(selections, input.input, p)).length;
@@ -641,6 +691,20 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   const [view, setView] = useState('checklist'); // 'checklist' | { input } | 'summary'
   const [activePart, setActivePart] = useState(null);
   const [confirming, setConfirming] = useState(false);
+  // Direct requirement (2026-09-21): color selection is often the last
+  // setup step a customer completes and the single biggest reason an order
+  // doesn't move into manufacturing — asked explicitly before carrying a
+  // customer straight into the NEXT required form (see
+  // handleContinueAfterSelect below), instead of silently auto-advancing
+  // the way "Select & continue" already does within one form's own parts.
+  // pendingNextInput holds the {input, part} findNextIncompletePart would
+  // jump to, only while this confirmation is showing.
+  const [pendingNextInput, setPendingNextInput] = useState(null);
+  const [pendingNextInputFrom, setPendingNextInputFrom] = useState(null); // the just-finished input's own label, for the prompt's copy
+  // Set when the customer explicitly declines that prompt — shown on the
+  // checklist until every input is complete, so declining doesn't just
+  // silently drop them back with no acknowledgement that anything's unresolved.
+  const [showIncompleteNotice, setShowIncompleteNotice] = useState(false);
 
   useEffect(() => {
     // Deliberately depends only on order?.id, not showToast: showToast is a
@@ -672,6 +736,9 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   }, [order?.id]);
 
   const allComplete = requiredInputs.length > 0 && requiredInputs.every((i) => inputIsComplete(i, selections));
+  useEffect(() => {
+    if (allComplete) setShowIncompleteNotice(false);
+  }, [allComplete]);
 
   // Recomputed on every render from live `selections` state — no separate
   // running counter to keep in sync, so it can never drift from what the
@@ -739,6 +806,19 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   const handleContinueAfterSelect = useCallback((inputKey, part) => {
     const snapshot = latestSelectionsRef.current;
     const next = findNextIncompletePart(requiredInputs, snapshot, inputKey, part);
+
+    // The input the customer was just working on just became fully
+    // complete (findNextIncompletePart already checked its own remaining
+    // parts first — if `next` points elsewhere, there's nothing left in
+    // THIS input) AND there's another, different form still ahead. Ask
+    // before moving on, rather than silently carrying them into it.
+    const currentInput = requiredInputs.find((i) => i.input === inputKey);
+    if (next && currentInput && inputIsComplete(currentInput, snapshot)) {
+      setPendingNextInputFrom(currentInput.label);
+      setPendingNextInput(next);
+      return;
+    }
+
     if (next) {
       setView(next.input);
       setActivePart(next.part);
@@ -761,6 +841,21 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     setView('checklist');
     setActivePart(null);
   }, [requiredInputs]);
+
+  function confirmContinueToNextInput() {
+    setView(pendingNextInput.input);
+    setActivePart(pendingNextInput.part);
+    setPendingNextInput(null);
+    setPendingNextInputFrom(null);
+  }
+
+  function declineContinueToNextInput() {
+    setPendingNextInput(null);
+    setPendingNextInputFrom(null);
+    setShowIncompleteNotice(true);
+    setView('checklist');
+    setActivePart(null);
+  }
 
   async function handleConfirm() {
     setConfirming(true);
@@ -884,6 +979,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
         onOpenInput={(input) => { setView(input); setActivePart(null); }}
         onReview={() => setView('summary')}
         allComplete={allComplete}
+        showIncompleteNotice={showIncompleteNotice}
       />
     );
   }
@@ -900,6 +996,14 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
           picker) gets it. */}
       {!confirmedAt && view !== 'summary' && <RunningTotal total={runningTotal} />}
       {body}
+      {pendingNextInput && (
+        <NextFormPrompt
+          completedLabel={pendingNextInputFrom}
+          nextLabel={pendingNextInput.input.label}
+          onContinue={confirmContinueToNextInput}
+          onDecline={declineContinueToNextInput}
+        />
+      )}
       {(confirmedAt || view === 'checklist') && (
         <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
           <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back</button>

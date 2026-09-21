@@ -146,12 +146,32 @@ export default function CustomerPortal() {
   // ✅, but nothing in the app read that).
   function mergeProgress(resolvedOrder, localCompletions) {
     const p = resolvedOrder?.progress || {};
-    const fromMonday = {};
-    if (p.contact === '✅')   fromMonday.contact = true;
-    if (p.billing === '✅')   fromMonday.billing = true;
-    if (p.delivery === '✅')  fromMonday.delivery = true;
-    if (p.colors === '✅')    fromMonday.color = true;
-    if (p.documents === '✅') fromMonday.documents = true;
+    // Monday's status columns must be the authoritative, CORRECTIVE source
+    // of truth here, not just an additive one — this function used to only
+    // ever ADD a completion once Monday showed the checkmark, but never
+    // CLEARED one when staff reverted a status column (a mistaken confirm,
+    // or a step that genuinely needs rework). A stale "complete" cached
+    // from before the revert then kept showing on every future load — even
+    // on a totally different browser/device — with nothing telling the
+    // customer their step had been reopened. fromMonday now sets EVERY one
+    // of the 5 tab keys explicitly (true or false) from Monday's actual
+    // column value, then is spread OVER localCompletions so Monday always
+    // wins the conflict, in both directions.
+    // This intentionally does NOT reintroduce the older, separately-fixed
+    // bug this function's callers already guard against: markComplete()
+    // (above) only ever writes a tab's local completion when `synced` is
+    // true, i.e. when /api/portal/setup's Monday write already CONFIRMED
+    // (checklistSyncPending === false). There is never a still-unconfirmed
+    // optimistic "complete" sitting in localCompletions for mergeProgress to
+    // race against and lose — by the time a local completion exists at all,
+    // Monday's own column is already what wrote it.
+    const fromMonday = {
+      contact:   p.contact === '✅',
+      billing:   p.billing === '✅',
+      delivery:  p.delivery === '✅',
+      color:     p.colors === '✅',
+      documents: p.documents === '✅',
+    };
     return { ...localCompletions, ...fromMonday };
   }
 
@@ -195,19 +215,43 @@ export default function CustomerPortal() {
     }
   }, [router]);
 
+  // currentOrderIdRef always holds the order actually selected RIGHT NOW,
+  // independent of whichever order a given loadFiles()/loadMessages() call
+  // started fetching for — kept in sync by the ref-update effect below.
+  const currentOrderIdRef = useRef(null);
+  useEffect(() => { currentOrderIdRef.current = order?.id ?? null; }, [order?.id]);
+
+  // PORTAL-061: neither of these guarded against the order changing while a
+  // request was in flight. A customer clicking through the order switcher
+  // (or a fast double-click on the same tab) could fire a fetch for order A,
+  // switch to order B before it resolved, and have A's slower response land
+  // AFTER B's had already populated files/messages — silently overwriting
+  // B's freshly-loaded data with A's stale data with no way to tell it had
+  // happened. Each call now captures which order it was fetching FOR, and
+  // only applies the response if that order is still the one actually
+  // selected once the response comes back; a response for an order the
+  // customer has since switched away from is just discarded.
   const loadFiles = useCallback(async () => {
     if (!order) return;
+    const requestedOrderId = order.id;
     try {
       const res = await fetch(`/api/monday/files?orderId=${order.id}`);
-      if (res.ok) setFiles((await res.json()).files || []);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (currentOrderIdRef.current !== requestedOrderId) return; // switched away — discard
+      setFiles(data.files || []);
     } catch {}
   }, [order]);
 
   const loadMessages = useCallback(async () => {
     if (!order) return;
+    const requestedOrderId = order.id;
     try {
       const res = await fetch(`/api/monday/messages?orderId=${order.id}`);
-      if (res.ok) setMessages((await res.json()).messages || []);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (currentOrderIdRef.current !== requestedOrderId) return; // switched away — discard
+      setMessages(data.messages || []);
     } catch {}
   }, [order]);
 
@@ -252,6 +296,17 @@ export default function CustomerPortal() {
       showToast('Could not switch orders. Please try again.');
       return;
     }
+    // PORTAL-061: clear the previous order's files/messages synchronously,
+    // before the new order's own fetches (triggered by the `order` effect
+    // below) resolve — otherwise the old order's data stayed on screen for
+    // a beat after switching, which reads as "these are the new order's
+    // files/messages" even though nothing about the new order has loaded
+    // yet. loadFiles/loadMessages also now discard a response that lands
+    // for an order the customer has since switched away from (see their
+    // own comment above), so between the two, nothing from the old order
+    // can survive onto the new one.
+    setFiles([]);
+    setMessages([]);
     setOrder(o);
     applyCompletions(o);
     setActiveTab('dashboard'); // land somewhere orienting, not a stale tab from the old order
@@ -680,7 +735,23 @@ function ContactTab({ order, completions, markComplete, showToast, onNext }) {
   }
 
   async function confirm() {
-    if (!order.contactName?.trim() || !order.contactPhone?.trim() || !order.contactEmail?.trim()) {
+    // PORTAL-062: this used to gate ONLY on the raw, read-only Monday-mirror
+    // props (order.contactName/Phone/Email) — but those never update from
+    // inside the portal (contact_update only posts a note for staff review,
+    // see submitUpdate's comment above). A brand-new order with blank
+    // mirrors auto-opens `editing` on mount (see the `editing` useState
+    // above) specifically so the customer can fill them in — but once they
+    // did, and pendingUpdate/the form fields were fully populated, this
+    // guard still failed against the never-changing blank Monday props and
+    // bounced them right back into edit mode, an unbreakable loop for
+    // exactly the scenario this component exists to handle. Now also passes
+    // when the customer already has a pending submitted update (staff
+    // review is what's actually still needed, not more customer input), or
+    // when the local form fields themselves are fully filled in.
+    const hasPending = Boolean(pendingUpdate?.name?.trim() && pendingUpdate?.phone?.trim() && pendingUpdate?.email?.trim());
+    const hasLocalInput = Boolean(name.trim() && phone.trim() && email.trim());
+    const hasMondayMirror = Boolean(order.contactName?.trim() && order.contactPhone?.trim() && order.contactEmail?.trim());
+    if (!hasMondayMirror && !hasPending && !hasLocalInput) {
       setEditing(true);
       showToast('Please complete all required contact fields before continuing.');
       return;
@@ -1149,6 +1220,19 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
     if (addressConfirmed === false) {
       if (!addressLine1.trim()) e.addressLine1 = 'Required';
       if (!addressCity.trim()) e.addressCity = 'Required';
+      // PORTAL-063: this client-side check let State and Zip through blank —
+      // the hint text right above these fields even invited it ("Shipping
+      // outside the U.S.? Just fill in whichever fields apply to your
+      // country."). But pages/api/portal/setup.js's validateSetupData()
+      // ALWAYS requires both server-side (see its 'delivery' case) — it has
+      // no such exception for international addresses. A customer who left
+      // either blank got a 400 back from submit(), which the old catch
+      // block below only ever showed as a generic "Error saving," with
+      // nothing telling them which field to fix — a real dead-end retry
+      // loop. Matching the server's actual requirement here, exactly, means
+      // the customer sees the real problem before they ever submit.
+      if (!addressState.trim()) e.addressState = 'Required';
+      if (!addressZip.trim()) e.addressZip = 'Required';
       if (!addressCountry.trim()) e.addressCountry = 'Required';
     }
 
@@ -1198,7 +1282,7 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
       setErrors(errs);
       // Open the relevant section so errors are visible
       if (errs.pocName || errs.pocPhone || errs.pocEmail || errs.secondaryPocName || errs.secondaryPocPhone || errs.secondaryPocEmail) setEditingPoc(true);
-      if (errs.addressConfirmed || errs.addressLine1 || errs.addressCity || errs.addressCountry || errs.deliveryTiming || errs.preferredDeliveryDate) setEditingLogistics(true);
+      if (errs.addressConfirmed || errs.addressLine1 || errs.addressCity || errs.addressState || errs.addressZip || errs.addressCountry || errs.deliveryTiming || errs.preferredDeliveryDate) setEditingLogistics(true);
       showToast('Please complete all required fields.');
       return;
     }
@@ -1269,7 +1353,15 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
           : 'Delivery details saved.');
         onNext();
       }
-    } catch { showToast('Error saving. Please try again.'); }
+    } catch (err) {
+      // PORTAL-063: saveSetup() already throws an Error carrying the
+      // server's real validation message (see its own comment) — this used
+      // to discard it and show a generic "Error saving," so a customer
+      // blocked by a real, fixable problem (e.g. a field the client missed
+      // validating, now caught above) had no way to know what to fix and
+      // was stuck retrying the exact same submission blind.
+      showToast(err?.message || 'Error saving. Please try again.');
+    }
     finally { setSaving(false); }
   }
 
@@ -1487,7 +1579,13 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
                 {errors.addressConfirmed && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 4 }}>{errors.addressConfirmed}</div>}
                 {addressConfirmed === false && (
                   <div style={{ marginTop: 16 }}>
-                    <div className="hint" style={{ marginBottom: 10 }}>Enter your complete ship-to address below. Shipping outside the U.S.? Just fill in whichever fields apply to your country.</div>
+                    {/* PORTAL-063: this used to say State/Zip were only needed "if
+                        applicable" for international addresses — but the server
+                        (pages/api/portal/setup.js's validateSetupData) always
+                        requires both, with no such exception. Rewritten so the
+                        hint no longer promises something the server won't
+                        actually accept. */}
+                    <div className="hint" style={{ marginBottom: 10 }}>Enter your complete ship-to address below.</div>
                     <div className="field">
                       <label><span style={{ color: 'var(--rose)' }}>*</span> Address Line 1</label>
                       <input type="text" value={addressLine1} onChange={e => { setAddressLine1(e.target.value); setErrors(v => ({...v, addressLine1: ''})); }}
@@ -1506,12 +1604,16 @@ function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBa
                         {errors.addressCity && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.addressCity}</div>}
                       </div>
                       <div className="field">
-                        <label>State / Province / Region <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(if applicable)</span></label>
-                        <input type="text" value={addressState} onChange={e => setAddressState(e.target.value)} placeholder="e.g. CO, Ontario, Bavaria" />
+                        <label><span style={{ color: 'var(--rose)' }}>*</span> State / Province / Region</label>
+                        <input type="text" value={addressState} onChange={e => { setAddressState(e.target.value); setErrors(v => ({...v, addressState: ''})); }}
+                          placeholder="e.g. CO, Ontario, Bavaria" style={{ borderColor: errors.addressState ? 'var(--rose)' : '' }} />
+                        {errors.addressState && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.addressState}</div>}
                       </div>
                       <div className="field" style={{ maxWidth: 160 }}>
-                        <label>ZIP / Postal Code <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(if applicable)</span></label>
-                        <input type="text" value={addressZip} onChange={e => setAddressZip(e.target.value)} />
+                        <label><span style={{ color: 'var(--rose)' }}>*</span> ZIP / Postal Code</label>
+                        <input type="text" value={addressZip} onChange={e => { setAddressZip(e.target.value); setErrors(v => ({...v, addressZip: ''})); }}
+                          style={{ borderColor: errors.addressZip ? 'var(--rose)' : '' }} />
+                        {errors.addressZip && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.addressZip}</div>}
                       </div>
                     </div>
                     <div className="field">
@@ -1881,16 +1983,27 @@ function DashboardTab({ order, completions, setupComplete, setupCount, setupTota
   // per-order localStorage pattern already established for `completions`
   // caching above, so it resets per browser/device, not per account; a
   // durable cross-device version would need a real Monday-tracked signal.
-  const [hasSeenDashboardBefore, setHasSeenDashboardBefore] = useState(false);
+  // PORTAL-064: the READ used to happen in a useEffect — which only runs
+  // AFTER the first paint — while showIncompleteReturnBanner below is
+  // computed synchronously from props on every render. Switching orders
+  // (or landing on the Dashboard fresh) while staying on this tab meant the
+  // very first paint for the new order.id still used the PREVIOUS order's
+  // hasSeenDashboardBefore value (React doesn't reset state on a prop
+  // change alone), briefly showing the wrong order's first-visit state
+  // before the effect fired and corrected it a tick later. useMemo runs
+  // synchronously during render, so the read is correct on that very first
+  // render for a given order.id — only the WRITE (marking it seen) is a
+  // real side effect and stays in an effect.
+  const hasSeenDashboardBefore = useMemo(() => {
+    if (!order?.id || typeof window === 'undefined') return false;
+    try { return localStorage.getItem(`summit_dashboard_seen_${order.id}`) === 'true'; } catch { return false; }
+  }, [order?.id]);
   useEffect(() => {
     if (!order?.id || typeof window === 'undefined') return;
     const key = `summit_dashboard_seen_${order.id}`;
-    let seenBefore = false;
-    try { seenBefore = localStorage.getItem(key) === 'true'; } catch {}
-    setHasSeenDashboardBefore(seenBefore);
-    if (!seenBefore) {
-      try { localStorage.setItem(key, 'true'); } catch {}
-    }
+    try {
+      if (localStorage.getItem(key) !== 'true') localStorage.setItem(key, 'true');
+    } catch {}
   }, [order?.id]);
   const incompleteCount = setupTotal - setupCount;
   const showIncompleteReturnBanner = hasSeenDashboardBefore && !setupComplete;
@@ -2133,7 +2246,18 @@ function ShipmentCard({ title, slug, carrierLabel, trackingNumbers, shipped, not
 // and Mats. "Out of Stock" is a 4th staff-set state with its own message.
 function accessoryStatusPill(item, hasTracking) {
   if (hasTracking) {
+    // PORTAL-065: carrier + tracking-number presence alone doesn't mean the
+    // item has actually shipped — AfterShip itself tracks an early "label
+    // created, not yet moving" stage (its Pending/Info Received tags,
+    // exactly the same labels lib/aftership.js's STATUS_LABELS produces and
+    // this same board's carrierStatus column already stores, see
+    // lib/monday.js's ACCESSORY_COLS.carrierStatus comment). Showing
+    // "✓ SHIPPED" the moment staff enter a tracking number — before the
+    // carrier has scanned it at all — is misleading in the same direction
+    // the existing Delivered check already guards against on the other end.
     const delivered = item.carrierStatus === 'Delivered';
+    const notYetMoving = item.carrierStatus === 'Pending' || item.carrierStatus === 'Info Received';
+    if (notYetMoving) return { label: 'LABEL CREATED', bg: '#EFF6FF', color: '#1D4ED8' };
     return { label: delivered ? '✓ DELIVERED' : '✓ SHIPPED', bg: 'var(--ok-lt)', color: 'var(--ok)' };
   }
   if (item.orderStatus === 'Out of Stock') return { label: 'OUT OF STOCK', bg: '#FEF3C7', color: '#92400E' };
@@ -2741,6 +2865,16 @@ function TaxExemptionCard({ order, showToast, onRefresh }) {
   const [saving, setSaving] = useState(false);
 
   async function chooseNo() {
+    // PORTAL-066: flips the UI optimistically before the Monday write
+    // confirms, same as toggleFreightNotify() (StatusTab, above) — but
+    // unlike that sibling pattern, this never reverted the optimistic
+    // choice on a failed save, so a customer whose save actually failed
+    // was left looking at "No, we are not tax-exempt" selected/highlighted
+    // with nothing on file to back it up, and no way to tell from the
+    // screen that it hadn't actually saved. Reverting to the pre-optimistic
+    // value on failure, exactly like toggleFreightNotify does, keeps the
+    // on-screen choice truthful.
+    const previousChoice = choice;
     setChoice('no');
     setSaving(true);
     try {
@@ -2748,6 +2882,7 @@ function TaxExemptionCard({ order, showToast, onRefresh }) {
       showToast('Got it — sales tax will apply to your invoice.');
       onRefresh?.();
     } catch {
+      setChoice(previousChoice); // revert on failure
       showToast('Error saving. Please try again.');
     } finally {
       setSaving(false);

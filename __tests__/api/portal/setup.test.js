@@ -19,6 +19,7 @@ const mockUpdateOrderColumn = vi.fn().mockResolvedValue(undefined);
 const mockPostTaggedUpdate = vi.fn().mockResolvedValue(undefined);
 const mockMarkSectionCompleteSafe = vi.fn().mockResolvedValue(true);
 const mockCreateDeliverySubmissionItem = vi.fn().mockResolvedValue(undefined);
+const mockFindRecentDeliverySubmission = vi.fn().mockResolvedValue(null);
 const mockSetStatusLabel = vi.fn().mockResolvedValue(undefined);
 const mockUploadFileToColumn = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../../lib/monday', () => ({
@@ -27,6 +28,7 @@ vi.mock('../../../lib/monday', () => ({
   postTaggedUpdate: (...args) => mockPostTaggedUpdate(...args),
   markSectionCompleteSafe: (...args) => mockMarkSectionCompleteSafe(...args),
   createDeliverySubmissionItem: (...args) => mockCreateDeliverySubmissionItem(...args),
+  findRecentDeliverySubmission: (...args) => mockFindRecentDeliverySubmission(...args),
   setStatusLabel: (...args) => mockSetStatusLabel(...args),
   uploadFileToColumn: (...args) => mockUploadFileToColumn(...args),
   COLS: { address: 'col_address', tax_exempt_status: 'col_tax', tax_exempt_cert_file: 'col_cert' },
@@ -245,6 +247,7 @@ describe('setup.js — delivery tab: idempotency guard against retry-duplicated 
     mockPostTaggedUpdate.mockReset().mockResolvedValue(undefined);
     mockMarkSectionCompleteSafe.mockReset().mockResolvedValue(true);
     mockCreateDeliverySubmissionItem.mockReset().mockResolvedValue(undefined);
+    mockFindRecentDeliverySubmission.mockReset().mockResolvedValue(null);
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'unused-session-order-id' });
   });
 
@@ -309,5 +312,63 @@ describe('setup.js — delivery tab: idempotency guard against retry-duplicated 
     await handler(req2, res2);
     expect(res2.statusCode).toBe(200);
     expect(mockCreateDeliverySubmissionItem).toHaveBeenCalledTimes(2);
+  });
+
+  // Regression test for the cross-instance/cold-start backstop (PORTAL-018-
+  // IDEMPOTENCY-FOLLOWUP, lib/monday.js's findRecentDeliverySubmission): the
+  // in-memory guard above is module-scoped and would NEVER catch a retry
+  // that lands on a different warm instance — that's exactly what this test
+  // simulates, by never sending a first request at all (so the in-memory
+  // Map has nothing recorded for this order) and instead having the
+  // MONDAY-SIDE check itself report a pre-existing match, as if some other
+  // instance had already recorded this exact submission moments ago.
+  it('a same-content retry that the in-memory guard never saw (different instance) is still caught by the Monday-side backstop', async () => {
+    const orderId = nextOrderId();
+    mockGetOrderById.mockResolvedValue({ id: orderId, name: 'Dedup Order', stageIndex: 0 });
+    mockFindRecentDeliverySubmission.mockResolvedValue({ id: 'existing-item-999', name: 'Dedup Order' });
+
+    const req = { method: 'POST', headers: {}, body: { tab: 'delivery', data: VALID_DELIVERY_DATA } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(mockFindRecentDeliverySubmission).toHaveBeenCalledWith(orderId, expect.objectContaining({ pocName: VALID_DELIVERY_DATA.pocName }));
+    expect(mockCreateDeliverySubmissionItem).not.toHaveBeenCalled();
+  });
+
+  // The Monday-side check is a network call and can fail independently of
+  // everything else in the request — it must fail OPEN (treat as "not a
+  // duplicate") rather than block a legitimate submission just because the
+  // idempotency backstop itself couldn't reach Monday.
+  it('still creates the submission when the Monday-side duplicate check itself fails (fails open, does not block a real submission)', async () => {
+    const orderId = nextOrderId();
+    mockGetOrderById.mockResolvedValue({ id: orderId, name: 'Dedup Order', stageIndex: 0 });
+    mockFindRecentDeliverySubmission.mockRejectedValue(new Error('Monday API unavailable'));
+
+    const req = { method: 'POST', headers: {}, body: { tab: 'delivery', data: VALID_DELIVERY_DATA } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(mockCreateDeliverySubmissionItem).toHaveBeenCalledTimes(1);
+  });
+
+  // The Monday-side check only needs to run when the (cheap, no-network)
+  // in-memory guard hasn't already flagged this as a duplicate — no point
+  // paying for a full board scan when the common same-instance-retry case
+  // is already resolved for free. The FIRST submission for a never-before-
+  // seen order still triggers it (the in-memory guard has nothing recorded
+  // yet, so it can't be the one to short-circuit); it's the immediate
+  // in-instance RETRY that should skip the network call entirely.
+  it('does not call the Monday-side check on an immediate in-instance retry, once the in-memory guard already caught it', async () => {
+    const orderId = nextOrderId();
+    mockGetOrderById.mockResolvedValue({ id: orderId, name: 'Dedup Order', stageIndex: 0 });
+
+    await handler({ method: 'POST', headers: {}, body: { tab: 'delivery', data: VALID_DELIVERY_DATA } }, makeRes());
+    expect(mockFindRecentDeliverySubmission).toHaveBeenCalledTimes(1);
+
+    mockFindRecentDeliverySubmission.mockClear();
+    await handler({ method: 'POST', headers: {}, body: { tab: 'delivery', data: VALID_DELIVERY_DATA } }, makeRes());
+    expect(mockFindRecentDeliverySubmission).not.toHaveBeenCalled();
   });
 });

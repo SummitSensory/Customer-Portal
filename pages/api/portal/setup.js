@@ -16,6 +16,7 @@ import {
   postTaggedUpdate,
   markSectionCompleteSafe,
   createDeliverySubmissionItem,
+  findRecentDeliverySubmission,
   setStatusLabel,
   uploadFileToColumn,
   COLS,
@@ -80,14 +81,15 @@ const RESTRICTED_FIELDS = ['Ship-To Address', 'Preferred Delivery Timing', 'Load
 // and resubmitted with a real change) must both go through — only an exact
 // repeat of the same payload is treated as a retry.
 //
-// This closes the real customer-visible-duplicate risk, but it is NOT a
-// complete cross-instance/cross-cold-start idempotency guarantee — a fully
-// robust version would check Monday's actual Delivery & Site Details
-// Submissions board for an existing recent row before creating a new one,
-// which needs a small new read helper in lib/monday.js. That file is being
-// edited concurrently by another agent as part of this same fix pass, so
-// that helper was deliberately NOT added here to avoid conflicting with that
-// work — this in-memory guard is the safe subset that touches only this file.
+// This in-memory guard alone was never a complete cross-instance/cross-
+// cold-start idempotency guarantee — a retry landing on a different warm
+// instance, or after this one recycled, sailed right past it. That gap is
+// now closed by findRecentDeliverySubmission (lib/monday.js), which actually
+// checks the real Delivery & Site Details Submissions board for a matching
+// recent row before a new one gets created — see its own header comment.
+// This in-memory guard stays as the cheap first check (catches the common
+// same-instance case with zero extra Monday API calls); the Monday-side
+// check only runs when this one doesn't already flag a duplicate.
 const recentDeliverySubmissions = new Map(); // order.id -> { signature, at }
 const DELIVERY_DEDUP_WINDOW_MS = 60_000;
 
@@ -443,7 +445,25 @@ export default async function handler(req, res) {
           freightAckBy, freightAckDate,
         };
         const deliverySubmissionSignature = JSON.stringify(deliverySubmissionPayload);
-        const isRetryOfRecentSubmission = isDuplicateDeliverySubmission(order.id, deliverySubmissionSignature);
+        let isRetryOfRecentSubmission = isDuplicateDeliverySubmission(order.id, deliverySubmissionSignature);
+        if (!isRetryOfRecentSubmission) {
+          // The in-memory guard above only catches a retry that lands on
+          // THIS same warm serverless instance. A retry on a DIFFERENT
+          // instance, or after this one has cold-started fresh, sails right
+          // past it — findRecentDeliverySubmission (lib/monday.js) is the
+          // cross-instance backstop: it actually asks Monday whether a
+          // matching row was already created for this order in the last
+          // minute. Failing this open (treat as "not a duplicate") on a
+          // Monday read error matches the in-memory guard's own risk
+          // profile — worst case is the same harmless duplicate-row/email
+          // this whole guard exists to reduce, not a customer-visible error.
+          try {
+            const recentMatch = await findRecentDeliverySubmission(order.id, deliverySubmissionPayload);
+            isRetryOfRecentSubmission = !!recentMatch;
+          } catch (err) {
+            console.error('findRecentDeliverySubmission failed (treating as not-a-duplicate):', err.message);
+          }
+        }
 
         if (isRetryOfRecentSubmission) {
           console.warn(`portal-setup: skipped duplicate delivery submission side effects for order ${order.id} (identical content resubmitted within ${DELIVERY_DEDUP_WINDOW_MS}ms)`);

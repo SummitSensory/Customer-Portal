@@ -34,7 +34,7 @@ export default async function handler(req, res) {
   if (!order) return;
 
   if (req.method === 'GET') {
-    const inputs = requiredColorInputs(order.productType);
+    const inputs = requiredColorInputs(order);
     return res.status(200).json({
       supported: !!inputs,
       requiredInputs: inputs || [],

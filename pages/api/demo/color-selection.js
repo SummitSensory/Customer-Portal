@@ -26,6 +26,17 @@ import { validatePresentSelections, validateColorSelectionData, sanitizeSelectio
 import { allowRequest, getClientIp } from '../../../lib/rateLimit';
 
 const DEMO_PRODUCT_TYPE = 'Summit Adventure Series: Custom Sensory Gym';
+// Demo shows every BUILDABLE gated input regardless of live Monday data —
+// explicitly "Included" here (rather than relying on the fail-closed
+// default) so the demo's intent reads clearly in source, not just by
+// omission. See lib/colorRequirements.js for what each gate key means.
+const DEMO_COLOR_GATES = {
+  adventureMat: 'Included',
+  climbingWallColor: 'Included',
+  climbingWallMat: 'Included',
+  wallPaddingMat: 'Included',
+  ballPitMat: 'Included',
+};
 const VIEWER_COOKIE = 'summit_demo_viewer';
 
 // In-memory only — resets on cold start/redeploy, never touches Monday.com.
@@ -55,7 +66,7 @@ export default async function handler(req, res) {
     return res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' });
   }
 
-  const demoOrder = { productType: DEMO_PRODUCT_TYPE };
+  const demoOrder = { productType: DEMO_PRODUCT_TYPE, colorGates: DEMO_COLOR_GATES };
 
   const cookies = parse(req.headers.cookie || '');
   let viewerId = cookies[VIEWER_COOKIE];
@@ -85,7 +96,7 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     return res.status(200).json({
       supported: true,
-      requiredInputs: requiredColorInputs(DEMO_PRODUCT_TYPE),
+      requiredInputs: requiredColorInputs(demoOrder),
       selections: demoSnapshot.selections,
       confirmedAt: demoSnapshot.confirmedAt,
     });

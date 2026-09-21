@@ -823,13 +823,19 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     );
   } else if (view !== 'checklist' && activePart) {
     const input = view;
-    // MAT_PAD_COLOR, BALL_PIT, and CLIMBING_WALL_MAT are all vinyl-only
-    // inputs (see ALLOWED_BRANDS in lib/colorRequirements.js) — each kept as
-    // its own COLOR_INPUT bucket (not folded into MAT_PAD_COLOR) so
-    // Adventure Series' checklist shows each as its own row instead of
-    // merging unrelated real questions together — but all three render with
-    // the same vinyl swatch picker, not the Cardinal/Prismatic one.
-    const VINYL_INPUT_TYPES = [COLOR_INPUT.MAT_PAD_COLOR, COLOR_INPUT.BALL_PIT, COLOR_INPUT.CLIMBING_WALL_MAT];
+    // Every vinyl-brand input type (see ALLOWED_BRANDS in
+    // lib/colorRequirements.js) — each kept as its own COLOR_INPUT bucket
+    // (not folded into one shared type) so the checklist shows each as its
+    // own row and a distinct React/navigation identity (see
+    // lib/colorRequirements.js's header on why each gate needs a unique
+    // COLOR_INPUT value now that Adventure/Soar/Flex share one flat,
+    // independently-gated input list) — but all of them render with the
+    // same vinyl swatch picker, not the Cardinal/Prismatic one.
+    const VINYL_INPUT_TYPES = [
+      COLOR_INPUT.MAT_PAD_COLOR, COLOR_INPUT.ADVENTURE_MAT, COLOR_INPUT.WALL_PADDING,
+      COLOR_INPUT.CLIMBING_WALL_MAT, COLOR_INPUT.SOAR_MAT, COLOR_INPUT.FLEX_MAT,
+      COLOR_INPUT.PALISADES_MAT, COLOR_INPUT.BALL_PIT,
+    ];
     const PartPicker = VINYL_INPUT_TYPES.includes(input.input) ? MatPadPartPicker : StructurePartPicker;
     body = (
       <PartPicker

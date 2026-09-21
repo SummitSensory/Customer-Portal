@@ -459,4 +459,60 @@ describe('handler — auth and customer isolation', () => {
     expect(res.statusCode).toBe(200);
     expect(mockReportCriticalFailure).not.toHaveBeenCalled();
   });
+
+  // Real race found by independent code review (2026-09-09): the previous
+  // re-check-before-write only ever catches a concurrent write that lands
+  // BEFORE its own verification read — a slower autosave whose write lands
+  // AFTER a confirm has already verified successfully could silently revert
+  // confirmedAt back to null, with no alert, since the confirm's own
+  // verification read already ran (and matched) before the trailing
+  // autosave ever wrote. withOrderLock (see pages/api/portal/color-
+  // selection.js) is the actual fix: two requests for the SAME order can
+  // never run their read-validate-write sequence concurrently, so whichever
+  // one's turn comes second is forced to re-read AFTER the first one's
+  // entire sequence — including its write — has already landed.
+  //
+  // This fires both requests genuinely concurrently (no await between the
+  // two handler() calls) against a shared mock that reflects whatever was
+  // actually last written, the same real interleaving the lock exists to
+  // serialize — not two sequential calls with a pre-scripted mock queue
+  // (which every other race test above already covers for the narrower,
+  // single-read-then-write window).
+  it('a trailing autosave cannot land after a concurrent confirm already verified successfully (per-order lock closes the true confirm-lock race)', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockOrderReflectingWrites({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const confirmReq = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
+    const confirmRes = makeRes();
+
+    const trailingSelections = fullValidSelections();
+    trailingSelections.structure_frame_paint.legs = { brand: 'cardinal', code: 'P009-BG02' };
+    const autosaveReq = { method: 'POST', headers: {}, body: { selections: trailingSelections, confirm: false } };
+    const autosaveRes = makeRes();
+
+    // Genuinely concurrent: both handler() calls start (and run up to their
+    // first await) before either has finished, exactly like two real
+    // in-flight requests for the same order hitting the same warm instance.
+    await Promise.all([
+      handler(confirmReq, confirmRes),
+      handler(autosaveReq, autosaveRes),
+    ]);
+
+    // Whichever request's turn ran second re-read the order AFTER the
+    // first one's write had already landed — so it's impossible for both
+    // to have proceeded past the confirmedAt guard. Exactly one of the two
+    // must have been rejected as already-confirmed.
+    const statuses = [confirmRes.statusCode, autosaveRes.statusCode].sort();
+    expect(statuses).toEqual([200, 409]);
+
+    // Whatever the final persisted state is, confirmedAt must still be set
+    // — the exact bug this closes was a trailing autosave silently
+    // reverting a just-confirmed order's confirmedAt back to null.
+    const finalWrite = mockWriteColorSelectionSnapshot.mock.calls.at(-1);
+    expect(finalWrite[1].confirmedAt).not.toBeNull();
+    // No unconfirmed request should ever have been allowed to write once
+    // the order was confirmed — the 409'd request must not have persisted
+    // anything of its own after the confirm's write landed.
+    expect(mockWriteColorSelectionSnapshot).toHaveBeenCalledTimes(1);
+  });
 });

@@ -764,6 +764,21 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   const enqueueSaveRef = useRef(null);
   if (!enqueueSaveRef.current) enqueueSaveRef.current = createSaveQueue((body) => saveSelection(apiBase, body));
 
+  // Real gap found by independent verification (2026-09-21): the revert-on-
+  // failure fix below originally compared by VALUE ("is the current value
+  // still what I set it to?"), not by call identity. That fails a realistic
+  // sequence: pick A (save fails, still in flight) -> pick B -> pick A AGAIN
+  // — the third call's value coincidentally equals the first (failed)
+  // call's own value, so the first call's stale catch handler passes its
+  // value-equality check and reverts the ref to null, and because the save
+  // queue reads latestSelectionsRef lazily, the already-queued saves for B
+  // and the second A then silently persist that wrong (null) value as if
+  // successful, with no error shown. A monotonically increasing per-part
+  // generation counter fixes this correctly: a call only reverts if it's
+  // still the MOST RECENT call for that exact part, regardless of what
+  // value is currently there.
+  const partGenerationRef = useRef({});
+
   const queueSave = useCallback((confirm) => {
     return enqueueSaveRef.current(() => ({ selections: latestSelectionsRef.current, confirm }));
   }, []);
@@ -779,6 +794,9 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     // (the queue serializes SAVES, not the instant optimistic UI update),
     // and reverting the entire snapshot would silently discard that too.
     const previousValue = latestSelectionsRef.current[inputKey]?.[part];
+    const partKey = `${inputKey}:${part}`;
+    const myGeneration = (partGenerationRef.current[partKey] || 0) + 1;
+    partGenerationRef.current[partKey] = myGeneration;
     const next = {
       ...latestSelectionsRef.current,
       [inputKey]: { ...latestSelectionsRef.current[inputKey], [part]: value },
@@ -788,12 +806,23 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     try {
       await queueSave(false);
     } catch (err) {
-      const reverted = {
-        ...latestSelectionsRef.current,
-        [inputKey]: { ...latestSelectionsRef.current[inputKey], [part]: previousValue },
-      };
-      latestSelectionsRef.current = reverted;
-      setSelections(reverted);
+      // Real gap found by independent code review (2026-09-09), and refined
+      // 2026-09-21 after independent verification caught the value-equality
+      // version above still failing on a pick/re-pick/pick-original-again
+      // sequence: only revert if THIS call is still the most recent one for
+      // this exact part (per partGenerationRef), not merely "the value
+      // hasn't changed" — a later call may have set the same value this one
+      // did, in which case this older, already-failed call must not touch
+      // it. Only the truly-latest call for a part is ever allowed to revert.
+      const stillMostRecentCall = partGenerationRef.current[partKey] === myGeneration;
+      if (stillMostRecentCall) {
+        const reverted = {
+          ...latestSelectionsRef.current,
+          [inputKey]: { ...latestSelectionsRef.current[inputKey], [part]: previousValue },
+        };
+        latestSelectionsRef.current = reverted;
+        setSelections(reverted);
+      }
       showToast(err.message || 'Error saving — your last pick was not saved. Please try again.');
     }
   }, [queueSave, showToast]);

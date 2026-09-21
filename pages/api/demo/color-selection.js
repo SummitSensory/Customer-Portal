@@ -35,6 +35,7 @@ const DEMO_COLOR_GATES = {
   climbingWallColor: 'Included',
   climbingWallMat: 'Included',
   wallPaddingMat: 'Included',
+  slideColor: 'Included',
   ballPitMat: 'Included',
 };
 const VIEWER_COOKIE = 'summit_demo_viewer';

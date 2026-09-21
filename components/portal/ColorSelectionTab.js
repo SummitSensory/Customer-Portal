@@ -11,7 +11,7 @@
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  listCardinalColors, listPrismaticColors, listVinylColors,
+  listCardinalColors, listPrismaticColors, listVinylColors, listSlideColors,
   cardinalFinishes, prismaticFamilies, prismaticFinishes, resolveSelectedColor, computeLineItemPricing,
   displayColorName, standardDesignation, findOrphanedSelections,
 } from '../../lib/colorCatalog';
@@ -129,7 +129,12 @@ function SwatchGrid({ colors, selected, onSelect, onInspect, otherPicks = [] }) 
                 {isSelected && <span className="cs-card-check" aria-hidden="true">✓ Selected</span>}
               </div>
               <div className="cs-card-body">
-                <div className="cs-card-name">{displayColorName(c)}</div>
+                <div className="cs-card-name">
+                  {displayColorName(c)}
+                  {c.upcharge > 0 && (
+                    <span style={{ marginLeft: 6, fontSize: 11.5, fontWeight: 700, color: 'var(--moss-dk)' }}>+${c.upcharge.toLocaleString()}</span>
+                  )}
+                </div>
                 {(c.code || c.sku) && <div className="cs-card-code">{c.code || c.sku}</div>}
                 {reusedFor.length > 0 && (
                   <div className="cs-card-reuse">Also used for {reusedFor.map((r) => PART_LABELS[r.part] || r.part).join(', ')}</div>
@@ -328,16 +333,26 @@ function StructurePartPicker({ part, selection, onChange, onBack, onContinue, in
   );
 }
 
+// Every non-Cardinal/Prismatic input renders with this same flat swatch
+// picker, but they're NOT all the same catalog/brand — Slide is plastic
+// (its own catalog, listSlideColors()), everything else here is vinyl. See
+// FLAT_SWATCH_CATALOG below (keyed by input.input) for which is which.
+const FLAT_SWATCH_CATALOG = {
+  [COLOR_INPUT.SLIDE]: { list: listSlideColors, brand: 'plastic' },
+};
+const DEFAULT_FLAT_SWATCH_CATALOG = { list: listVinylColors, brand: 'vinyl' };
+
 function MatPadPartPicker({ part, selection, onChange, onBack, onContinue, input, selections }) {
   const [search, setSearch] = useState('');
   const [inspecting, setInspecting] = useState(null);
   const [justPicked, setJustPicked] = useState(null);
-  const list = useMemo(() => listVinylColors(), []);
+  const { list: getList, brand } = FLAT_SWATCH_CATALOG[input.input] || DEFAULT_FLAT_SWATCH_CATALOG;
+  const list = useMemo(() => getList(), [getList]);
   const filtered = list.filter((c) => !search.trim() || c.name.toLowerCase().includes(search.trim().toLowerCase()));
   const otherPicks = useMemo(() => getOtherPicks(input, selections, part), [input, selections, part]);
 
   function handleSelect(c) {
-    onChange({ brand: 'vinyl', code: c.name });
+    onChange({ brand, code: c.name });
     setJustPicked(c);
   }
 
@@ -823,20 +838,22 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     );
   } else if (view !== 'checklist' && activePart) {
     const input = view;
-    // Every vinyl-brand input type (see ALLOWED_BRANDS in
-    // lib/colorRequirements.js) — each kept as its own COLOR_INPUT bucket
-    // (not folded into one shared type) so the checklist shows each as its
-    // own row and a distinct React/navigation identity (see
+    // Every input type that renders with the flat swatch picker
+    // (MatPadPartPicker) rather than the Cardinal/Prismatic toggle
+    // (StructurePartPicker) — each kept as its own COLOR_INPUT bucket (not
+    // folded into one shared type) so the checklist shows each as its own
+    // row and a distinct React/navigation identity (see
     // lib/colorRequirements.js's header on why each gate needs a unique
     // COLOR_INPUT value now that Adventure/Soar/Flex share one flat,
-    // independently-gated input list) — but all of them render with the
-    // same vinyl swatch picker, not the Cardinal/Prismatic one.
-    const VINYL_INPUT_TYPES = [
+    // independently-gated input list). NOT all vinyl — Slide is plastic;
+    // see FLAT_SWATCH_CATALOG above MatPadPartPicker for the real
+    // catalog/brand each one actually resolves to.
+    const FLAT_SWATCH_INPUT_TYPES = [
       COLOR_INPUT.MAT_PAD_COLOR, COLOR_INPUT.ADVENTURE_MAT, COLOR_INPUT.WALL_PADDING,
       COLOR_INPUT.CLIMBING_WALL_MAT, COLOR_INPUT.SOAR_MAT, COLOR_INPUT.FLEX_MAT,
-      COLOR_INPUT.PALISADES_MAT, COLOR_INPUT.BALL_PIT,
+      COLOR_INPUT.PALISADES_MAT, COLOR_INPUT.BALL_PIT, COLOR_INPUT.SLIDE,
     ];
-    const PartPicker = VINYL_INPUT_TYPES.includes(input.input) ? MatPadPartPicker : StructurePartPicker;
+    const PartPicker = FLAT_SWATCH_INPUT_TYPES.includes(input.input) ? MatPadPartPicker : StructurePartPicker;
     body = (
       <PartPicker
         key={`${input.input}-${activePart}`}

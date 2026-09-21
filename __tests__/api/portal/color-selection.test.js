@@ -75,6 +75,10 @@ function fullValidSelections() {
     wall_padding_mat: {
       column_wraps_pads: { brand: 'vinyl', code: 'Black' },
     },
+    slide: {
+      slide_platform: { brand: 'plastic', code: 'Blue' },
+      slide_color: { brand: 'plastic', code: 'Blue' },
+    },
     climbing_wall_mat: {
       climbing_wall_mat: { brand: 'vinyl', code: 'Black' },
     },

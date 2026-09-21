@@ -11,8 +11,7 @@ import {
   updateOrderStatus,
   updateTrackingNumber,
   updateBalance,
-  hasNotifiedValue,
-  markNotifiedValue,
+  sendCustomerNotificationOnce,
 } from '../../../lib/monday';
 import {
   notifyCustomerStatusChange,
@@ -60,11 +59,17 @@ export default async function handler(req, res) {
         // this exact same column write (fired by a Monday automation, once
         // registered — see OPEN-1 in Customer-Portal-Process-Flow.md) and
         // would otherwise send this same email again a few seconds later.
-        if (order.customerEmail && !(await hasNotifiedValue(id, 'Status', status).catch(() => false))) {
-          await notifyCustomerStatusChange(
-            order.customerEmail, order.contactName, order.name, status
-          ).catch(console.error);
-          await markNotifiedValue(id, 'Status', status).catch(console.error);
+        // PORTAL-059: sendCustomerNotificationOnce() (lib/monday.js) closes
+        // the race the old separate hasNotifiedValue()/markNotifiedValue()
+        // calls here left open — see that function's own header comment.
+        // sendFn swallows its own error (matches this endpoint's prior
+        // behavior: still record the "notified" marker even if the email
+        // itself failed, rather than let a transient email failure spam a
+        // resend on every future admin edit).
+        if (order.customerEmail) {
+          await sendCustomerNotificationOnce(id, 'Status', status, () =>
+            notifyCustomerStatusChange(order.customerEmail, order.contactName, order.name, status).catch(console.error)
+          ).catch(err => console.error('Status change notification failed:', err.message));
         }
       }
 
@@ -94,14 +99,11 @@ export default async function handler(req, res) {
         if (balanceResult === null) {
           warnings.push('Balance was NOT saved to Monday.com — MONDAY_COL_BALANCE is not configured. Set it in Vercel env vars to enable this field.');
         } else if (order.customerEmail) {
-          // Same dedup rationale as the status branch above.
+          // Same dedup rationale (and PORTAL-059 fix) as the status branch above.
           const balanceKey = nextBalance.toFixed(2);
-          if (!(await hasNotifiedValue(id, 'Balance', balanceKey).catch(() => false))) {
-            await notifyCustomerBalanceChange(
-              order.customerEmail, order.contactName, order.name, nextBalance
-            ).catch(console.error);
-            await markNotifiedValue(id, 'Balance', balanceKey).catch(console.error);
-          }
+          await sendCustomerNotificationOnce(id, 'Balance', balanceKey, () =>
+            notifyCustomerBalanceChange(order.customerEmail, order.contactName, order.name, nextBalance).catch(console.error)
+          ).catch(err => console.error('Balance change notification failed:', err.message));
         }
       }
 

@@ -56,9 +56,22 @@ export default async function handler(req, res) {
 
   const normalizedEmail = email.toLowerCase().trim();
 
-  // Verify an order exists for this email before sending a code
+  // Verify an order exists for this email before sending a code.
+  //
+  // PORTAL-060: previously read through lib/monday.js's 20-second in-memory
+  // board cache (getAllOrders/withBoardCache), so this existence check
+  // could return a false "no order" for an order created moments ago (e.g.
+  // the Jotform webhook wrote it seconds before the customer tries to log
+  // in) whenever an unrelated read elsewhere (admin dashboard, a cron tick)
+  // had already populated that cache entry before the order existed — the
+  // customer would silently get no real code with a {sent:true} response
+  // and no indication anything was wrong. Fixed by requesting a live,
+  // uncached read via getOrderByEmail's `{ fresh: true }` option — this is
+  // exactly the security/deliverability-sensitive check that option exists
+  // for; every other caller (admin dashboard, crons, ordinary lookups)
+  // still uses the cached path unchanged.
   try {
-    const order = await getOrderByEmail(normalizedEmail);
+    const order = await getOrderByEmail(normalizedEmail, { fresh: true });
     if (!order) {
       // PORTAL-019: previously returned {sent:true} with NO code cookie set,
       // "to avoid email enumeration" — but that just moved the leak one

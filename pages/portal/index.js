@@ -83,6 +83,54 @@ const ORDER_TABS = [
 // page module — importing from here would defeat the point of splitting
 // ShowcaseTab into its own chunk.
 
+// Monday's Portal: Contact/Billing/Delivery/Colors/Documents status columns
+// (flipped server-side by markSectionComplete once a tab's setup POST
+// succeeds) are the real, durable, cross-device record of what's complete —
+// order.progress already surfaces them. Merge them into `completions` on
+// every load so a customer's progress survives a page reload, a different
+// browser, clearing cookies, or staff opening the portal on another
+// machine. localStorage is kept only as a fast same-browser cache layered
+// on top — it must never be trusted alone. Before this fix the portal only
+// ever read localStorage, so any of the above would make a customer's
+// already-completed steps look like they'd vanished (confirmed 2026-08-17
+// against Kalen Siddens' order — Monday showed Contact/Billing/Delivery all
+// ✅, but nothing in the app read that).
+//
+// Hoisted to module scope (2026-09-21, PORTAL-065 test coverage pass) — this
+// was always a pure function (no closure over component state), just
+// nested inside CustomerPortal originally; exported so it can be unit
+// tested directly instead of only through the full page component.
+export function mergeProgress(resolvedOrder, localCompletions) {
+  const p = resolvedOrder?.progress || {};
+  // Monday's status columns must be the authoritative, CORRECTIVE source
+  // of truth here, not just an additive one — this function used to only
+  // ever ADD a completion once Monday showed the checkmark, but never
+  // CLEARED one when staff reverted a status column (a mistaken confirm,
+  // or a step that genuinely needs rework). A stale "complete" cached
+  // from before the revert then kept showing on every future load — even
+  // on a totally different browser/device — with nothing telling the
+  // customer their step had been reopened. fromMonday now sets EVERY one
+  // of the 5 tab keys explicitly (true or false) from Monday's actual
+  // column value, then is spread OVER localCompletions so Monday always
+  // wins the conflict, in both directions.
+  // This intentionally does NOT reintroduce the older, separately-fixed
+  // bug this function's callers already guard against: markComplete()
+  // only ever writes a tab's local completion when `synced` is true, i.e.
+  // when /api/portal/setup's Monday write already CONFIRMED
+  // (checklistSyncPending === false). There is never a still-unconfirmed
+  // optimistic "complete" sitting in localCompletions for mergeProgress to
+  // race against and lose — by the time a local completion exists at all,
+  // Monday's own column is already what wrote it.
+  const fromMonday = {
+    contact:   p.contact === '✅',
+    billing:   p.billing === '✅',
+    delivery:  p.delivery === '✅',
+    color:     p.colors === '✅',
+    documents: p.documents === '✅',
+  };
+  return { ...localCompletions, ...fromMonday };
+}
+
 // ── Main portal ───────────────────────────────────────────────────────────────
 
 export default function CustomerPortal() {
@@ -130,49 +178,6 @@ export default function CustomerPortal() {
       }
       return next;
     });
-  }
-
-  // Monday's Portal: Contact/Billing/Delivery/Colors/Documents status columns
-  // (flipped server-side by markSectionComplete once a tab's setup POST
-  // succeeds) are the real, durable, cross-device record of what's complete —
-  // order.progress already surfaces them. Merge them into `completions` on
-  // every load so a customer's progress survives a page reload, a different
-  // browser, clearing cookies, or staff opening the portal on another
-  // machine. localStorage is kept only as a fast same-browser cache layered
-  // on top — it must never be trusted alone. Before this fix the portal only
-  // ever read localStorage, so any of the above would make a customer's
-  // already-completed steps look like they'd vanished (confirmed 2026-08-17
-  // against Kalen Siddens' order — Monday showed Contact/Billing/Delivery all
-  // ✅, but nothing in the app read that).
-  function mergeProgress(resolvedOrder, localCompletions) {
-    const p = resolvedOrder?.progress || {};
-    // Monday's status columns must be the authoritative, CORRECTIVE source
-    // of truth here, not just an additive one — this function used to only
-    // ever ADD a completion once Monday showed the checkmark, but never
-    // CLEARED one when staff reverted a status column (a mistaken confirm,
-    // or a step that genuinely needs rework). A stale "complete" cached
-    // from before the revert then kept showing on every future load — even
-    // on a totally different browser/device — with nothing telling the
-    // customer their step had been reopened. fromMonday now sets EVERY one
-    // of the 5 tab keys explicitly (true or false) from Monday's actual
-    // column value, then is spread OVER localCompletions so Monday always
-    // wins the conflict, in both directions.
-    // This intentionally does NOT reintroduce the older, separately-fixed
-    // bug this function's callers already guard against: markComplete()
-    // (above) only ever writes a tab's local completion when `synced` is
-    // true, i.e. when /api/portal/setup's Monday write already CONFIRMED
-    // (checklistSyncPending === false). There is never a still-unconfirmed
-    // optimistic "complete" sitting in localCompletions for mergeProgress to
-    // race against and lose — by the time a local completion exists at all,
-    // Monday's own column is already what wrote it.
-    const fromMonday = {
-      contact:   p.contact === '✅',
-      billing:   p.billing === '✅',
-      delivery:  p.delivery === '✅',
-      color:     p.colors === '✅',
-      documents: p.documents === '✅',
-    };
-    return { ...localCompletions, ...fromMonday };
   }
 
   function loadLocalCompletions(orderId) {
@@ -670,7 +675,7 @@ function fileToBase64(file) {
 
 // ── Tab: Contact Information ──────────────────────────────────────────────────
 
-function ContactTab({ order, completions, markComplete, showToast, onNext }) {
+export function ContactTab({ order, completions, markComplete, showToast, onNext }) {
   // contact_update only posts a note for staff to review — it never writes
   // to a column the portal reads back (contactName/Phone/Email are read-only
   // Monday mirrors from a connected board, by design). That's fine for staff
@@ -1092,7 +1097,7 @@ export function parseCombinedAddress(combined) {
   return { line1, line2, city, state, zip, country };
 }
 
-function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBack }) {
+export function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBack }) {
   // Lock logistics editing once order has shipped
   const shippedIdx = order.stages?.findIndex(s => s.key === 'shipped') ?? 3;
   const isShipped = order.stageIndex >= shippedIdx;
@@ -1968,7 +1973,7 @@ function DocumentsTab({ order, completions, markComplete, showToast, docForms, o
 
 // ── Tab: Dashboard (primary landing screen) ───────────────────────────────────
 
-function DashboardTab({ order, completions, setupComplete, setupCount, setupTotal, onNav }) {
+export function DashboardTab({ order, completions, setupComplete, setupCount, setupTotal, onNav }) {
   const firstName = order.firstName || order.pocName?.split(' ')[0] || '';
 
   // Direct requirement (2026-09-21): Color & Product Selections is often the
@@ -2244,7 +2249,7 @@ function ShipmentCard({ title, slug, carrierLabel, trackingNumbers, shipped, not
 // subitem's "Order Status" column: Order Pending → Ordered → (carrier +
 // tracking entered) → full live AfterShip tracking, same fidelity as Frame
 // and Mats. "Out of Stock" is a 4th staff-set state with its own message.
-function accessoryStatusPill(item, hasTracking) {
+export function accessoryStatusPill(item, hasTracking) {
   if (hasTracking) {
     // PORTAL-065: carrier + tracking-number presence alone doesn't mean the
     // item has actually shipped — AfterShip itself tracks an early "label
@@ -2855,7 +2860,7 @@ function InvoiceTab({ order, showToast, onRefresh }) {
 // update tags ([PORTAL: Tax Exempt - No], [PORTAL: Tax Exemption Certificate
 // Uploaded]), confirming it worked before it disappeared.
 
-function TaxExemptionCard({ order, showToast, onRefresh }) {
+export function TaxExemptionCard({ order, showToast, onRefresh }) {
   // 'yes' | 'no' | null — tracks the selector's current on-screen state, seeded
   // from whatever's already saved on the order (color_mm55tjn2).
   const alreadyYes = order.taxExemptStatus === 'Yes';

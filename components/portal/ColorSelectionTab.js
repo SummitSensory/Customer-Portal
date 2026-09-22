@@ -11,7 +11,7 @@
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  listCardinalColors, listPrismaticColors, listVinylColors, listSlideColors,
+  listCardinalColors, listPrismaticColors, listVinylColors, listSlideColors, listFoundationMatColors,
   cardinalFinishes, prismaticFamilies, prismaticFinishes, resolveSelectedColor, computeLineItemPricing,
   displayColorName, standardDesignation, findOrphanedSelections,
 } from '../../lib/colorCatalog';
@@ -374,10 +374,12 @@ function StructurePartPicker({ part, selection, onChange, onBack, onContinue, in
 
 // Every non-Cardinal/Prismatic input renders with this same flat swatch
 // picker, but they're NOT all the same catalog/brand — Slide is plastic
-// (its own catalog, listSlideColors()), everything else here is vinyl. See
+// (its own catalog, listSlideColors()), Foundation System Mat is two-tone
+// foam tile (listFoundationMatColors()), everything else here is vinyl. See
 // FLAT_SWATCH_CATALOG below (keyed by input.input) for which is which.
 const FLAT_SWATCH_CATALOG = {
   [COLOR_INPUT.SLIDE]: { list: listSlideColors, brand: 'plastic' },
+  [COLOR_INPUT.FOUNDATION_MAT]: { list: listFoundationMatColors, brand: 'foundation' },
 };
 const DEFAULT_FLAT_SWATCH_CATALOG = { list: listVinylColors, brand: 'vinyl' };
 
@@ -969,13 +971,15 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     // row and a distinct React/navigation identity (see
     // lib/colorRequirements.js's header on why each gate needs a unique
     // COLOR_INPUT value now that Adventure/Soar/Flex share one flat,
-    // independently-gated input list). NOT all vinyl — Slide is plastic;
+    // independently-gated input list). NOT all vinyl — Slide is plastic,
+    // Foundation System Mat is two-tone foam tile;
     // see FLAT_SWATCH_CATALOG above MatPadPartPicker for the real
     // catalog/brand each one actually resolves to.
     const FLAT_SWATCH_INPUT_TYPES = [
       COLOR_INPUT.MAT_PAD_COLOR, COLOR_INPUT.ADVENTURE_MAT, COLOR_INPUT.WALL_PADDING,
       COLOR_INPUT.CLIMBING_WALL_MAT, COLOR_INPUT.SOAR_MAT, COLOR_INPUT.FLEX_MAT,
       COLOR_INPUT.PALISADES_MAT, COLOR_INPUT.BALL_PIT, COLOR_INPUT.SLIDE,
+      COLOR_INPUT.FOUNDATION_MAT,
     ];
     const PartPicker = FLAT_SWATCH_INPUT_TYPES.includes(input.input) ? MatPadPartPicker : StructurePartPicker;
     body = (

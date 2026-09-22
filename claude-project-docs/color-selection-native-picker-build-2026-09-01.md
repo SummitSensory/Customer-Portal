@@ -85,3 +85,11 @@ All three env vars from the checklist above confirmed set by Bryan and verified 
 ## Repo state as of this doc
 
 `main` is at merge commit `e7f21ac` (feature) on top of `8a7f0cd` (standalone `lib/email.js` hotfix) on top of `59bb80b` (prior main tip) — **deployed to production**, confirmed live and healthy. `staging` is at `cc432dd` (behind `main` by the `lib/email.js` hotfix and the merge itself, but functionally equivalent for anything staging is used for). `claude/color-selection-redesign` remains at `9c96861`, fully absorbed into `main`. 105 tests passing, full production build clean.
+
+## 2026-09-22 — Foundation System-Mat Color made buildable
+
+Bryan supplied the real options for the "Foundation System-Mat Color" gate (`color_mm7c5nq2`, gateKey `foundationMat`): **Black/Gray, Red/Blue, Green/Gray**, with three supplier photos. These are reversible two-tone interlocking foam tiles, so they got their own catalog/brand (`FOUNDATION_MAT_COLORS`, brand `foundation`, in `lib/colorCatalog.js`) instead of reusing vinyl. `ALLOWED_BRANDS` means a vinyl name can't validate on the Foundation part, and a Foundation name can't validate on a vinyl part. The gate is now `buildable: true` with one part, `foundation_mat`. It stays opt-in: `legacyDefaultProductTypes: []`, so it shows only when the gate reads exactly "Included". It's rendered by the existing flat-swatch `MatPadPartPicker`. No upcharge was given, so it's $0.
+
+- Photos: originals are in `lib/data/Foundation-Mat-Swatches/`, served copies in `public/color-catalog/foundation/`. `red-blue.jpg` is a crop of the all-colors stack photo, since no Red/Blue close-up was provided. `black-gray.jpg` is the gray-face close-up. `hex` values are pixel-averaged fallbacks only.
+- No Jotform form covers Foundation, and no productType switched from Jotform to native, so this can't orphan any existing input (see the all-or-nothing Color tab note).
+- Ball Pit Balls is now the only `buildable: false` gate left.

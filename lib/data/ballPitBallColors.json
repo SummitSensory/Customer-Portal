@@ -1,0 +1,62 @@
+[
+  {
+    "name": "Red",
+    "hex": "#e00235",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Blue",
+    "hex": "#0088ce",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Green",
+    "hex": "#009b48",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Orange",
+    "hex": "#ff6e01",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Magenta",
+    "hex": "#b634bb",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Yellow",
+    "hex": "#ffdf00",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Teal",
+    "hex": "#028b95",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Purple",
+    "hex": "#4f2e7f",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Pink",
+    "hex": "#e16eb1",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Pearl",
+    "hex": "#f3f3f3",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Silver",
+    "hex": "#84888b",
+    "provenance": "swatch-verified"
+  },
+  {
+    "name": "Black",
+    "hex": "#000000",
+    "provenance": "swatch-verified"
+  }
+]

@@ -13,8 +13,10 @@
  *   to the Documents checklist).
  */
 
-import { getOrderByEmail, getOrderMessages, postTaggedUpdate, markSectionCompleteSafe, attachUgcFile, incrementUgcCounts } from '../../../lib/monday';
+import { getOrdersByEmail, getOrderMessages, postTaggedUpdate, markSectionCompleteSafe, attachUgcFile, incrementUgcCounts } from '../../../lib/monday';
 import { notifyTeamFormCompleted, notifyTeamUgcThreshold } from '../../../lib/email';
+import { secretsMatch } from '../../../lib/auth';
+import { reportCriticalFailure } from '../../../lib/monitoring';
 
 // Parse the form→checklist map from env
 function getFormMap() {
@@ -54,6 +56,80 @@ function formsForTab(formMap, tabType, productType) {
     if (resolveTabType(cfg) !== tabType) return false;
     return !cfg.productTypes || cfg.productTypes.includes(productType);
   });
+}
+
+/**
+ * The tagged-update title used to record a completed submission for a
+ * "documents" or "color" tab — shared by the completeness check below and
+ * the actual audit-trail update posted further down in the handler, so the
+ * two can never drift out of sync with each other.
+ */
+function submissionTagFor(tabType) {
+  return tabType === 'color' ? 'PORTAL: Color Selections' : 'PORTAL: Documents Submitted';
+}
+
+/**
+ * PORTAL-025 (2026-09-21): getOrderByEmail() (now removed) deterministically
+ * resolved to the customer's SINGLE MOST RECENT order, with no order-scoping
+ * signal available anywhere in the request — the embedded Jotform iframe
+ * passes no orderId, and there's no external Jotform config change available
+ * from this codebase alone to add one. For a repeat customer with 2+ active
+ * orders, a submission meant for an OLDER order (the one actually still
+ * missing it) silently got attached to whichever order happened to be
+ * newest instead.
+ *
+ * Best fix available: among the customer's orders (already sorted
+ * newest-first by getOrdersByEmail), walk oldest-to-newest and prefer the
+ * first one whose tabType checklist is NOT YET fully submitted — i.e. the
+ * order this submission is actually most likely completing — falling back
+ * to the newest order when every order already has this tab's forms in, an
+ * order's product type doesn't require this tab at all, or there's only one
+ * order to begin with. Reuses formsForTab() and the exact same "every
+ * required form has a `(form:id)`-tagged update" completeness definition
+ * the tabComplete check further down the handler already relies on for the
+ * single resolved order, so "complete" means the same thing in both places.
+ *
+ * Showcase is deliberately excluded (falls straight through to the newest
+ * order, matching the pre-existing behavior): it's a repeatable UGC tab
+ * with no completion state at all — no checklist column ever gets flipped,
+ * and (see the showcase branch below) its tagged updates don't carry a
+ * `(form:id)` marker to check against. Treating "no completion signal" as
+ * "never complete" would route every SUBSEQUENT showcase submission from a
+ * repeat customer onto an older, unrelated order instead of the one they're
+ * actively adding photos/videos to — strictly worse than the bug this is
+ * fixing, so showcase keeps the original most-recent-order behavior.
+ */
+async function resolveOrderForSubmission(email, formMap, tabType) {
+  const orders = await getOrdersByEmail(email); // sorted newest → oldest
+  if (orders.length <= 1 || tabType === 'showcase') return orders[0] || null;
+
+  const tag = submissionTagFor(tabType);
+  const oldestFirst = [...orders].reverse();
+  for (const candidate of oldestFirst) {
+    const requiredFormIds = formsForTab(formMap, tabType, candidate.productType);
+    if (requiredFormIds.length === 0) continue; // this tab doesn't apply to this order's product type at all
+
+    let bodies;
+    try {
+      const updates = await getOrderMessages(candidate.id);
+      bodies = updates.map((u) => u.body || '');
+    } catch (err) {
+      // Can't verify this candidate's completeness — rather than guess (and
+      // risk silently misrouting the submission), fall back to the
+      // previously-known-good default of the most recent order.
+      console.error('Jotform webhook: failed to check tab completeness for order', candidate.id, err.message);
+      return orders[0];
+    }
+
+    const complete = requiredFormIds.every((id) =>
+      bodies.some((b) => b.includes(tag) && b.includes(`(form:${id})`))
+    );
+    if (!complete) return candidate;
+  }
+
+  // Every order either already has this tab's forms in, or doesn't require
+  // this tab at all — default to the newest order.
+  return orders[0];
 }
 
 const IMAGE_EXT = /\.(jpe?g|png|gif|heic|heif|webp|bmp|tiff?)(\?|$)/i;
@@ -118,7 +194,7 @@ export default async function handler(req, res) {
   // PORTAL-006) as if they came from a real Jotform. Fails CLOSED now.
   const configuredSecret = process.env.JOTFORM_WEBHOOK_SECRET;
   const secret = req.headers['x-jotform-secret'] || req.body?.secret;
-  if (!configuredSecret || secret !== configuredSecret) {
+  if (!secretsMatch(secret, configuredSecret)) {
     console.error('Jotform webhook: authorization failed (missing or mismatched secret).');
     return res.status(401).json({ error: 'Invalid webhook secret.' });
   }
@@ -157,10 +233,18 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, note: 'No mapping for this form.' });
   }
 
-  // Find the order
+  // Dispatch by form type — color selections, required documents, or the
+  // repeatable Photo & Video Showcase (not a one-time checklist item).
+  // Resolved before the order lookup now (see resolveOrderForSubmission's
+  // header comment) since PORTAL-025's multi-order resolution needs to know
+  // which checklist to check completeness against.
+  const tabType = resolveTabType(formConfig);
+
+  // Find the order. PORTAL-025: no longer just "the customer's most recent
+  // order" — see resolveOrderForSubmission above for why.
   let order;
   try {
-    order = await getOrderByEmail(email.toLowerCase());
+    order = await resolveOrderForSubmission(email.toLowerCase(), formMap, tabType);
   } catch (err) {
     console.error('Monday lookup error:', err.message);
     return res.status(500).json({ error: 'Failed to look up order.' });
@@ -191,10 +275,7 @@ export default async function handler(req, res) {
   }
   const submissionTag = submissionID ? ` (submission:${submissionID})` : '';
 
-  // Dispatch by form type — color selections, required documents, or the
-  // repeatable Photo & Video Showcase (not a one-time checklist item).
-  const tabType = resolveTabType(formConfig);
-
+  // tabType was already resolved above (needed for order resolution).
   if (tabType === 'showcase') {
     const { photos, videos } = extractShowcaseFiles(submissionData);
 
@@ -262,13 +343,36 @@ export default async function handler(req, res) {
   // ANY form mapped to "documents" (or "color") completed the whole tab,
   // even if the checklist had several required forms and only one had come in.
   const isColor = tabType === 'color';
-  const tag = isColor ? 'PORTAL: Color Selections' : 'PORTAL: Documents Submitted';
+  const tag = submissionTagFor(tabType);
 
+  // PORTAL-025 (2026-09-21): this update IS the PORTAL-013 dedupe marker —
+  // the `(submission:${submissionID})` string the dedupe check near the top
+  // of this handler searches getOrderMessages() for on the NEXT delivery.
+  // It also doubles as the `(form:${formID})` marker formsForTab's
+  // completeness check (right below, and resolveOrderForSubmission above)
+  // depends on. A bare `.catch(console.error)` here meant that if this
+  // write failed, neither marker ever landed on the order — so a genuine
+  // Jotform webhook retry of the SAME submission (which this file's own
+  // PORTAL-013 comment already documents as expected/legitimate behavior
+  // from Jotform, not a bug) would be fully reprocessed on the next
+  // delivery: a second "form completed" email to staff via
+  // notifyTeamFormCompleted below, and a tabComplete check run without the
+  // record of the first attempt. Report it the same way every other
+  // silent-failure class in this codebase is (PORTAL-014's
+  // markSectionCompleteSafe, PORTAL-023's reportCriticalFailure) instead of
+  // just logging it.
   await postTaggedUpdate(
     order.id,
     `${tag} (form:${formID})`,
     `Jotform submission received for "${formConfig.name}" on ${new Date().toLocaleDateString()}. Submitted by: ${email}${submissionTag}`
-  ).catch(console.error);
+  ).catch(async (err) => {
+    console.error('Jotform webhook: failed to post the completion/dedupe marker update:', err.message);
+    await reportCriticalFailure(
+      'jotform-webhook-dedupe-marker',
+      `Failed to record the completion marker for order ${order.id} (form ${formID}${submissionID ? `, submission ${submissionID}` : ''}) — a Jotform retry of this submission may now be fully reprocessed as a duplicate (duplicate staff notification, and a tabComplete check missing this submission's record).`,
+      { orderId: order.id, formID, submissionID: submissionID || null, error: err.message }
+    );
+  });
 
   const requiredFormIds = formsForTab(formMap, tabType, order.productType);
   let tabComplete = true;

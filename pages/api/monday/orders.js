@@ -11,6 +11,7 @@ import {
   updateOrderStatus,
   updateTrackingNumber,
   updateBalance,
+  sendCustomerNotificationOnce,
 } from '../../../lib/monday';
 import {
   notifyCustomerStatusChange,
@@ -54,10 +55,21 @@ export default async function handler(req, res) {
 
       if (status !== undefined && status !== order.status) {
         await updateOrderStatus(id, status);
+        // Dedup against status-balance-webhook.js: that webhook reacts to
+        // this exact same column write (fired by a Monday automation, once
+        // registered — see OPEN-1 in Customer-Portal-Process-Flow.md) and
+        // would otherwise send this same email again a few seconds later.
+        // PORTAL-059: sendCustomerNotificationOnce() (lib/monday.js) closes
+        // the race the old separate hasNotifiedValue()/markNotifiedValue()
+        // calls here left open — see that function's own header comment.
+        // sendFn swallows its own error (matches this endpoint's prior
+        // behavior: still record the "notified" marker even if the email
+        // itself failed, rather than let a transient email failure spam a
+        // resend on every future admin edit).
         if (order.customerEmail) {
-          await notifyCustomerStatusChange(
-            order.customerEmail, order.contactName, order.name, status
-          ).catch(console.error);
+          await sendCustomerNotificationOnce(id, 'Status', status, () =>
+            notifyCustomerStatusChange(order.customerEmail, order.contactName, order.name, status).catch(console.error)
+          ).catch(err => console.error('Status change notification failed:', err.message));
         }
       }
 
@@ -75,14 +87,23 @@ export default async function handler(req, res) {
       // and re-notify the customer on every save even when nothing changed.
       // Compare numerically instead.
       const nextBalance = balance !== undefined ? parseFloat(balance) : undefined;
-      if (nextBalance !== undefined && Number.isFinite(nextBalance) && nextBalance !== order.balance) {
+      // PORTAL-042: a non-numeric balance (parseFloat -> NaN) used to fail
+      // the Number.isFinite check and silently no-op with zero warning —
+      // unlike the sibling "column not configured" case just above, which
+      // does warn. An admin typo (or a stray non-numeric value from the
+      // edit UI) looked exactly like a successful save.
+      if (nextBalance !== undefined && !Number.isFinite(nextBalance)) {
+        warnings.push(`Balance was NOT saved — "${balance}" is not a valid number.`);
+      } else if (nextBalance !== undefined && nextBalance !== order.balance) {
         const balanceResult = await updateBalance(id, nextBalance);
         if (balanceResult === null) {
           warnings.push('Balance was NOT saved to Monday.com — MONDAY_COL_BALANCE is not configured. Set it in Vercel env vars to enable this field.');
         } else if (order.customerEmail) {
-          await notifyCustomerBalanceChange(
-            order.customerEmail, order.contactName, order.name, nextBalance
-          ).catch(console.error);
+          // Same dedup rationale (and PORTAL-059 fix) as the status branch above.
+          const balanceKey = nextBalance.toFixed(2);
+          await sendCustomerNotificationOnce(id, 'Balance', balanceKey, () =>
+            notifyCustomerBalanceChange(order.customerEmail, order.contactName, order.name, nextBalance).catch(console.error)
+          ).catch(err => console.error('Balance change notification failed:', err.message));
         }
       }
 

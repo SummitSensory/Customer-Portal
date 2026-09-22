@@ -7,7 +7,8 @@
 import { parse, serialize } from 'cookie';
 import {
   verifyCodeToken,
-  signCodeToken,
+  signCodeHashToken,
+  codeMatchesHash,
   signCustomerSession,
   CODE_COOKIE,
   SESSION_COOKIE,
@@ -16,9 +17,22 @@ import {
   MAX_CODE_ATTEMPTS,
 } from '../../../lib/auth';
 import { getOrdersByEmail } from '../../../lib/monday';
+import { allowRequest, getClientIp } from '../../../lib/rateLimit';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
+
+  // PORTAL-030: the per-code MAX_CODE_ATTEMPTS lockout below is enforced via
+  // a counter embedded in the client-held cookie itself — an attacker who
+  // simply keeps resending the ORIGINAL cookie (attempts:0) instead of the
+  // incremented one this route returns never trips it, since nothing here
+  // used to track attempts server-side at all. This IP-scoped limiter is a
+  // second, independent backstop that can't be bypassed by discarding the
+  // updated cookie. Same in-memory/per-instance limitation documented in
+  // lib/rateLimit.js applies here as everywhere else it's used.
+  if (!allowRequest(`verify-code:${getClientIp(req)}`, { maxRequests: 10, windowMs: 60_000 })) {
+    return res.status(429).json({ error: 'Too many attempts. Please wait a moment and try again.' });
+  }
 
   const { code } = req.body || {};
   if (!code) return res.status(400).json({ error: 'Code required.' });
@@ -45,10 +59,11 @@ export default async function handler(req, res) {
     return res.status(429).json({ error: 'Too many incorrect attempts. Please request a new code.' });
   }
 
-  if (String(payload.code) !== String(code).trim()) {
+  if (!codeMatchesHash(String(code).trim(), payload.codeHash)) {
     // Re-sign the cookie with the incremented attempt count so the limit
     // above is enforced across requests without needing server-side state.
-    const nextToken = await signCodeToken(payload.email, payload.code, attemptsSoFar + 1);
+    // Carries forward the same codeHash — never the code itself.
+    const nextToken = await signCodeHashToken(payload.email, payload.codeHash, attemptsSoFar + 1);
     res.setHeader('Set-Cookie', serialize(CODE_COOKIE, nextToken, cookieOptions(60 * 10)));
     return res.status(401).json({ error: 'Incorrect code. Please try again.' });
   }

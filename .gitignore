@@ -3,9 +3,9 @@ node_modules/
 .pnp
 .pnp.js
 
-# Package manager lockfiles/config not used by this project (npm is canonical)
-pnpm-lock.yaml
-pnpm-workspace.yaml
+# npm lockfile not used by this project (pnpm is canonical — see package.json's
+# "packageManager" field and pnpm-lock.yaml/pnpm-workspace.yaml, both tracked)
+package-lock.json
 
 # Next.js build output
 .next/

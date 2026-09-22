@@ -54,7 +54,14 @@ export default function ShowcaseTab({ order }) {
       document.body.appendChild(script);
     }
 
+    // PORTAL-043: this listener had no origin check at all — ANY window/frame
+    // (not just the embedded Jotform iframe) could postMessage a spoofed
+    // "submission-completed" payload and flip formSubmitted client-side.
+    // Restricting to Jotform's own real embed origin (the iframe's actual
+    // src, see formSrc above) closes that; a client-side-only UI state, not
+    // a substitute for real server-side validation.
     function onMessage(e) {
+      if (e.origin !== 'https://form.jotform.com') return;
       const raw = e.data;
       const data = typeof raw === 'string' ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : raw;
       if (data?.action === 'submission-completed') setFormSubmitted(true);

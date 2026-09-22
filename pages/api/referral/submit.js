@@ -14,6 +14,31 @@ import { getOrderById, createReferralItem, findRecentReferral } from '../../../l
 import { notifyTeamNewReferral } from '../../../lib/email';
 import { allowRequest } from '../../../lib/rateLimit';
 
+// PORTAL-063: findRecentReferral()'s own dedupe (lib/monday.js, PORTAL-013)
+// is a read-then-create check against Monday — not atomic. A true
+// double-click (or a client retry firing before the first request's
+// createReferralItem() write lands) can still get two requests both reading
+// "no recent referral" before either one's create actually completes,
+// creating two duplicate Referrals board rows. lib/concurrency.js was
+// checked first per this fix's ground rules — it only exports
+// mapWithConcurrency, a worker-pool limiter for cron loops, nothing that
+// already covers a single-key in-flight lock — so this is a small,
+// self-contained one scoped to exactly this endpoint's race rather than a
+// speculative addition to a shared file nobody else needs it in yet.
+//
+// Only guards this one process's in-memory state — like every other
+// in-memory limiter in this codebase (lib/rateLimit.js says the same of
+// itself), a genuinely simultaneous double-click landing on two different
+// serverless instances isn't caught by this alone. findRecentReferral()'s
+// existing ~2-minute Monday-side window still covers that broader case;
+// this lock closes the much more common single-instance race outright
+// instead of merely narrowing it.
+const inFlightReferralKeys = new Set();
+
+function referralLockKey(orderId, friendEmail) {
+  return `${orderId}::${(friendEmail || '').trim().toLowerCase()}`;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
@@ -38,45 +63,59 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Please enter a valid email address.' });
   }
 
-  let order;
-  try {
-    order = await getOrderById(session.orderId);
-    if (!order) return res.status(404).json({ error: 'Order not found.' });
-  } catch (err) {
-    console.error('Referral: failed to load order:', err);
-    return res.status(500).json({ error: 'Failed to load order.' });
+  // PORTAL-063: reject a second concurrent request for the exact same
+  // (order, friend email) pair outright rather than letting it race past
+  // findRecentReferral()'s own read-then-create check below. See this
+  // file's header comment.
+  const lockKey = referralLockKey(session.orderId, friendEmail);
+  if (inFlightReferralKeys.has(lockKey)) {
+    return res.status(200).json({ ok: true, duplicate: true });
   }
+  inFlightReferralKeys.add(lockKey);
 
-  // PORTAL-013: catch a near-simultaneous duplicate submission (double-click,
-  // client retry) before creating a second Referrals board row for the same
-  // friend from the same order. See findRecentReferral() in lib/monday.js.
   try {
-    const existing = await findRecentReferral(session.orderId, friendEmail);
-    if (existing) {
-      return res.status(200).json({ ok: true, duplicate: true });
+    let order;
+    try {
+      order = await getOrderById(session.orderId);
+      if (!order) return res.status(404).json({ error: 'Order not found.' });
+    } catch (err) {
+      console.error('Referral: failed to load order:', err);
+      return res.status(500).json({ error: 'Failed to load order.' });
     }
-  } catch (err) {
-    // Non-fatal — if the dedupe check itself fails, proceed with the
-    // submission rather than blocking a legitimate referral over it.
-    console.error('Referral dedupe check failed (continuing anyway):', err.message);
+
+    // PORTAL-013: catch a near-simultaneous duplicate submission (double-click,
+    // client retry) before creating a second Referrals board row for the same
+    // friend from the same order. See findRecentReferral() in lib/monday.js.
+    try {
+      const existing = await findRecentReferral(session.orderId, friendEmail);
+      if (existing) {
+        return res.status(200).json({ ok: true, duplicate: true });
+      }
+    } catch (err) {
+      // Non-fatal — if the dedupe check itself fails, proceed with the
+      // submission rather than blocking a legitimate referral over it.
+      console.error('Referral dedupe check failed (continuing anyway):', err.message);
+    }
+
+    let referralItemId;
+    try {
+      referralItemId = await createReferralItem(order, {
+        referrerName: order.name,
+        referrerEmail: session.email,
+        friendName,
+        friendEmail,
+        friendPhone: friendPhone || '',
+        message: message || '',
+      });
+    } catch (err) {
+      console.error('Referral submit error:', err);
+      return res.status(500).json({ error: 'Failed to submit referral. Please try again or contact us directly.' });
+    }
+
+    notifyTeamNewReferral(order.name, session.email, friendName, friendEmail, referralItemId).catch(console.error);
+
+    return res.status(200).json({ ok: true });
+  } finally {
+    inFlightReferralKeys.delete(lockKey);
   }
-
-  let referralItemId;
-  try {
-    referralItemId = await createReferralItem(order, {
-      referrerName: order.name,
-      referrerEmail: session.email,
-      friendName,
-      friendEmail,
-      friendPhone: friendPhone || '',
-      message: message || '',
-    });
-  } catch (err) {
-    console.error('Referral submit error:', err);
-    return res.status(500).json({ error: 'Failed to submit referral. Please try again or contact us directly.' });
-  }
-
-  notifyTeamNewReferral(order.name, session.email, friendName, friendEmail, referralItemId).catch(console.error);
-
-  return res.status(200).json({ ok: true });
 }

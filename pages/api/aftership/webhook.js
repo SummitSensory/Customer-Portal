@@ -32,13 +32,12 @@ import {
   findOrderByFreightTracking,
   updateFreightNotifyTag,
 } from '../../../lib/monday';
-import { labelForTag, publicUrl } from '../../../lib/aftership';
+import { labelForTag, publicUrl, SHIPMENT_LABELS } from '../../../lib/aftership';
 import { notifyCustomerFreightUpdate } from '../../../lib/email';
 
 // Only these carrier statuses are worth emailing a customer about — skip the
 // noisy/early ones (Pending, InfoReceived) that don't tell them anything new.
 const NOTIFY_WORTHY_TAGS = new Set(['InTransit', 'OutForDelivery', 'Delivered', 'Exception']);
-const SHIPMENT_LABELS = { frame: 'Sensory Gym Frame', mats: 'Therapy Mats & Padding' };
 
 // Needed for the HMAC fallback path, which must sign the exact raw bytes.
 export const config = {

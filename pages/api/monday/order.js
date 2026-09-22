@@ -1,20 +1,22 @@
 /**
- * GET  /api/monday/order   — fetch the logged-in customer's order
- * PATCH /api/monday/order  — update contact info (address, phone, contact name)
+ * GET /api/monday/order — fetch the logged-in customer's order
+ *
+ * PORTAL-037: this file used to also handle PATCH (contact-info updates),
+ * but nothing in the app has ever called it — the real contact-update flow
+ * goes through saveSetup('contact_update', ...) -> POST /api/portal/setup
+ * (confirmed via a repo-wide search for both 'monday/order' and a PATCH
+ * fetch call; the admin panel's own PATCH call targets the plural
+ * /api/monday/orders, a different endpoint entirely). Removed rather than
+ * fixed in place: it also carried a latent bug (contactName was treated as
+ * "changed" whenever merely present, unlike address/phone which compared
+ * against the current value), and dead code with a known bug is worse than
+ * no code — if contact-update ever needs to move here, it should be
+ * rebuilt against the current session/order helpers, not revived as-is.
  */
 
 import { parse } from 'cookie';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import {
-  getOrderById,
-  getOrdersByEmail,
-  updateOrderColumn,
-  postTaggedUpdate,
-  COLS,
-} from '../../../lib/monday';
-import {
-  notifyTeamContactChange,
-} from '../../../lib/email';
+import { getOrderById, getOrdersByEmail } from '../../../lib/monday';
 
 export default async function handler(req, res) {
   // Auth: customer session cookie
@@ -66,65 +68,6 @@ export default async function handler(req, res) {
     } catch (err) {
       console.error('Order GET error:', err);
       return res.status(500).json({ error: 'Failed to load order. Please try again.' });
-    }
-  }
-
-  // For write operations, require a specific order.
-  // PORTAL-015 continuation: this lookup ran unguarded outside the PATCH
-  // handler's own try/catch below — a Monday error here threw before ever
-  // reaching that try block.
-  let order;
-  try {
-    order = session.orderId
-      ? await getOrderById(session.orderId)
-      : (await getOrdersByEmail(session.email))[0];
-  } catch (err) {
-    console.error('Order lookup error (write path):', err);
-    return res.status(500).json({ error: 'Failed to load order. Please try again.' });
-  }
-  if (!order) return res.status(404).json({ error: 'Order not found.' });
-
-  // ── PATCH — update contact info ───────────────────────────────────────────
-  if (req.method === 'PATCH') {
-    const { address, phone, contactName } = req.body || {};
-    const changed = [];
-
-    try {
-      // address — long_text columns require the complex value wrapped as
-      // {text: "..."} in Monday's API; a bare string throws "invalid value"
-      // (confirmed 2026-07-28 via a live GraphQL error on this exact call).
-      if (address !== undefined && address !== order.address) {
-        await updateOrderColumn(order.id, COLS.address, { text: address });
-        changed.push('Ship-to address');
-      }
-
-      // phone and contactName are mirror columns (read-only in Monday) or unmapped.
-      // Store changes as a tagged update so the team can update the source board.
-      const notes = [];
-      if (phone !== undefined && phone !== order.phone) {
-        notes.push(`Phone: ${phone}`);
-        changed.push('Phone');
-      }
-      if (contactName !== undefined) {
-        notes.push(`Contact name: ${contactName}`);
-        changed.push('Primary contact');
-      }
-      if (notes.length > 0) {
-        await postTaggedUpdate(
-          order.id,
-          'PORTAL: Contact Update Requested',
-          `Customer requested contact update on ${new Date().toLocaleDateString()}.\n${notes.join('\n')}`
-        );
-      }
-
-      if (changed.length > 0) {
-        await notifyTeamContactChange(order.name, session.email, changed).catch(console.error);
-      }
-
-      return res.status(200).json({ ok: true, changed });
-    } catch (err) {
-      console.error('Order update error:', err);
-      return res.status(500).json({ error: 'Failed to update. Please try again.' });
     }
   }
 

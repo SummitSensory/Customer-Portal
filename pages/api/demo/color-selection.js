@@ -22,9 +22,23 @@ import { requiredColorInputs } from '../../../lib/colorRequirements';
 // which throws at import time if NEXTAUTH_SECRET is unset. This route has
 // no business needing that at all; see the lib module's header comment for
 // the real, confirmed bug that came from getting this wrong the first time.
-import { validateColorSelectionData, computeTotalUpcharge } from '../../../lib/colorSelectionValidation';
+import { validatePresentSelections, validateColorSelectionData, sanitizeSelections, computeTotalUpcharge } from '../../../lib/colorSelectionValidation';
+import { allowRequest, getClientIp } from '../../../lib/rateLimit';
 
 const DEMO_PRODUCT_TYPE = 'Summit Adventure Series: Custom Sensory Gym';
+// Demo shows every BUILDABLE gated input regardless of live Monday data —
+// explicitly "Included" here (rather than relying on the fail-closed
+// default) so the demo's intent reads clearly in source, not just by
+// omission. See lib/colorRequirements.js for what each gate key means.
+const DEMO_COLOR_GATES = {
+  adventureMat: 'Included',
+  climbingWallColor: 'Included',
+  climbingWallMat: 'Included',
+  wallPaddingMat: 'Included',
+  slideColor: 'Included',
+  ballPitMat: 'Included',
+  foundationMat: 'Included',
+};
 const VIEWER_COOKIE = 'summit_demo_viewer';
 
 // In-memory only — resets on cold start/redeploy, never touches Monday.com.
@@ -45,7 +59,16 @@ function emptySnapshot() {
 }
 
 export default async function handler(req, res) {
-  const demoOrder = { productType: DEMO_PRODUCT_TYPE };
+  // PORTAL-054: this public, unauthenticated demo endpoint had no rate limit
+  // at all, unlike every other public route in this codebase. Real-world
+  // impact is bounded (no Monday/real data involved, and demoSnapshots is
+  // already sweep-capped above), but it costs nothing to close and keeps
+  // this route consistent with the rest of the app's public surface.
+  if (!allowRequest(`demo-color-selection:${getClientIp(req)}`, { maxRequests: 60, windowMs: 60_000 })) {
+    return res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' });
+  }
+
+  const demoOrder = { productType: DEMO_PRODUCT_TYPE, colorFrameType: 'Adventure', colorGates: DEMO_COLOR_GATES };
 
   const cookies = parse(req.headers.cookie || '');
   let viewerId = cookies[VIEWER_COOKIE];
@@ -75,7 +98,7 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     return res.status(200).json({
       supported: true,
-      requiredInputs: requiredColorInputs(DEMO_PRODUCT_TYPE),
+      requiredInputs: requiredColorInputs(demoOrder),
       selections: demoSnapshot.selections,
       confirmedAt: demoSnapshot.confirmedAt,
     });
@@ -95,20 +118,34 @@ export default async function handler(req, res) {
   const { selections, confirm } = req.body || {};
   if (!selections || typeof selections !== 'object') return res.status(400).json({ error: 'selections required.' });
 
+  // Found by independent code review (2026-09-03): this file's own header
+  // claims it "behaves identically to what customers will eventually get,"
+  // but the autosave path (confirm falsy) skipped validation entirely —
+  // only confirm ran validateColorSelectionData — and never sanitized the
+  // stored object at all, unlike the real endpoint, which validates every
+  // present part on every save and whitelists to {brand, code} before
+  // persisting. Not a real security issue (in-memory, per-viewer, never
+  // touches Monday), but it made the demo genuinely behave differently
+  // from what it claims to demonstrate.
+  const presentSelectionsError = validatePresentSelections(demoOrder, selections);
+  if (presentSelectionsError) return res.status(400).json({ error: presentSelectionsError });
+
   if (confirm) {
     const validationError = validateColorSelectionData(demoOrder, selections);
     if (validationError) return res.status(400).json({ error: validationError });
   }
 
+  const cleanSelections = sanitizeSelections(demoOrder, selections);
+
   demoSnapshots.set(viewerId, {
-    selections,
+    selections: cleanSelections,
     confirmedAt: confirm ? new Date().toISOString() : null,
     lastSeenAt: Date.now(),
   });
 
   return res.status(200).json({
     ok: true,
-    totalUpcharge: computeTotalUpcharge(demoOrder, selections),
+    totalUpcharge: computeTotalUpcharge(demoOrder, cleanSelections),
     checklistSyncPending: false,
   });
 }

@@ -49,6 +49,12 @@ export default async function handler(req, res) {
     if (!orderId || !fileUrl || !fileName) {
       return res.status(400).json({ error: 'orderId, fileUrl, and fileName required.' });
     }
+    // PORTAL-049: defense in depth alongside lib/monday.js's uploadFileToColumn
+    // fix — a real Monday item id is always purely numeric, so reject
+    // anything else here rather than relying solely on that fix downstream.
+    if (!/^\d+$/.test(String(orderId))) {
+      return res.status(400).json({ error: 'Invalid orderId.' });
+    }
 
     try {
       // Staff-pasted links come from an authenticated admin session, not a

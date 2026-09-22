@@ -6,12 +6,31 @@
  *   &create=1                 also POST-creates the tracking (what the portal does)
  *   &base=<url>               override the API base (e.g. https://api.aftership.com/tracking/2025-07)
  *   &flat=1                   send the CREATE body flat ({tracking_number, slug}) instead of {tracking:{...}}
+ *   &updateName=...           (with &id=...) test PUT-updating customer_name on an existing tracking
  *
  * Never exposes the full key.
+ *
+ * PORTAL-044: &create=1/&updateName= can create or overwrite REAL AfterShip
+ * tracking data, not just read it — the staff-session gate alone means any
+ * signed-in staff account could do this at any time with no extra signal
+ * that a write (not just a read) happened. Both now require
+ * AFTERSHIP_DEBUG_WRITES_ENABLED=true as an explicit second gate, off by
+ * default — flip it on in Vercel only while actively debugging, then back
+ * off. This is a pure opt-in restriction: it costs nothing when you
+ * actually need to use &create=1/&updateName=, just stops them from being
+ * silently always-on.
  */
 
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
+import { allowRequest } from '../../../lib/rateLimit';
+
+// PORTAL-040: every outbound fetch elsewhere in this codebase carries an
+// explicit timeout (see lib/colorCatalogSync.js, lib/email.js) — this
+// staff-only diagnostic route didn't, so a hanging AfterShip response could
+// stall the serverless invocation until Vercel's own platform timeout
+// killed it instead of failing cleanly.
+const DEBUG_FETCH_TIMEOUT_MS = 10_000;
 
 const DEFAULT_BASE = process.env.AFTERSHIP_API_BASE || 'https://api.aftership.com/tracking/2025-07';
 
@@ -40,6 +59,14 @@ export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
   if (!session) return res.status(401).json({ error: 'Staff sign-in required.' });
 
+  // PORTAL-040: this route can create/overwrite real AfterShip tracking data
+  // (?create=1, ?updateName=), not just read it — staff-session-gated
+  // already, but with no rate limit at all, unlike every other
+  // write-triggering route in the app.
+  if (!allowRequest(`aftership-debug:${session.user?.email || 'unknown'}`, { maxRequests: 20, windowMs: 60_000 })) {
+    return res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' });
+  }
+
   const { slug, number } = req.query;
   const key = process.env.AFTERSHIP_API_KEY || '';
   const base = resolveBase(req.query.base);
@@ -60,12 +87,21 @@ export default async function handler(req, res) {
   const result = { ...info };
   const clip = (v) => (typeof v === 'string' ? v : JSON.stringify(v) || '').slice(0, 400);
 
+  const writesEnabled = process.env.AFTERSHIP_DEBUG_WRITES_ENABLED === 'true';
+  const wantsWrite = !!(req.query.create || (req.query.id && req.query.updateName));
+  if (wantsWrite && !writesEnabled) {
+    return res.status(200).json({
+      ...info,
+      note: 'Write actions (&create=1 / &updateName=) are disabled. Set AFTERSHIP_DEBUG_WRITES_ENABLED=true in Vercel to enable them temporarily, then turn it back off.',
+    });
+  }
+
   try {
     if (req.query.create) {
       const body = flat
         ? { tracking_number: number, slug }
         : { tracking: { slug, tracking_number: number } };
-      const cr = await fetch(`${base}/trackings`, { method: 'POST', headers, body: JSON.stringify(body) });
+      const cr = await fetch(`${base}/trackings`, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(DEBUG_FETCH_TIMEOUT_MS) });
       const cText = await cr.text();
       let cBody; try { cBody = JSON.parse(cText); } catch { cBody = cText; }
       result.createHttpStatus = cr.status;                 // 201 = created
@@ -77,6 +113,7 @@ export default async function handler(req, res) {
     if (req.query.id && req.query.updateName) {
       const ur = await fetch(`${base}/trackings/${encodeURIComponent(req.query.id)}`, {
         method: 'PUT', headers, body: JSON.stringify({ customers: [{ name: String(req.query.updateName) }] }),
+        signal: AbortSignal.timeout(DEBUG_FETCH_TIMEOUT_MS),
       });
       const uText = await ur.text();
       let uBody; try { uBody = JSON.parse(uText); } catch { uBody = uText; }
@@ -88,7 +125,7 @@ export default async function handler(req, res) {
     const getUrl = req.query.id
       ? `${base}/trackings/${encodeURIComponent(req.query.id)}`                       // current API: fetch by id
       : `${base}/trackings/${encodeURIComponent(slug)}/${encodeURIComponent(number)}`; // legacy: slug+number
-    const r = await fetch(getUrl, { headers });
+    const r = await fetch(getUrl, { headers, signal: AbortSignal.timeout(DEBUG_FETCH_TIMEOUT_MS) });
     const text = await r.text();
     let body; try { body = JSON.parse(text); } catch { body = text; }
     const t = body?.data?.tracking || body?.data || null;

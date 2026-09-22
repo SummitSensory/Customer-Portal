@@ -3,14 +3,14 @@
  * Sections: Dashboard, Orders, Customers, Files, Messages, Settings
  */
 
-import { useState, useEffect, useCallback, Fragment } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import dynamic from 'next/dynamic';
 import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
 import { isStaffMessage, stripPortalTags, messageDisplayName } from '../../lib/messageOrigin';
-import { requiredColorInputs, PART_LABELS } from '../../lib/colorRequirements';
+import { requiredColorInputs, unbuiltRequiredColorGates, PART_LABELS } from '../../lib/colorRequirements';
 import { resolveSelectedColor, displayColorName, findOrphanedSelections } from '../../lib/colorCatalog';
 
 // Lazy-loaded — most staff sessions never open Settings in a given visit,
@@ -242,9 +242,52 @@ function getCellValue(order, colId) {
   return { type: 'text', value: order.rawColumns?.[colId]?.text || '' };
 }
 
+function progressIsComplete(progress) {
+  return PROGRESS_STEPS.every(step => {
+    const v = progress?.[step.key];
+    return v === '✅' || v === 'N/A' || v === '' || v == null;
+  });
+}
+
+// Sort key per column — numeric for balance/progress so they order
+// naturally instead of as strings, lowercased text for everything else.
+function getSortValue(order, colId) {
+  if (colId === '_balance') return order.balance == null ? -1 : order.balance;
+  if (colId === '_progress') return PROGRESS_STEPS.filter(s => order.progress?.[s.key] === '✅').length;
+  if (colId === '_name') return (order.name || '').toLowerCase();
+  if (colId === '_actions') return '';
+  const cell = getCellValue(order, colId);
+  return typeof cell.value === 'string' ? cell.value.toLowerCase() : (cell.value ?? '');
+}
+
+// Per-column filter match. Status/Balance/Progress get dropdowns with
+// fixed values (matched against the real order fields); everything else
+// gets a free-text substring match against the same text the cell renders.
+function matchesColumnFilter(order, colId, filterValue) {
+  if (!filterValue) return true;
+  if (colId === 'status__1') return order.status === filterValue;
+  if (colId === '_balance') {
+    const hasBalanceDue = order.balance != null && order.balance > 0;
+    return filterValue === 'due' ? hasBalanceDue : !hasBalanceDue;
+  }
+  if (colId === '_progress') {
+    return filterValue === 'complete' ? progressIsComplete(order.progress) : !progressIsComplete(order.progress);
+  }
+  const cell = getCellValue(order, colId);
+  return (cell.value ?? '').toString().toLowerCase().includes(filterValue.toLowerCase());
+}
+
 function OrdersTab({ orders, onRefresh, showToast }) {
   const [editing, setEditing] = useState({});
   const [saving, setSaving] = useState(null);
+  // PORTAL-052: sendInvite/notifyByEmail/viewAsCustomer had no in-flight
+  // guard, unlike saveOrder (which correctly gates on `saving === order.id`).
+  // Each requires a confirm() accept, but nothing stopped a fast second
+  // click (and a second confirm accept) from firing before the first
+  // request resolved — a duplicate invitation/notification email, or a
+  // duplicate 2-hour impersonation session. Keyed per-order so acting on one
+  // order never blocks acting on another.
+  const [pendingAction, setPendingAction] = useState({});
   const [showPicker, setShowPicker] = useState(false);
   // PORTAL-021: lets staff see a completed Delivery & Site Details submission
   // right in the Orders table (from order.deliverySnapshot, already parsed
@@ -254,6 +297,8 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   const [expandedDelivery, setExpandedDelivery] = useState(null);
   const [expandedColors, setExpandedColors] = useState(null);
   const [availableCols, setAvailableCols] = useState([]);
+  const [sortConfig, setSortConfig] = useState({ colId: null, dir: 'asc' });
+  const [columnFilters, setColumnFilters] = useState({});
   const [selectedColIds, setSelectedColIds] = useState(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -308,8 +353,10 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   }
 
   async function sendInvite(order) {
+    if (pendingAction[order.id]) return;
     if (!order.customerEmail) { showToast('This order has no customer email.'); return; }
     if (!confirm(`Send portal invitation to ${order.customerEmail}?`)) return;
+    setPendingAction(prev => ({ ...prev, [order.id]: true }));
     try {
       const res = await fetch('/api/portal/invite', {
         method: 'POST',
@@ -320,6 +367,8 @@ function OrdersTab({ orders, onRefresh, showToast }) {
       showToast(`✅ Invitation sent to ${order.customerEmail}`);
     } catch {
       showToast('Failed to send invitation. Please try again.');
+    } finally {
+      setPendingAction(prev => { const n = { ...prev }; delete n[order.id]; return n; });
     }
   }
 
@@ -329,8 +378,10 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   // built but literally unwired to any trigger at all (Customer-Portal-Process-Flow.md
   // OPEN-2). All three now share one small "Notify…" control below.
   async function notifyByEmail(order, endpoint, label, extraBody) {
+    if (pendingAction[order.id]) return;
     if (!order.customerEmail) { showToast('This order has no customer email.'); return; }
     if (!confirm(`Send "${label}" email to ${order.customerEmail}?`)) return;
+    setPendingAction(prev => ({ ...prev, [order.id]: true }));
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -342,6 +393,8 @@ function OrdersTab({ orders, onRefresh, showToast }) {
       showToast(`✅ ${label} sent to ${order.customerEmail}`);
     } catch (err) {
       showToast(err.message || 'Failed to send. Please try again.');
+    } finally {
+      setPendingAction(prev => { const n = { ...prev }; delete n[order.id]; return n; });
     }
   }
 
@@ -359,8 +412,10 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   }
 
   async function viewAsCustomer(order) {
+    if (pendingAction[order.id]) return;
     if (!order.customerEmail) { showToast('This order has no customer email — nothing to view as.'); return; }
     if (!confirm(`View the portal as ${order.customerEmail} for "${order.name}"? This starts a 2-hour session logged to the order.`)) return;
+    setPendingAction(prev => ({ ...prev, [order.id]: true }));
     try {
       const res = await fetch('/api/admin/impersonate', {
         method: 'POST',
@@ -370,8 +425,13 @@ function OrdersTab({ orders, onRefresh, showToast }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to start session.');
       window.location.href = data.redirectTo || '/portal';
+      // Deliberately not clearing pendingAction in a finally here — the page
+      // is navigating away on success, and clearing it would just let a
+      // double-click race the redirect. It's naturally reset by the
+      // navigation itself; the catch below still clears it on failure.
     } catch (err) {
       showToast(err.message || 'Failed to start viewing session. Please try again.');
+      setPendingAction(prev => { const n = { ...prev }; delete n[order.id]; return n; });
     }
   }
 
@@ -406,20 +466,61 @@ function OrdersTab({ orders, onRefresh, showToast }) {
     ? selectedColIds.map(id => availableCols.find(c => c.id === id)).filter(Boolean)
     : selectedColIds.map(id => ({ id, title: id === '_name' ? 'Order' : id === '_balance' ? 'Balance' : id === '_actions' ? '' : id }));
 
+  function handleSort(colId) {
+    if (colId === '_actions') return;
+    setSortConfig(prev => (
+      prev.colId === colId ? { colId, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { colId, dir: 'asc' }
+    ));
+  }
+
+  const activeFilterCount = Object.values(columnFilters).filter(Boolean).length;
+
+  // Filter first (against every currently-visible column), then sort —
+  // column visibility changes (Customize Columns) naturally drop that
+  // column's filter's effect since matchesColumnFilter is only run for
+  // displayCols.
+  const visibleOrders = useMemo(() => {
+    let result = orders.filter(order =>
+      displayCols.every(col => matchesColumnFilter(order, col.id, columnFilters[col.id]))
+    );
+    if (sortConfig.colId) {
+      const { colId, dir } = sortConfig;
+      result = [...result].sort((a, b) => {
+        const av = getSortValue(a, colId);
+        const bv = getSortValue(b, colId);
+        if (av < bv) return dir === 'asc' ? -1 : 1;
+        if (av > bv) return dir === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+    return result;
+  }, [orders, displayCols, columnFilters, sortConfig]);
+
   return (
     <>
       <div className="ph" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
           <h2>Orders</h2>
-          <p>All active orders. Edit status and tracking numbers inline.</p>
+          <p>All active orders. Click a column header to sort; use the filter row to narrow results. Edit status and tracking numbers inline.</p>
         </div>
-        <button
-          className="btn btn-ghost btn-sm"
-          onClick={() => setShowPicker(true)}
-          style={{ marginTop: 4, whiteSpace: 'nowrap' }}
-        >
-          ⚙️ Customize Columns
-        </button>
+        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+          {activeFilterCount > 0 && (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setColumnFilters({})}
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              ✕ Clear Filters ({activeFilterCount})
+            </button>
+          )}
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setShowPicker(true)}
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            ⚙️ Customize Columns
+          </button>
+        </div>
       </div>
 
       {/* Column picker drawer */}
@@ -496,13 +597,85 @@ function OrdersTab({ orders, onRefresh, showToast }) {
           <table>
             <thead>
               <tr>
-                {displayCols.map(col => (
-                  <th key={col.id}>{col.id === '_actions' ? '' : col.title}</th>
-                ))}
+                {displayCols.map(col => {
+                  const sortable = col.id !== '_actions';
+                  const isSorted = sortConfig.colId === col.id;
+                  return (
+                    <th
+                      key={col.id}
+                      onClick={sortable ? () => handleSort(col.id) : undefined}
+                      style={sortable ? { cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' } : undefined}
+                      title={sortable ? `Sort by ${col.title}` : undefined}
+                    >
+                      {col.id === '_actions' ? '' : (
+                        <>
+                          {col.title}
+                          <span style={{ marginLeft: 4, fontSize: 10, color: isSorted ? 'inherit' : 'var(--mut)', opacity: isSorted ? 1 : 0.4 }}>
+                            {isSorted ? (sortConfig.dir === 'asc' ? '▲' : '▼') : '↕'}
+                          </span>
+                        </>
+                      )}
+                    </th>
+                  );
+                })}
+              </tr>
+              <tr>
+                {displayCols.map(col => {
+                  if (col.id === '_actions') return <th key={col.id} style={{ padding: '4px 8px' }} />;
+                  if (col.id === 'status__1') return (
+                    <th key={col.id} style={{ padding: '4px 8px', fontWeight: 400 }}>
+                      <select
+                        value={columnFilters[col.id] || ''}
+                        onChange={e => setColumnFilters(prev => ({ ...prev, [col.id]: e.target.value }))}
+                        style={{ width: '100%', fontSize: 12 }}
+                      >
+                        <option value="">All</option>
+                        {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </th>
+                  );
+                  if (col.id === '_balance') return (
+                    <th key={col.id} style={{ padding: '4px 8px', fontWeight: 400 }}>
+                      <select
+                        value={columnFilters[col.id] || ''}
+                        onChange={e => setColumnFilters(prev => ({ ...prev, [col.id]: e.target.value }))}
+                        style={{ width: '100%', fontSize: 12 }}
+                      >
+                        <option value="">All</option>
+                        <option value="due">Balance Due</option>
+                        <option value="paid">Paid</option>
+                      </select>
+                    </th>
+                  );
+                  if (col.id === '_progress') return (
+                    <th key={col.id} style={{ padding: '4px 8px', fontWeight: 400 }}>
+                      <select
+                        value={columnFilters[col.id] || ''}
+                        onChange={e => setColumnFilters(prev => ({ ...prev, [col.id]: e.target.value }))}
+                        style={{ width: '100%', fontSize: 12 }}
+                      >
+                        <option value="">All</option>
+                        <option value="complete">Complete</option>
+                        <option value="incomplete">Incomplete</option>
+                      </select>
+                    </th>
+                  );
+                  return (
+                    <th key={col.id} style={{ padding: '4px 8px', fontWeight: 400 }}>
+                      <input
+                        type="text"
+                        placeholder="Filter…"
+                        value={columnFilters[col.id] || ''}
+                        onChange={e => setColumnFilters(prev => ({ ...prev, [col.id]: e.target.value }))}
+                        style={{ width: '100%', fontSize: 12, padding: '3px 6px', boxSizing: 'border-box' }}
+                      />
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
-              {orders.map(order => {
+              {visibleOrders.map(order => {
                 const ed = editing[order.id];
                 return (
                   <Fragment key={order.id}>
@@ -546,11 +719,11 @@ function OrdersTab({ orders, onRefresh, showToast }) {
                           ) : (
                             <div style={{ display: 'flex', gap: 6 }}>
                               <button className="btn btn-ghost btn-sm" onClick={() => startEdit(order)}>Edit</button>
-                              <button className="btn btn-ghost btn-sm" title="Send portal invitation" onClick={() => sendInvite(order)} style={{ whiteSpace: 'nowrap' }}>
-                                ✉️ Invite
+                              <button className="btn btn-ghost btn-sm" title="Send portal invitation" onClick={() => sendInvite(order)} disabled={!!pendingAction[order.id]} style={{ whiteSpace: 'nowrap' }}>
+                                {pendingAction[order.id] ? '…' : '✉️ Invite'}
                               </button>
-                              <button className="btn btn-ghost btn-sm" title="View/act in this customer's portal to help them complete a step or troubleshoot an issue" onClick={() => viewAsCustomer(order)} style={{ whiteSpace: 'nowrap' }}>
-                                👁️ View as Customer
+                              <button className="btn btn-ghost btn-sm" title="View/act in this customer's portal to help them complete a step or troubleshoot an issue" onClick={() => viewAsCustomer(order)} disabled={!!pendingAction[order.id]} style={{ whiteSpace: 'nowrap' }}>
+                                {pendingAction[order.id] ? '…' : '👁️ View as Customer'}
                               </button>
                               {order.deliverySnapshot && (
                                 <button
@@ -576,6 +749,7 @@ function OrdersTab({ orders, onRefresh, showToast }) {
                                 className="btn btn-ghost btn-sm"
                                 value=""
                                 title="Send a one-off customer notification"
+                                disabled={!!pendingAction[order.id]}
                                 style={{ whiteSpace: 'nowrap' }}
                                 onChange={e => { const action = e.target.value; e.target.value = ''; if (action) handleNotifyChoice(order, action); }}
                               >
@@ -656,6 +830,15 @@ function OrdersTab({ orders, onRefresh, showToast }) {
         {orders.length === 0 && (
           <div className="empty"><div className="ei">📦</div><h3>No orders</h3><p>Orders from Monday.com will appear here.</p></div>
         )}
+        {orders.length > 0 && visibleOrders.length === 0 && (
+          <div className="empty">
+            <div className="ei">🔍</div>
+            <h3>No orders match your filters</h3>
+            <p>
+              <button className="lk" onClick={() => setColumnFilters({})}>Clear filters</button> to see all {orders.length} orders.
+            </p>
+          </div>
+        )}
       </div>
     </>
   );
@@ -708,7 +891,12 @@ function DeliveryDetailPanel({ order }) {
       )}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px 28px', marginBottom: 14 }}>
-        <DeliveryField label="Loading Dock" value={isChecked(s.hasLoadingDock) ? 'Yes' : 'No'} />
+        {/* PORTAL-047: hasLoadingDock is stored as the plain string 'yes'/'no'
+            (see pages/portal/index.js DeliveryTab's useState(saved?.hasLoadingDock
+            || 'no')), never as true/'v'/{checked:true} — isChecked() doesn't
+            recognize that shape, so this panel showed "No" for every single
+            order regardless of what the customer actually answered. */}
+        <DeliveryField label="Loading Dock" value={s.hasLoadingDock === 'yes' ? 'Yes' : 'No'} />
         <DeliveryField label="Delivery Timing" value={s.deliveryTiming} />
         <DeliveryField label="Preferred Date" value={s.preferredDeliveryDate} />
       </div>
@@ -746,14 +934,30 @@ function DeliveryDetailPanel({ order }) {
 // applied everywhere except here).
 function ColorSelectionDetailPanel({ order }) {
   const s = order.colorSelectionSnapshot || {};
-  const inputs = requiredColorInputs(order.productType) || [];
+  const inputs = requiredColorInputs(order) || [];
   const orphans = findOrphanedSelections(inputs, s.selections || {});
+  // Real, gated requirements ("Included" on Bryan's decision-tree columns)
+  // with no native picker built yet — see unbuiltRequiredColorGates() in
+  // lib/colorRequirements.js. Surfaced here so a real requirement never
+  // silently goes unnoticed just because there's nowhere for a customer to
+  // fulfill it yet.
+  const unbuiltGates = unbuiltRequiredColorGates(order);
 
   return (
     <div style={{ padding: '16px 20px', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
       <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12 }}>
         🎨 Color &amp; Product Selections — {order.name}
       </div>
+
+      {unbuiltGates.length > 0 && (
+        <div className="alert warn" style={{ marginBottom: 14 }}>
+          <span>⚠️</span>
+          <span>
+            Marked &quot;Included&quot; on Monday but no online picker exists yet: {unbuiltGates.map((g) => g.label).join(', ')}.
+            Handle these manually — the customer was not shown a picker for them.
+          </span>
+        </div>
+      )}
 
       {inputs.length === 0 && (
         <div style={{ fontSize: 13, color: 'var(--mut)' }}>

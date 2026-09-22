@@ -56,7 +56,11 @@ const PROGRESS_KEYS = { contact: 'contact', billing: 'billing', delivery: 'deliv
 
 export default async function handler(req, res) {
   const authHeader = req.headers['authorization'];
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // PORTAL-033: an unset CRON_SECRET used to make this a literal string
+  // comparison against "Bearer undefined" — trivially satisfiable by
+  // anyone. Fail closed when the secret itself isn't configured, matching
+  // the discipline lib/auth.js already applies to NEXTAUTH_SECRET.
+  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
@@ -120,12 +124,35 @@ export default async function handler(req, res) {
           reminderNumber
         );
 
-        // Log this reminder so we don't send it again
-        await postTaggedUpdate(
-          order.id,
-          `PORTAL: Reminder #${reminderNumber}`,
-          `Reminder #${reminderNumber} sent to ${order.customerEmail} on ${now.toLocaleDateString()}. Incomplete: ${incompleteTabs.map(t => t.label).join(', ')}.`
-        );
+        // Log this reminder so we don't send it again. This write is split into
+        // its OWN try/catch, separate from the send above (same pattern already
+        // used for the send/dedupe-write pair in pages/api/aftership/webhook.js's
+        // freight-notify path) — previously both awaits shared the one catch
+        // block below, so a marker-write failure AFTER a successful send was
+        // indistinguishable from a send failure: both just did
+        // console.error + results.errors++. That's the wrong outcome for a
+        // marker-write failure specifically, because the send already went out —
+        // the next scheduled run would find no "[PORTAL: Reminder #N]" marker on
+        // this order and re-send the IDENTICAL reminder email. A send failure
+        // still falls through to the outer catch below (results.errors++, no
+        // reminded++), which is correct: nothing went out, so the next run
+        // should retry sending. A marker-write failure after a successful send
+        // is a different, quieter failure mode that a customer will never see
+        // but that needs a human to fix by hand, so it goes to
+        // reportCriticalFailure() instead of a log line nobody is watching.
+        try {
+          await postTaggedUpdate(
+            order.id,
+            `PORTAL: Reminder #${reminderNumber}`,
+            `Reminder #${reminderNumber} sent to ${order.customerEmail} on ${now.toLocaleDateString()}. Incomplete: ${incompleteTabs.map(t => t.label).join(', ')}.`
+          );
+        } catch (markerErr) {
+          await reportCriticalFailure(
+            'cron/reminders',
+            `Reminder #${reminderNumber} was successfully emailed to ${order.customerEmail} (order ${order.id}, "${order.name}") but the "[PORTAL: Reminder #${reminderNumber}]" marker update failed to write afterward — the next scheduled run will NOT see this reminder as sent and WILL RE-SEND an identical reminder email to this customer. Add the marker manually in Monday.com (an update on the order reading "PORTAL: Reminder #${reminderNumber}") to prevent the duplicate send, or investigate the write failure below.`,
+            { orderId: order.id, orderName: order.name, customerEmail: order.customerEmail, reminderNumber, error: markerErr.message }
+          );
+        }
 
         results.reminded++;
       } catch (orderErr) {

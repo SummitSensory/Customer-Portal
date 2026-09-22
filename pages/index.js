@@ -9,6 +9,23 @@ import { signIn, useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 
+// PORTAL-039: this page used to hardcode "@summitsensorygym.com" — stale
+// even at the time it was written, since the real access check
+// (lib/auth.js's isStaffEmail, STAFF_EMAIL_DOMAIN) has always allowed
+// @summitsensory.com too, and is env-configurable. The exact same bug was
+// already found and fixed on the admin Settings page (SettingsTab.js) —
+// missed here since this is a separate, public-facing file. Mirrors that
+// same fix: read the real value via NEXT_PUBLIC_STAFF_DOMAIN (mirrored from
+// server-only STAFF_EMAIL_DOMAIN in next.config.js's `env`), not lib/auth.js
+// directly — that module throws at import time if NEXTAUTH_SECRET is unset,
+// which would crash this client-rendered page (see
+// lib/colorSelectionValidation.js's header for the same class of bug found
+// elsewhere).
+function staffDomainDisplay() {
+  const raw = process.env.NEXT_PUBLIC_STAFF_DOMAIN || 'summitsensory.com,summitsensorygym.com';
+  return raw.split(',').map(d => d.trim()).filter(Boolean).join(' or ');
+}
+
 export default function Landing() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -83,9 +100,6 @@ export default function Landing() {
     <>
       <Head>
         <title>Summit Sensory Gym — Customer Portal</title>
-        {/* TEMPORARY — staging preview-deployment test marker, added 2026-08-28.
-            Safe to delete any time; only confirms Vercel is building this branch. */}
-        <meta name="staging-preview-test" content="added-2026-08-28" />
       </Head>
 
       {/* Page background */}
@@ -222,7 +236,7 @@ export default function Landing() {
                 </button>
 
                 <p style={{ fontSize: 11.5, color: '#aaa', textAlign: 'center', marginTop: 20, lineHeight: 1.5 }}>
-                  Staff access is restricted to @summitsensorygym.com accounts.
+                  Staff access is restricted to @{staffDomainDisplay()} accounts.
                 </p>
               </div>
 

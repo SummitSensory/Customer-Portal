@@ -2,6 +2,15 @@
 const nextConfig = {
   reactStrictMode: true,
   eslint: { ignoreDuringBuilds: true },
+  env: {
+    // Mirrors the real, server-only STAFF_EMAIL_DOMAIN (lib/auth.js's actual
+    // access-control check) so the admin Settings page displays the domain(s)
+    // actually enforced, instead of a separate NEXT_PUBLIC_STAFF_DOMAIN that
+    // was never set anywhere and silently showed a hardcoded fallback that
+    // could drift from the real value. Not sensitive — a company's own email
+    // domain(s), safe to expose client-side.
+    NEXT_PUBLIC_STAFF_DOMAIN: process.env.STAFF_EMAIL_DOMAIN || 'summitsensory.com,summitsensorygym.com',
+  },
   images: {
     domains: ['files-monday-com.s3.amazonaws.com', 'monday-files.s3.amazonaws.com'],
   },

@@ -9,6 +9,7 @@ import { authOptions } from '../auth/[...nextauth]';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
 import { getOrderMessages, postOrderMessage, getOrderById, setStatusLabel } from '../../../lib/monday';
 import { notifyTeamNewMessage } from '../../../lib/email';
+import { allowRequest } from '../../../lib/rateLimit';
 
 async function getIdentity(req, res) {
   // Try staff session first
@@ -45,6 +46,14 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
+    // PORTAL-036: this route triggers a real team-notification email
+    // (customer sends) and a real Monday write on every call, but unlike
+    // setup.js/color-selection.js had no rate limit — a valid session could
+    // loop it to spam team emails/Monday writes at no cost.
+    if (!allowRequest(`messages-post:${identity.email}`, { maxRequests: 20, windowMs: 60_000 })) {
+      return res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' });
+    }
+
     const { body } = req.body || {};
     if (!body?.trim()) return res.status(400).json({ error: 'Message body required.' });
 

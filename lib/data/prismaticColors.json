@@ -1,12 +1,5 @@
 [
   {
-    "name": "Can-Am Tan 21",
-    "sku": "PRB-10395",
-    "hex": "#cbbda2",
-    "family": "Tan/Beige",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Matte Black River",
     "sku": "PRB-4432",
     "hex": "#353439",
@@ -21,41 +14,6 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Canary Yellow",
-    "sku": "PRB-6119",
-    "hex": "#e7c038",
-    "family": "Yellow",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Villain Black",
-    "sku": "PRB-1203",
-    "hex": "#47494a",
-    "family": "Grey",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Arctic White",
-    "sku": "PRS-5390",
-    "hex": "#f3f3f0",
-    "family": "White",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Black Rock",
-    "sku": "PRB-1019",
-    "hex": "#3e3d39",
-    "family": "Grey",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Black Rock Ii",
-    "sku": "HRB-4990",
-    "hex": "#3f3e43",
-    "family": "Grey",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Flat Bronze River",
     "sku": "HRB-4682",
     "hex": "#584634",
@@ -67,13 +25,6 @@
     "sku": "PRB-2826",
     "hex": "#bd6936",
     "family": "Orange",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Liberty Blue",
-    "sku": "PRB-1731",
-    "hex": "#2f5475",
-    "family": "Blue",
     "provenance": "swatch-verified"
   },
   {
@@ -175,13 +126,6 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Blue Ripples",
-    "sku": "PRB-3073",
-    "hex": "#465683",
-    "family": "Blue",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Deep Blue River",
     "sku": "PRB-2534",
     "hex": "#243854",
@@ -245,30 +189,9 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Cobblestone Beige",
-    "sku": "PRB-2729",
-    "hex": "#c7b399",
-    "family": "Tan/Beige",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Shimmer River",
     "sku": "PRB-1502",
     "hex": "#bebcb8",
-    "family": "Grey",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Hickory Beige",
-    "sku": "URB-0191",
-    "hex": "#f3edd1",
-    "family": "Tan/Beige",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Granite Sage",
-    "sku": "PLB-1407",
-    "hex": "#4e6c67",
     "family": "Grey",
     "provenance": "swatch-verified"
   },
@@ -315,20 +238,6 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Hydro Red",
-    "sku": "PRB-2347",
-    "hex": "#d43e2c",
-    "family": "Red",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Frontier Beige",
-    "sku": "PRB-2314",
-    "hex": "#dacbb9",
-    "family": "Tan/Beige",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Aztec River",
     "sku": "PRB-2245",
     "hex": "#dd4141",
@@ -371,13 +280,6 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Woodlin Beige",
-    "sku": "URB-1914",
-    "hex": "#ece4d4",
-    "family": "Tan/Beige",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Yellowstone River",
     "sku": "URB-1540",
     "hex": "#febd2f",
@@ -396,13 +298,6 @@
     "sku": "PRB-5557",
     "hex": "#1971ab",
     "family": "Blue",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Goldstone Beige",
-    "sku": "PRB-5406",
-    "hex": "#dcc5b7",
-    "family": "Tan/Beige",
     "provenance": "swatch-verified"
   },
   {
@@ -431,27 +326,6 @@
     "sku": "PRB-2348",
     "hex": "#f4f6f3",
     "family": "White",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Cavern Grey",
-    "sku": "PRB-1988",
-    "hex": "#a5a8a8",
-    "family": "Grey",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Orbit Orange",
-    "sku": "PRB-1821",
-    "hex": "#fc7b2b",
-    "family": "Orange",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Frontier Grey",
-    "sku": "PRB-1704",
-    "hex": "#6a6768",
-    "family": "Grey",
     "provenance": "swatch-verified"
   },
   {
@@ -532,31 +406,10 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Melted Chocolate",
-    "sku": "PRB-6833",
-    "hex": "#7f5742",
-    "family": "Orange",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Copper Head",
-    "sku": "PRB-2989",
-    "hex": "#bf9579",
-    "family": "Tan/Beige",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Greystone River",
     "sku": "URB-6111",
     "hex": "#e5d3b7",
     "family": "Tan/Beige",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Military Green",
-    "sku": "URB-1950",
-    "hex": "#576b5e",
-    "family": "Grey",
     "provenance": "swatch-verified"
   },
   {
@@ -623,13 +476,6 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Ebony Rock",
-    "sku": "PRB-5061",
-    "hex": "#494948",
-    "family": "Grey",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Claret River",
     "sku": "PRB-4822",
     "hex": "#994846",
@@ -665,31 +511,10 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Eminent Ripple",
-    "sku": "PRB-4306",
-    "hex": "#eedfcf",
-    "family": "Tan/Beige",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Sunrise River",
     "sku": "PRB-4067",
     "hex": "#f8c457",
     "family": "Yellow",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Roses R Red",
-    "sku": "PRB-2972",
-    "hex": "#f55535",
-    "family": "Red",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Grey Matter",
-    "sku": "PRB-2971",
-    "hex": "#bfbaac",
-    "family": "Grey",
     "provenance": "swatch-verified"
   },
   {
@@ -707,24 +532,10 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Aged Teal",
-    "sku": "PRB-2183",
-    "hex": "#446362",
-    "family": "Teal",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Evergreen River",
     "sku": "PRB-2080",
     "hex": "#1e7654",
     "family": "Green",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Suddenly Yellow",
-    "sku": "PRB-2053",
-    "hex": "#fdc417",
-    "family": "Yellow",
     "provenance": "swatch-verified"
   },
   {
@@ -770,24 +581,10 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Faithful White",
-    "sku": "PRB-1552",
-    "hex": "#f5f5f1",
-    "family": "White",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Alpine River",
     "sku": "PRB-1374",
     "hex": "#416255",
     "family": "Green",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Klamath Ridge",
-    "sku": "PRB-1369",
-    "hex": "#ebe3d6",
-    "family": "Tan/Beige",
     "provenance": "swatch-verified"
   },
   {
@@ -868,13 +665,6 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Lime Peel",
-    "sku": "PRB-6841",
-    "hex": "#60c243",
-    "family": "Green",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Loafer Red River",
     "sku": "PRB-6501",
     "hex": "#974937",
@@ -910,31 +700,10 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Blue Paradise",
-    "sku": "PRB-6100",
-    "hex": "#308eca",
-    "family": "Blue",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Powder Blue River",
     "sku": "PRB-5991",
     "hex": "#69adc6",
     "family": "Teal",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Fuchsia Purple",
-    "sku": "PRB-5831",
-    "hex": "#a84987",
-    "family": "Pink",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Blue Ripples Ii",
-    "sku": "PRB-5673",
-    "hex": "#34405a",
-    "family": "Blue",
     "provenance": "swatch-verified"
   },
   {
@@ -1022,34 +791,6 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Lazy Daisy",
-    "sku": "PRB-4078",
-    "hex": "#d9c93f",
-    "family": "Yellow",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Golf Green",
-    "sku": "PRB-4033",
-    "hex": "#3b6451",
-    "family": "Green",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Elephant Trunk",
-    "sku": "PRB-2979",
-    "hex": "#9c9083",
-    "family": "Grey",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Blue Dimples",
-    "sku": "PRB-2967",
-    "hex": "#6985a0",
-    "family": "Blue",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Atlas Grey River",
     "sku": "PRB-2911",
     "hex": "#d1d5d0",
@@ -1085,13 +826,6 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Cement Green",
-    "sku": "PRB-2355",
-    "hex": "#b4a994",
-    "family": "Grey",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Torque Green River",
     "sku": "PRB-2271",
     "hex": "#329d81",
@@ -1110,13 +844,6 @@
     "sku": "PRB-2101",
     "hex": "#4f484b",
     "family": "Grey",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Blizzard Blue",
-    "sku": "PRB-2098",
-    "hex": "#1e6b9d",
-    "family": "Blue",
     "provenance": "swatch-verified"
   },
   {
@@ -1162,13 +889,6 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Savi Grey",
-    "sku": "PRB-1349",
-    "hex": "#bbbab5",
-    "family": "Grey",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Camel River",
     "sku": "PRB-1199",
     "hex": "#eed7bc",
@@ -1179,13 +899,6 @@
     "name": "Ivory River",
     "sku": "PRB-1082",
     "hex": "#ebd9c3",
-    "family": "Tan/Beige",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Elkwood Beige",
-    "sku": "ERB-1566",
-    "hex": "#e7d8c8",
     "family": "Tan/Beige",
     "provenance": "swatch-verified"
   },
@@ -1519,13 +1232,6 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Low Gloss Black Rock",
-    "sku": "PRB-2841",
-    "hex": "#18181a",
-    "family": "Black",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Ral 9010 River",
     "sku": "RAL-9010-RIVER",
     "hex": "#fdf6ed",
@@ -1712,20 +1418,6 @@
     "sku": "RAL-2009-RIVER",
     "hex": "#ff732d",
     "family": "Orange",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Eris Dream",
-    "sku": "PRB-11293",
-    "hex": "#533d87",
-    "family": "Purple",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Dune Beige",
-    "sku": "PRB-5645",
-    "hex": "#f5e7dd",
-    "family": "Tan/Beige",
     "provenance": "swatch-verified"
   },
   {
@@ -2065,13 +1757,6 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Teal Leatherette",
-    "sku": "PLB-1567",
-    "hex": "#1d5566",
-    "family": "Teal",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Alloy Gold River",
     "sku": "HRB-4995",
     "hex": "#e8e0a7",
@@ -2086,31 +1771,10 @@
     "provenance": "swatch-verified"
   },
   {
-    "name": "Dull Vienna",
-    "sku": "PRB-5709",
-    "hex": "#ccb499",
-    "family": "Tan/Beige",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Green Shamrock",
-    "sku": "PRB-5631",
-    "hex": "#1d5943",
-    "family": "Green",
-    "provenance": "swatch-verified"
-  },
-  {
     "name": "Perma Beige Plus River",
     "sku": "PRB-5601",
     "hex": "#e9d0ad",
     "family": "Orange",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Fairway Green",
-    "sku": "PRB-5581",
-    "hex": "#4d5d4f",
-    "family": "Grey",
     "provenance": "swatch-verified"
   },
   {
@@ -2153,20 +1817,6 @@
     "sku": "PRB-2777",
     "hex": "#a380bc",
     "family": "Purple",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Moss Rock",
-    "sku": "PRB-2709",
-    "hex": "#4b554f",
-    "family": "Grey",
-    "provenance": "swatch-verified"
-  },
-  {
-    "name": "Spearmint Gum",
-    "sku": "PRB-2699",
-    "hex": "#5ac890",
-    "family": "Green",
     "provenance": "swatch-verified"
   },
   {

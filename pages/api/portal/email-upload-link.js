@@ -9,6 +9,7 @@ import { parse } from 'cookie';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
 import { getOrderById } from '../../../lib/monday';
 import { sendUploadLinkEmail } from '../../../lib/email';
+import { enforceRateLimit } from '../../../lib/apiAuth';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -16,6 +17,12 @@ export default async function handler(req, res) {
   const cookies = parse(req.headers.cookie || '');
   const session = await verifyCustomerSession(cookies[SESSION_COOKIE]);
   if (!session) return res.status(401).json({ error: 'Not authenticated.' });
+
+  // PORTAL-036: this route sends a real email but, unlike every other
+  // email-triggering endpoint in the app (send-code.js, setup.js,
+  // color-selection.js), had no rate limit at all — a valid customer
+  // session could loop this to trigger unlimited outbound Resend sends.
+  if (!enforceRateLimit(res, `email-upload-link:${session.email}`, { maxRequests: 5, windowMs: 60_000 })) return;
 
   let order;
   try {

@@ -10,6 +10,13 @@
  */
 import { useState, useEffect } from 'react';
 
+// STAFF_EMAIL_DOMAIN (lib/auth.js's real access-control check) may be a
+// single domain or a comma-separated list — format for display either way.
+function staffDomainDisplay() {
+  const raw = process.env.NEXT_PUBLIC_STAFF_DOMAIN || 'summitsensorygym.com';
+  return raw.split(',').map(d => d.trim()).filter(Boolean).join(' or ');
+}
+
 export default function SettingsTab({ showToast }) {
   const [tab, setTab] = useState('monday');
   const SETTING_TABS = [
@@ -191,7 +198,7 @@ function AuthSettings() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 600 }}>Microsoft 365 SSO (Staff)</div>
-              <div style={{ fontSize: 12.5, color: 'var(--mut)', marginTop: 2 }}>Staff log in via Azure AD. Restricted to <code>{process.env.NEXT_PUBLIC_STAFF_DOMAIN || 'summitsensorygym.com'}</code></div>
+              <div style={{ fontSize: 12.5, color: 'var(--mut)', marginTop: 2 }}>Staff log in via Azure AD. Restricted to <code>@{staffDomainDisplay()}</code></div>
             </div>
             <div className="toggle on" />
           </div>
@@ -252,7 +259,7 @@ function UsersSettings() {
     <div className="card">
       <div className="ch"><h3>Users & Access</h3></div>
       <p style={{ fontSize: 13.5, color: 'var(--mut)', marginBottom: 16 }}>
-        Staff access is controlled through Microsoft 365. Any <strong>@{process.env.NEXT_PUBLIC_STAFF_DOMAIN || 'summitsensorygym.com'}</strong> user
+        Staff access is controlled through Microsoft 365. Any <strong>@{staffDomainDisplay()}</strong> user
         can log in. To restrict or grant access, manage users in your Microsoft 365 Admin Center or update the Azure AD app registration.
       </p>
       <div className="alert info">

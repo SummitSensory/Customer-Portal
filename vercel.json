@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/color-catalog-sync",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/message-reply-safety-net",
+      "schedule": "*/30 * * * *"
     }
   ]
 }

@@ -28,17 +28,19 @@ Ran `/code-review` (high effort) against the real diff on this branch. Full find
 | Autosave skipped catalog validation entirely — a fabricated code could be priced and persisted before any confirm | High | **Fixed** — `validatePresentSelections()` runs on every save |
 | No check that a color's brand was allowed on the part it was assigned to (e.g. a Prismatic paint SKU confirmable as a Mat & Pad color) | High | **Fixed** — `ALLOWED_BRANDS` map in `lib/colorRequirements.js` |
 | Backend work started before Bryan's explicit confirmation on the completion-tracking option | High (process) | **Resolved 2026-09-01** — see "Decisions now on record" above |
-| Admin panel can hide real, confirmed selections if `productType` is later edited on Monday (the "Colors" button shows regardless; the panel content doesn't) | Medium | **Not yet fixed** |
-| A post-confirmation autosave leaves a stale `confirmedAt` attached to now-unvalidated `selections` | Medium | **Not yet fixed** |
-| No shape/size whitelist on the autosave payload (bounded only by Next's 1MB default body limit) | Medium | **Not yet fixed** |
-| Real duplication across `ColorSelectionTab.js`/`pages/admin/index.js`/`lib/colorCatalogSync.js` (4 separate spots reimplementing the same lookup/derivation logic) | Low | **Not yet fixed** |
-| `pages/api/portal/color-selection.js` reimplements `setup.js`'s auth/session/rate-limit boilerplate as a second parallel pattern | Low | **Not yet fixed** |
+| Admin panel can hide real, confirmed selections if `productType` is later edited on Monday (the "Colors" button shows regardless; the panel content doesn't) | Medium | **Fixed** — `findOrphanedSelections()` (`lib/colorCatalog.js`) + explicit "not configured for native picker" messaging in the admin panel |
+| A post-confirmation autosave leaves a stale `confirmedAt` attached to now-unvalidated `selections` | Medium | **Fixed** — re-read-before-write plus post-write verification |
+| No shape/size whitelist on the autosave payload (bounded only by Next's 1MB default body limit) | Medium | **Fixed** — `sanitizeSelections()` (`lib/colorSelectionValidation.js`) whitelists the payload shape |
+| Real duplication across `ColorSelectionTab.js`/`pages/admin/index.js`/`lib/colorCatalogSync.js` (4 separate spots reimplementing the same lookup/derivation logic) | Low | **Fixed** — consolidated into shared helpers in `lib/colorCatalog.js` |
+| `pages/api/portal/color-selection.js` reimplements `setup.js`'s auth/session/rate-limit boilerplate as a second parallel pattern | Low | **Fixed** — both now share `lib/apiAuth.js` |
+
+Correction (2026-09-17): this table went stale — every row above was actually fixed in the 2026-09-02/03 work described later in this doc, but this summary table was never updated to reflect it. Verified against current code, not just doc prose, before making this correction.
 
 ## What Option 4 still actually requires (not yet started)
 
 Per the original design (`color-selection-completion-tracking-2026-08-22.md`), staged so nothing risky ships blind:
 
-- **Stage 1 (Monday config only, no code):** standardize GB (`8097394746`) / R (`8047969422`) "Colors Request" status columns to Not Started / Sent to Customer / Received; create a new flat Accessories board (Ball Pit / Ball Pit Balls / Foundation) in the same convention. **This is a live Monday board write and has NOT been executed** — it's config work, checkpointed for Bryan same as the `colorSelectionSnapshot` column was.
+- **Stage 1 (Monday config only, no code):** standardize GB (`8097394746`) / R (`8047969422`) "Colors Request" status columns to Not Started / Sent to Customer / Received; create a new flat Accessories board (Ball Pit / Ball Pit Balls / Foundation) in the same convention. **DONE 2026-09-22** — Bryan gave explicit go-ahead and connected the Monday.com MCP himself; Claude Code executed it live. New board id `18432226626`. See the 2026-09-22 addendum in `color-selection-completion-tracking-2026-08-22.md` for exact column ids/details.
 - **Stage 2 (small, reviewed backend change):** extend the existing `accessory-webhook.js` "column changes → webhook → write-back" pattern (already proven live in production for freight tracking) to watch GB/R/Accessories' "Received" columns and compute Required/Received/Ready-for-Production onto Manufacturing Process. Must look up GB/R by scanning for the item whose own relation points at the order — the reverse direction (Manufacturing → GB) was confirmed unreliable, empty on 2 of 4 real orders sampled (`build-and-fix-2026-08-27.md`).
 - **Stage 3 (the actual "Ready for Production" signal):** only once Stage 2 is proven against real orders.
 
@@ -83,3 +85,11 @@ All three env vars from the checklist above confirmed set by Bryan and verified 
 ## Repo state as of this doc
 
 `main` is at merge commit `e7f21ac` (feature) on top of `8a7f0cd` (standalone `lib/email.js` hotfix) on top of `59bb80b` (prior main tip) — **deployed to production**, confirmed live and healthy. `staging` is at `cc432dd` (behind `main` by the `lib/email.js` hotfix and the merge itself, but functionally equivalent for anything staging is used for). `claude/color-selection-redesign` remains at `9c96861`, fully absorbed into `main`. 105 tests passing, full production build clean.
+
+## 2026-09-22 — Foundation System-Mat Color made buildable
+
+Bryan supplied the real options for the "Foundation System-Mat Color" gate (`color_mm7c5nq2`, gateKey `foundationMat`): **Black/Gray, Red/Blue, Green/Gray**, with three supplier photos. These are reversible two-tone interlocking foam tiles, so they got their own catalog/brand (`FOUNDATION_MAT_COLORS`, brand `foundation`, in `lib/colorCatalog.js`) instead of reusing vinyl. `ALLOWED_BRANDS` means a vinyl name can't validate on the Foundation part, and a Foundation name can't validate on a vinyl part. The gate is now `buildable: true` with one part, `foundation_mat`. It stays opt-in: `legacyDefaultProductTypes: []`, so it shows only when the gate reads exactly "Included". It's rendered by the existing flat-swatch `MatPadPartPicker`. No upcharge was given, so it's $0.
+
+- Photos: originals are in `lib/data/Foundation-Mat-Swatches/`, served copies in `public/color-catalog/foundation/`. `red-blue.jpg` is a crop of the all-colors stack photo, since no Red/Blue close-up was provided. `black-gray.jpg` is the gray-face close-up. `hex` values are pixel-averaged fallbacks only.
+- No Jotform form covers Foundation, and no productType switched from Jotform to native, so this can't orphan any existing input (see the all-or-nothing Color tab note).
+- Ball Pit Balls is now the only `buildable: false` gate left.

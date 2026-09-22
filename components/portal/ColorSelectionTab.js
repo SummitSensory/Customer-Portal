@@ -11,7 +11,7 @@
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  listCardinalColors, listPrismaticColors, listVinylColors,
+  listCardinalColors, listPrismaticColors, listVinylColors, listSlideColors, listFoundationMatColors,
   cardinalFinishes, prismaticFamilies, prismaticFinishes, resolveSelectedColor, computeLineItemPricing,
   displayColorName, standardDesignation, findOrphanedSelections,
 } from '../../lib/colorCatalog';
@@ -129,7 +129,12 @@ function SwatchGrid({ colors, selected, onSelect, onInspect, otherPicks = [] }) 
                 {isSelected && <span className="cs-card-check" aria-hidden="true">✓ Selected</span>}
               </div>
               <div className="cs-card-body">
-                <div className="cs-card-name">{displayColorName(c)}</div>
+                <div className="cs-card-name">
+                  {displayColorName(c)}
+                  {c.upcharge > 0 && (
+                    <span style={{ marginLeft: 6, fontSize: 11.5, fontWeight: 700, color: 'var(--moss-dk)' }}>+${c.upcharge.toLocaleString()}</span>
+                  )}
+                </div>
                 {(c.code || c.sku) && <div className="cs-card-code">{c.code || c.sku}</div>}
                 {reusedFor.length > 0 && (
                   <div className="cs-card-reuse">Also used for {reusedFor.map((r) => PART_LABELS[r.part] || r.part).join(', ')}</div>
@@ -241,6 +246,45 @@ function InspectModal({ color, onClose }) {
   );
 }
 
+// ── "Continue to the next color selection form?" prompt ──
+// Direct requirement (2026-09-21): shown the moment a customer finishes
+// every part of one required input and there's another still ahead —
+// color selection is often the last setup step before manufacturing, and
+// an order silently stalling here (a customer closing the tab mid-way,
+// assuming they're done) is the single biggest reason an order doesn't
+// move forward. Declining doesn't block anything — it just sends them back
+// to the checklist with an explicit "not complete" notice (see
+// declineContinueToNextInput / the Checklist banner below) instead of
+// silently dropping them with no acknowledgement.
+function NextFormPrompt({ completedLabel, nextLabel, onContinue, onDecline }) {
+  const continueBtnRef = useRef(null);
+  useEffect(() => {
+    continueBtnRef.current?.focus();
+    function onKeyDown(e) {
+      if (e.key === 'Escape') onDecline();
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onDecline]);
+
+  return (
+    <div className="cs-modal-overlay" role="presentation">
+      <div className="cs-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Continue to the next color selection form?">
+        <div className="cs-modal-body">
+          <h3 style={{ fontSize: 18, marginBottom: 8 }}>✓ {completedLabel} complete</h3>
+          <p style={{ fontSize: 14, color: 'var(--mut)', marginBottom: 20 }}>
+            Would you like to continue to the next color selection form — <strong>{nextLabel}</strong>?
+          </p>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn-ghost" onClick={onDecline}>Not now</button>
+            <button type="button" className="btn btn-moss" ref={continueBtnRef} onClick={onContinue}>Continue →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── One structural part's picker (Cardinal/Prismatic toggle + search) ──
 function StructurePartPicker({ part, selection, onChange, onBack, onContinue, input, selections }) {
   const [brand, setBrand] = useState(selection?.brand || 'cardinal');
@@ -328,16 +372,28 @@ function StructurePartPicker({ part, selection, onChange, onBack, onContinue, in
   );
 }
 
+// Every non-Cardinal/Prismatic input renders with this same flat swatch
+// picker, but they're NOT all the same catalog/brand — Slide is plastic
+// (its own catalog, listSlideColors()), Foundation System Mat is two-tone
+// foam tile (listFoundationMatColors()), everything else here is vinyl. See
+// FLAT_SWATCH_CATALOG below (keyed by input.input) for which is which.
+const FLAT_SWATCH_CATALOG = {
+  [COLOR_INPUT.SLIDE]: { list: listSlideColors, brand: 'plastic' },
+  [COLOR_INPUT.FOUNDATION_MAT]: { list: listFoundationMatColors, brand: 'foundation' },
+};
+const DEFAULT_FLAT_SWATCH_CATALOG = { list: listVinylColors, brand: 'vinyl' };
+
 function MatPadPartPicker({ part, selection, onChange, onBack, onContinue, input, selections }) {
   const [search, setSearch] = useState('');
   const [inspecting, setInspecting] = useState(null);
   const [justPicked, setJustPicked] = useState(null);
-  const list = useMemo(() => listVinylColors(), []);
+  const { list: getList, brand } = FLAT_SWATCH_CATALOG[input.input] || DEFAULT_FLAT_SWATCH_CATALOG;
+  const list = useMemo(() => getList(), [getList]);
   const filtered = list.filter((c) => !search.trim() || c.name.toLowerCase().includes(search.trim().toLowerCase()));
   const otherPicks = useMemo(() => getOtherPicks(input, selections, part), [input, selections, part]);
 
   function handleSelect(c) {
-    onChange({ brand: 'vinyl', code: c.name });
+    onChange({ brand, code: c.name });
     setJustPicked(c);
   }
 
@@ -428,7 +484,7 @@ function InputPartList({ input, requiredInputs, selections, onOpenPart, onBack }
 }
 
 // ── Checklist (index screen) ──
-function Checklist({ requiredInputs, selections, onOpenInput, onReview, allComplete }) {
+function Checklist({ requiredInputs, selections, onOpenInput, onReview, allComplete, showIncompleteNotice }) {
   return (
     <>
       {/* Direct customer feedback (2026-09-01): "I need there to be a way
@@ -441,6 +497,17 @@ function Checklist({ requiredInputs, selections, onOpenInput, onReview, allCompl
         <span>💾</span>
         <span>Your progress saves automatically as you go — you can leave and come back anytime before confirming.</span>
       </div>
+      {/* Shown after the customer explicitly declines the "continue to the
+          next form?" prompt (see NextFormPrompt) — an explicit
+          acknowledgement that this section isn't done yet, not just a
+          silent return to the checklist. Clears itself once everything's
+          actually complete. */}
+      {showIncompleteNotice && !allComplete && (
+        <div className="alert warn" style={{ marginBottom: 16 }}>
+          <span>⚠️</span>
+          <span>Your color &amp; product selection isn&apos;t complete yet. Come back anytime to finish the remaining items below before confirming.</span>
+        </div>
+      )}
       {requiredInputs.map((input) => {
         const done = inputIsComplete(input, selections);
         const filledCount = input.parts.filter((p) => partIsFilled(selections, input.input, p)).length;
@@ -573,7 +640,7 @@ function ConfirmedView({ requiredInputs, selections, confirmedAt }) {
         {lines.map((line) => (
           <div className="cs-summary-row" key={`${line.inputKey}-${line.part}`}>
             <span className="cs-summary-part">{PART_LABELS[line.part] || line.part}</span>
-            <span>{line.color ? (<><span className="cs-summary-brand">{line.selection.brand}</span> — {line.color.name}</>) : '—'}</span>
+            <span>{line.color ? (<><span className="cs-summary-brand">{line.selection.brand}</span> — {displayColorName(line.color)}</>) : '—'}</span>
             <span className="cs-summary-code">{line.color ? (line.color.code || line.color.sku || '—') : '—'}</span>
             <span className="cs-summary-amount">{line.amount > 0 ? `$${line.amount.toLocaleString()}` : '—'}</span>
           </div>
@@ -626,6 +693,20 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   const [view, setView] = useState('checklist'); // 'checklist' | { input } | 'summary'
   const [activePart, setActivePart] = useState(null);
   const [confirming, setConfirming] = useState(false);
+  // Direct requirement (2026-09-21): color selection is often the last
+  // setup step a customer completes and the single biggest reason an order
+  // doesn't move into manufacturing — asked explicitly before carrying a
+  // customer straight into the NEXT required form (see
+  // handleContinueAfterSelect below), instead of silently auto-advancing
+  // the way "Select & continue" already does within one form's own parts.
+  // pendingNextInput holds the {input, part} findNextIncompletePart would
+  // jump to, only while this confirmation is showing.
+  const [pendingNextInput, setPendingNextInput] = useState(null);
+  const [pendingNextInputFrom, setPendingNextInputFrom] = useState(null); // the just-finished input's own label, for the prompt's copy
+  // Set when the customer explicitly declines that prompt — shown on the
+  // checklist until every input is complete, so declining doesn't just
+  // silently drop them back with no acknowledgement that anything's unresolved.
+  const [showIncompleteNotice, setShowIncompleteNotice] = useState(false);
 
   useEffect(() => {
     // Deliberately depends only on order?.id, not showToast: showToast is a
@@ -657,6 +738,9 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   }, [order?.id]);
 
   const allComplete = requiredInputs.length > 0 && requiredInputs.every((i) => inputIsComplete(i, selections));
+  useEffect(() => {
+    if (allComplete) setShowIncompleteNotice(false);
+  }, [allComplete]);
 
   // Recomputed on every render from live `selections` state — no separate
   // running counter to keep in sync, so it can never drift from what the
@@ -682,6 +766,21 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   const enqueueSaveRef = useRef(null);
   if (!enqueueSaveRef.current) enqueueSaveRef.current = createSaveQueue((body) => saveSelection(apiBase, body));
 
+  // Real gap found by independent verification (2026-09-21): the revert-on-
+  // failure fix below originally compared by VALUE ("is the current value
+  // still what I set it to?"), not by call identity. That fails a realistic
+  // sequence: pick A (save fails, still in flight) -> pick B -> pick A AGAIN
+  // — the third call's value coincidentally equals the first (failed)
+  // call's own value, so the first call's stale catch handler passes its
+  // value-equality check and reverts the ref to null, and because the save
+  // queue reads latestSelectionsRef lazily, the already-queued saves for B
+  // and the second A then silently persist that wrong (null) value as if
+  // successful, with no error shown. A monotonically increasing per-part
+  // generation counter fixes this correctly: a call only reverts if it's
+  // still the MOST RECENT call for that exact part, regardless of what
+  // value is currently there.
+  const partGenerationRef = useRef({});
+
   const queueSave = useCallback((confirm) => {
     return enqueueSaveRef.current(() => ({ selections: latestSelectionsRef.current, confirm }));
   }, []);
@@ -697,6 +796,9 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     // (the queue serializes SAVES, not the instant optimistic UI update),
     // and reverting the entire snapshot would silently discard that too.
     const previousValue = latestSelectionsRef.current[inputKey]?.[part];
+    const partKey = `${inputKey}:${part}`;
+    const myGeneration = (partGenerationRef.current[partKey] || 0) + 1;
+    partGenerationRef.current[partKey] = myGeneration;
     const next = {
       ...latestSelectionsRef.current,
       [inputKey]: { ...latestSelectionsRef.current[inputKey], [part]: value },
@@ -706,12 +808,23 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     try {
       await queueSave(false);
     } catch (err) {
-      const reverted = {
-        ...latestSelectionsRef.current,
-        [inputKey]: { ...latestSelectionsRef.current[inputKey], [part]: previousValue },
-      };
-      latestSelectionsRef.current = reverted;
-      setSelections(reverted);
+      // Real gap found by independent code review (2026-09-09), and refined
+      // 2026-09-21 after independent verification caught the value-equality
+      // version above still failing on a pick/re-pick/pick-original-again
+      // sequence: only revert if THIS call is still the most recent one for
+      // this exact part (per partGenerationRef), not merely "the value
+      // hasn't changed" — a later call may have set the same value this one
+      // did, in which case this older, already-failed call must not touch
+      // it. Only the truly-latest call for a part is ever allowed to revert.
+      const stillMostRecentCall = partGenerationRef.current[partKey] === myGeneration;
+      if (stillMostRecentCall) {
+        const reverted = {
+          ...latestSelectionsRef.current,
+          [inputKey]: { ...latestSelectionsRef.current[inputKey], [part]: previousValue },
+        };
+        latestSelectionsRef.current = reverted;
+        setSelections(reverted);
+      }
       showToast(err.message || 'Error saving — your last pick was not saved. Please try again.');
     }
   }, [queueSave, showToast]);
@@ -724,6 +837,19 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   const handleContinueAfterSelect = useCallback((inputKey, part) => {
     const snapshot = latestSelectionsRef.current;
     const next = findNextIncompletePart(requiredInputs, snapshot, inputKey, part);
+
+    // The input the customer was just working on just became fully
+    // complete (findNextIncompletePart already checked its own remaining
+    // parts first — if `next` points elsewhere, there's nothing left in
+    // THIS input) AND there's another, different form still ahead. Ask
+    // before moving on, rather than silently carrying them into it.
+    const currentInput = requiredInputs.find((i) => i.input === inputKey);
+    if (next && currentInput && inputIsComplete(currentInput, snapshot)) {
+      setPendingNextInputFrom(currentInput.label);
+      setPendingNextInput(next);
+      return;
+    }
+
     if (next) {
       setView(next.input);
       setActivePart(next.part);
@@ -733,9 +859,34 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
       setView('summary');
       return;
     }
-    setView(requiredInputs.find((i) => i.input === inputKey) || 'checklist');
+    // Found by independent code review (2026-09-03): `inputKey` is always
+    // one of requiredInputs' own keys (it's the input the customer was just
+    // working on), so `requiredInputs.find((i) => i.input === inputKey)`
+    // always matches — the `|| 'checklist'` fallback was unreachable dead
+    // code. That meant landing back on the just-finished input's OWN part
+    // list (already fully complete, since findNextIncompletePart already
+    // confirmed nothing forward is left) instead of the checklist, exactly
+    // when some EARLIER input is still incomplete — contradicting this
+    // function's own intent (see findNextIncompletePart's comment: going
+    // to the checklist is "what the checklist itself is for").
+    setView('checklist');
     setActivePart(null);
   }, [requiredInputs]);
+
+  function confirmContinueToNextInput() {
+    setView(pendingNextInput.input);
+    setActivePart(pendingNextInput.part);
+    setPendingNextInput(null);
+    setPendingNextInputFrom(null);
+  }
+
+  function declineContinueToNextInput() {
+    setPendingNextInput(null);
+    setPendingNextInputFrom(null);
+    setShowIncompleteNotice(true);
+    setView('checklist');
+    setActivePart(null);
+  }
 
   async function handleConfirm() {
     setConfirming(true);
@@ -774,7 +925,19 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     );
   }
 
-  if (!requiredInputs.length) {
+  // Found by independent code review (2026-09-03): this used to run BEFORE
+  // the confirmedAt check below, so a customer whose order was already
+  // confirmed — but whose productType was later edited on Monday to a value
+  // requiredColorInputs() no longer recognizes — hit this "not yet
+  // available" card instead of their own locked ConfirmedView. Their real,
+  // paid, confirmed selections appeared to have vanished entirely, the same
+  // failure class findOrphanedSelections was built to prevent, just
+  // bypassed one guard earlier. Checking confirmedAt first means
+  // ConfirmedView always renders once an order is confirmed, regardless of
+  // what the CURRENT productType maps to — with empty requiredInputs,
+  // findOrphanedSelections correctly treats every stored selection as an
+  // orphan and still displays all of them, rather than showing nothing.
+  if (!requiredInputs.length && !confirmedAt) {
     return (
       <div className="card">
         <div className="empty">
@@ -801,7 +964,24 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     );
   } else if (view !== 'checklist' && activePart) {
     const input = view;
-    const PartPicker = input.input === COLOR_INPUT.MAT_PAD_COLOR ? MatPadPartPicker : StructurePartPicker;
+    // Every input type that renders with the flat swatch picker
+    // (MatPadPartPicker) rather than the Cardinal/Prismatic toggle
+    // (StructurePartPicker) — each kept as its own COLOR_INPUT bucket (not
+    // folded into one shared type) so the checklist shows each as its own
+    // row and a distinct React/navigation identity (see
+    // lib/colorRequirements.js's header on why each gate needs a unique
+    // COLOR_INPUT value now that Adventure/Soar/Flex share one flat,
+    // independently-gated input list). NOT all vinyl — Slide is plastic,
+    // Foundation System Mat is two-tone foam tile;
+    // see FLAT_SWATCH_CATALOG above MatPadPartPicker for the real
+    // catalog/brand each one actually resolves to.
+    const FLAT_SWATCH_INPUT_TYPES = [
+      COLOR_INPUT.MAT_PAD_COLOR, COLOR_INPUT.ADVENTURE_MAT, COLOR_INPUT.WALL_PADDING,
+      COLOR_INPUT.CLIMBING_WALL_MAT, COLOR_INPUT.SOAR_MAT, COLOR_INPUT.FLEX_MAT,
+      COLOR_INPUT.PALISADES_MAT, COLOR_INPUT.BALL_PIT, COLOR_INPUT.SLIDE,
+      COLOR_INPUT.FOUNDATION_MAT,
+    ];
+    const PartPicker = FLAT_SWATCH_INPUT_TYPES.includes(input.input) ? MatPadPartPicker : StructurePartPicker;
     body = (
       <PartPicker
         key={`${input.input}-${activePart}`}
@@ -832,6 +1012,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
         onOpenInput={(input) => { setView(input); setActivePart(null); }}
         onReview={() => setView('summary')}
         allComplete={allComplete}
+        showIncompleteNotice={showIncompleteNotice}
       />
     );
   }
@@ -848,6 +1029,14 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
           picker) gets it. */}
       {!confirmedAt && view !== 'summary' && <RunningTotal total={runningTotal} />}
       {body}
+      {pendingNextInput && (
+        <NextFormPrompt
+          completedLabel={pendingNextInputFrom}
+          nextLabel={pendingNextInput.input.label}
+          onContinue={confirmContinueToNextInput}
+          onDecline={declineContinueToNextInput}
+        />
+      )}
       {(confirmedAt || view === 'checklist') && (
         <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
           <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back</button>

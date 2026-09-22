@@ -40,15 +40,63 @@ function makeRes() {
   return res;
 }
 
+// The handler's confirm path now reads the order THREE times (initial load,
+// re-check-before-write, and a post-write race-detection verification —
+// 2026-09-03) — a plain mockResolvedValue(base) makes every call return the
+// same never-confirmed order, which the verification read would then
+// wrongly interpret as "a different request's write landed after mine"
+// (see the "confirm-race" test below for what a REAL mismatch looks like).
+// This reflects whatever was actually passed to writeColorSelectionSnapshot
+// once a write has happened, matching real behavior: Monday's read-your-
+// own-write is immediate, no eventual-consistency lag.
+function mockOrderReflectingWrites(base) {
+  mockGetOrderById.mockImplementation(() => {
+    const lastWrite = mockWriteColorSelectionSnapshot.mock.calls.at(-1);
+    return Promise.resolve(lastWrite ? { ...base, colorSelectionSnapshot: lastWrite[1] } : base);
+  });
+}
+
+// Matches the final 2026-09-21 model (lib/colorRequirements.js), after a
+// real back-and-forth with Bryan: the steel frame (legs/horizontal beams/
+// ladder) is Cardinal/Prismatic (structure_frame_paint), restored to match
+// the original pre-redesign behavior. Climbing Wall is its own separate
+// Cardinal/Prismatic gate (climbing_wall_color). Zip Line is vinyl, folded
+// into Adventure-Mat Color (adventure_mat) — its only part. Built with no
+// colorGates/colorFrameType set on `order`, so every buildable gate AND
+// the steel frame (inferred from productType) are required — the
+// fail-closed default.
 function fullValidSelections() {
   return {
     structure_frame_paint: {
       legs: { brand: 'cardinal', code: 'T009-BG01' },
       horizontal_beams: { brand: 'cardinal', code: 'T009-BG01' },
       ladder_rungs_and_leg: { brand: 'cardinal', code: 'T009-BG01' },
-      slide_platform: { brand: 'cardinal', code: 'T009-BG01' },
-      slide_color: { brand: 'cardinal', code: 'T009-BG01' },
+    },
+    climbing_wall_color: {
       climbing_wall: { brand: 'cardinal', code: 'T009-BG01' },
+    },
+    adventure_mat: {
+      zip_line: { brand: 'vinyl', code: 'Black' },
+    },
+    wall_padding_mat: {
+      column_wraps_pads: { brand: 'vinyl', code: 'Black' },
+    },
+    slide: {
+      slide_platform: { brand: 'plastic', code: 'Blue' },
+      slide_color: { brand: 'plastic', code: 'Blue' },
+    },
+    climbing_wall_mat: {
+      climbing_wall_mat: { brand: 'vinyl', code: 'Black' },
+    },
+    ball_pit: {
+      ball_pit_vinyl: { brand: 'vinyl', code: 'Black' },
+      mat_section_1: { brand: 'vinyl', code: 'Black' },
+      mat_section_2: { brand: 'vinyl', code: 'Black' },
+      mat_section_3: { brand: 'vinyl', code: 'Black' },
+      mat_section_4: { brand: 'vinyl', code: 'Black' },
+      mat_section_5: { brand: 'vinyl', code: 'Black' },
+      mat_section_6: { brand: 'vinyl', code: 'Black' },
+      mat_section_7: { brand: 'vinyl', code: 'Black' },
     },
   };
 }
@@ -62,14 +110,14 @@ describe('validateColorSelectionData (pure)', () => {
 
   it('rejects a submission missing a required part', () => {
     const s = fullValidSelections();
-    delete s.structure_frame_paint.climbing_wall;
-    expect(validateColorSelectionData(order, s)).toMatch(/climbing_wall/);
+    delete s.structure_frame_paint.legs;
+    expect(validateColorSelectionData(order, s)).toMatch(/legs/);
   });
 
   it('rejects an unrecognized catalog code — never trusts a client-supplied color', () => {
     const s = fullValidSelections();
-    s.structure_frame_paint.legs = { brand: 'cardinal', code: 'MADE-UP-CODE' };
-    expect(validateColorSelectionData(order, s)).toMatch(/legs/);
+    s.adventure_mat.zip_line = { brand: 'vinyl', code: 'MADE-UP-COLOR' };
+    expect(validateColorSelectionData(order, s)).toMatch(/zip_line/);
   });
 
   it('rejects an unsupported product type outright', () => {
@@ -108,25 +156,31 @@ describe('validateColorSelectionData — brand must be allowed for the part (reg
     s.structure_frame_paint.legs = { brand: 'vinyl', code: 'Kelly Green' };
     expect(validateColorSelectionData({ productType: ADVENTURE_SERIES }, s)).toMatch(/legs/);
   });
+
+  it('rejects a real, valid Cardinal paint code on a vinyl (adventure_mat) part', () => {
+    const s = fullValidSelections();
+    s.adventure_mat.zip_line = { brand: 'cardinal', code: 'T009-BG01' };
+    expect(validateColorSelectionData({ productType: ADVENTURE_SERIES }, s)).toMatch(/zip_line/);
+  });
 });
 
 describe('computeTotalUpcharge (pure)', () => {
   const order = { productType: ADVENTURE_SERIES };
 
-  it('is $0 when every selection is Cardinal (no Prismatic upcharge)', () => {
+  it('is $0 when every selection is Cardinal/vinyl (no Prismatic upcharge)', () => {
     expect(computeTotalUpcharge(order, fullValidSelections())).toBe(0);
   });
 
-  it('prices the first Prismatic selection at $500', () => {
+  it('prices the first Prismatic selection at $500 (steel frame legs)', () => {
     const s = fullValidSelections();
     s.structure_frame_paint.legs = { brand: 'prismatic', code: 'PRB-10395' };
     expect(computeTotalUpcharge(order, s)).toBe(500);
   });
 
-  it('prices a second Prismatic selection at +$300, not another $500', () => {
+  it('prices a second, distinct Prismatic selection at +$300 — Climbing Wall is its own independent Cardinal/Prismatic gate', () => {
     const s = fullValidSelections();
     s.structure_frame_paint.legs = { brand: 'prismatic', code: 'PRB-10395' };
-    s.structure_frame_paint.horizontal_beams = { brand: 'prismatic', code: 'PRB-4432' };
+    s.climbing_wall_color.climbing_wall = { brand: 'prismatic', code: 'PRB-4432' };
     expect(computeTotalUpcharge(order, s)).toBe(800);
   });
 });
@@ -234,7 +288,7 @@ describe('handler — auth and customer isolation', () => {
     mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
 
     const incomplete = fullValidSelections();
-    delete incomplete.structure_frame_paint.slide_color;
+    delete incomplete.adventure_mat.zip_line;
 
     const req = { method: 'POST', headers: {}, body: { selections: incomplete, confirm: true } };
     const res = makeRes();
@@ -271,16 +325,36 @@ describe('handler — auth and customer isolation', () => {
     expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
   });
 
-  it('does NOT re-check before write on a confirm request — only autosave needs the narrower race window closed, confirm already validates completeness itself', async () => {
+  it('DOES re-check before write on a confirm request too, not just autosave (found in a later review pass, 2026-09-03)', async () => {
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
-    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockOrderReflectingWrites({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
 
     const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
     const res = makeRes();
     await handler(req, res);
 
-    expect(mockGetOrderById).toHaveBeenCalledTimes(1);
+    // 3 calls: initial load, re-check-before-write, post-write race check.
+    expect(mockGetOrderById).toHaveBeenCalledTimes(3);
     expect(res.statusCode).toBe(200);
+  });
+
+  it('rejects a confirm request that was in flight when a DIFFERENT concurrent confirm already landed — closes the double-confirm race, not just the confirm-after-autosave one', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById
+      .mockResolvedValueOnce({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null })
+      .mockResolvedValueOnce({
+        id: 'real-order-123',
+        productType: ADVENTURE_SERIES,
+        colorSelectionSnapshot: { selections: fullValidSelections(), confirmedAt: '2026-09-03T12:00:00.000Z' },
+      });
+
+    const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(409);
+    expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
+    expect(mockPostTaggedUpdate).not.toHaveBeenCalled();
   });
 
   // Real gap found by independent code review (2026-09-02): neither
@@ -312,7 +386,7 @@ describe('handler — auth and customer isolation', () => {
   // alerting path as every other silent-failure class in this codebase.
   it('still returns success when the audit-trail update fails on confirm, but reports it rather than swallowing it', async () => {
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
-    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockOrderReflectingWrites({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
     mockPostTaggedUpdate.mockRejectedValue(new Error('Monday API unavailable'));
 
     const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
@@ -332,7 +406,7 @@ describe('handler — auth and customer isolation', () => {
 
   it('reports auditUpdatePending: false on the ordinary success path', async () => {
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
-    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockOrderReflectingWrites({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
 
     const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
     const res = makeRes();
@@ -340,5 +414,105 @@ describe('handler — auth and customer isolation', () => {
 
     expect(res.body.auditUpdatePending).toBe(false);
     expect(mockReportCriticalFailure).not.toHaveBeenCalled();
+  });
+
+  // Decision (2026-09-03): Monday's API has no compare-and-swap, so the
+  // re-check-before-write above narrows the confirm/autosave race to a
+  // single read-then-write gap but can't eliminate it outright. This is the
+  // additive detection layer: it can't prevent a genuinely simultaneous
+  // second write from landing after this one, but it does mean the race
+  // gets flagged for staff instead of silently going unnoticed.
+  it('reports a critical failure when a post-write read-back shows a DIFFERENT confirmation than this request just wrote — a race actually landed', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById
+      .mockResolvedValueOnce({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null }) // initial load
+      .mockResolvedValueOnce({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null }) // re-check
+      .mockResolvedValueOnce({ // post-write verification: a DIFFERENT confirmation is now stored
+        id: 'real-order-123',
+        productType: ADVENTURE_SERIES,
+        colorSelectionSnapshot: { selections: fullValidSelections(), confirmedAt: '2026-09-03T05:00:00.000Z' },
+      });
+
+    const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
+    const res = makeRes();
+    await handler(req, res);
+
+    // The write already succeeded from this request's own point of view —
+    // it must still report success, not retroactively fail the customer's
+    // action over a race it can only detect, not undo.
+    expect(res.statusCode).toBe(200);
+    expect(mockReportCriticalFailure).toHaveBeenCalledWith(
+      'color-selection-confirm-race',
+      expect.stringContaining('real-order-123'),
+      expect.objectContaining({ orderId: 'real-order-123' })
+    );
+  });
+
+  it('does NOT report a race when the post-write read-back correctly reflects the write that was just made', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockOrderReflectingWrites({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const req = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(mockReportCriticalFailure).not.toHaveBeenCalled();
+  });
+
+  // Real race found by independent code review (2026-09-09): the previous
+  // re-check-before-write only ever catches a concurrent write that lands
+  // BEFORE its own verification read — a slower autosave whose write lands
+  // AFTER a confirm has already verified successfully could silently revert
+  // confirmedAt back to null, with no alert, since the confirm's own
+  // verification read already ran (and matched) before the trailing
+  // autosave ever wrote. withOrderLock (see pages/api/portal/color-
+  // selection.js) is the actual fix: two requests for the SAME order can
+  // never run their read-validate-write sequence concurrently, so whichever
+  // one's turn comes second is forced to re-read AFTER the first one's
+  // entire sequence — including its write — has already landed.
+  //
+  // This fires both requests genuinely concurrently (no await between the
+  // two handler() calls) against a shared mock that reflects whatever was
+  // actually last written, the same real interleaving the lock exists to
+  // serialize — not two sequential calls with a pre-scripted mock queue
+  // (which every other race test above already covers for the narrower,
+  // single-read-then-write window).
+  it('a trailing autosave cannot land after a concurrent confirm already verified successfully (per-order lock closes the true confirm-lock race)', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockOrderReflectingWrites({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const confirmReq = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
+    const confirmRes = makeRes();
+
+    const trailingSelections = fullValidSelections();
+    trailingSelections.structure_frame_paint.legs = { brand: 'cardinal', code: 'P009-BG02' };
+    const autosaveReq = { method: 'POST', headers: {}, body: { selections: trailingSelections, confirm: false } };
+    const autosaveRes = makeRes();
+
+    // Genuinely concurrent: both handler() calls start (and run up to their
+    // first await) before either has finished, exactly like two real
+    // in-flight requests for the same order hitting the same warm instance.
+    await Promise.all([
+      handler(confirmReq, confirmRes),
+      handler(autosaveReq, autosaveRes),
+    ]);
+
+    // Whichever request's turn ran second re-read the order AFTER the
+    // first one's write had already landed — so it's impossible for both
+    // to have proceeded past the confirmedAt guard. Exactly one of the two
+    // must have been rejected as already-confirmed.
+    const statuses = [confirmRes.statusCode, autosaveRes.statusCode].sort();
+    expect(statuses).toEqual([200, 409]);
+
+    // Whatever the final persisted state is, confirmedAt must still be set
+    // — the exact bug this closes was a trailing autosave silently
+    // reverting a just-confirmed order's confirmedAt back to null.
+    const finalWrite = mockWriteColorSelectionSnapshot.mock.calls.at(-1);
+    expect(finalWrite[1].confirmedAt).not.toBeNull();
+    // No unconfirmed request should ever have been allowed to write once
+    // the order was confirmed — the 409'd request must not have persisted
+    // anything of its own after the confirm's write landed.
+    expect(mockWriteColorSelectionSnapshot).toHaveBeenCalledTimes(1);
   });
 });

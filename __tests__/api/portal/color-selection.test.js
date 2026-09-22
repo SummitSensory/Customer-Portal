@@ -56,22 +56,34 @@ function mockOrderReflectingWrites(base) {
   });
 }
 
+// Matches the final 2026-09-21 model (lib/colorRequirements.js), after a
+// real back-and-forth with Bryan: the steel frame (legs/horizontal beams/
+// ladder) is Cardinal/Prismatic (structure_frame_paint), restored to match
+// the original pre-redesign behavior. Climbing Wall is its own separate
+// Cardinal/Prismatic gate (climbing_wall_color). Zip Line is vinyl, folded
+// into Adventure-Mat Color (adventure_mat) — its only part. Built with no
+// colorGates/colorFrameType set on `order`, so every buildable gate AND
+// the steel frame (inferred from productType) are required — the
+// fail-closed default.
 function fullValidSelections() {
   return {
     structure_frame_paint: {
       legs: { brand: 'cardinal', code: 'T009-BG01' },
       horizontal_beams: { brand: 'cardinal', code: 'T009-BG01' },
       ladder_rungs_and_leg: { brand: 'cardinal', code: 'T009-BG01' },
-      slide_platform: { brand: 'cardinal', code: 'T009-BG01' },
-      slide_color: { brand: 'cardinal', code: 'T009-BG01' },
-      climbing_wall: { brand: 'cardinal', code: 'T009-BG01' },
-      // PORTAL-055: Zip Line, Column Wraps & Pads, and Ball Pit added to
-      // Adventure Series' real requirements 2026-09-09 — see
-      // lib/colorRequirements.js.
-      zip_line: { brand: 'cardinal', code: 'T009-BG01' },
     },
-    mat_pad_color: {
+    climbing_wall_color: {
+      climbing_wall: { brand: 'cardinal', code: 'T009-BG01' },
+    },
+    adventure_mat: {
+      zip_line: { brand: 'vinyl', code: 'Black' },
+    },
+    wall_padding_mat: {
       column_wraps_pads: { brand: 'vinyl', code: 'Black' },
+    },
+    slide: {
+      slide_platform: { brand: 'plastic', code: 'Blue' },
+      slide_color: { brand: 'plastic', code: 'Blue' },
     },
     climbing_wall_mat: {
       climbing_wall_mat: { brand: 'vinyl', code: 'Black' },
@@ -98,14 +110,14 @@ describe('validateColorSelectionData (pure)', () => {
 
   it('rejects a submission missing a required part', () => {
     const s = fullValidSelections();
-    delete s.structure_frame_paint.climbing_wall;
-    expect(validateColorSelectionData(order, s)).toMatch(/climbing_wall/);
+    delete s.structure_frame_paint.legs;
+    expect(validateColorSelectionData(order, s)).toMatch(/legs/);
   });
 
   it('rejects an unrecognized catalog code — never trusts a client-supplied color', () => {
     const s = fullValidSelections();
-    s.structure_frame_paint.legs = { brand: 'cardinal', code: 'MADE-UP-CODE' };
-    expect(validateColorSelectionData(order, s)).toMatch(/legs/);
+    s.adventure_mat.zip_line = { brand: 'vinyl', code: 'MADE-UP-COLOR' };
+    expect(validateColorSelectionData(order, s)).toMatch(/zip_line/);
   });
 
   it('rejects an unsupported product type outright', () => {
@@ -144,25 +156,31 @@ describe('validateColorSelectionData — brand must be allowed for the part (reg
     s.structure_frame_paint.legs = { brand: 'vinyl', code: 'Kelly Green' };
     expect(validateColorSelectionData({ productType: ADVENTURE_SERIES }, s)).toMatch(/legs/);
   });
+
+  it('rejects a real, valid Cardinal paint code on a vinyl (adventure_mat) part', () => {
+    const s = fullValidSelections();
+    s.adventure_mat.zip_line = { brand: 'cardinal', code: 'T009-BG01' };
+    expect(validateColorSelectionData({ productType: ADVENTURE_SERIES }, s)).toMatch(/zip_line/);
+  });
 });
 
 describe('computeTotalUpcharge (pure)', () => {
   const order = { productType: ADVENTURE_SERIES };
 
-  it('is $0 when every selection is Cardinal (no Prismatic upcharge)', () => {
+  it('is $0 when every selection is Cardinal/vinyl (no Prismatic upcharge)', () => {
     expect(computeTotalUpcharge(order, fullValidSelections())).toBe(0);
   });
 
-  it('prices the first Prismatic selection at $500', () => {
+  it('prices the first Prismatic selection at $500 (steel frame legs)', () => {
     const s = fullValidSelections();
     s.structure_frame_paint.legs = { brand: 'prismatic', code: 'PRB-10395' };
     expect(computeTotalUpcharge(order, s)).toBe(500);
   });
 
-  it('prices a second Prismatic selection at +$300, not another $500', () => {
+  it('prices a second, distinct Prismatic selection at +$300 — Climbing Wall is its own independent Cardinal/Prismatic gate', () => {
     const s = fullValidSelections();
     s.structure_frame_paint.legs = { brand: 'prismatic', code: 'PRB-10395' };
-    s.structure_frame_paint.horizontal_beams = { brand: 'prismatic', code: 'PRB-4432' };
+    s.climbing_wall_color.climbing_wall = { brand: 'prismatic', code: 'PRB-4432' };
     expect(computeTotalUpcharge(order, s)).toBe(800);
   });
 });
@@ -270,7 +288,7 @@ describe('handler — auth and customer isolation', () => {
     mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
 
     const incomplete = fullValidSelections();
-    delete incomplete.structure_frame_paint.slide_color;
+    delete incomplete.adventure_mat.zip_line;
 
     const req = { method: 'POST', headers: {}, body: { selections: incomplete, confirm: true } };
     const res = makeRes();
@@ -440,5 +458,61 @@ describe('handler — auth and customer isolation', () => {
 
     expect(res.statusCode).toBe(200);
     expect(mockReportCriticalFailure).not.toHaveBeenCalled();
+  });
+
+  // Real race found by independent code review (2026-09-09): the previous
+  // re-check-before-write only ever catches a concurrent write that lands
+  // BEFORE its own verification read — a slower autosave whose write lands
+  // AFTER a confirm has already verified successfully could silently revert
+  // confirmedAt back to null, with no alert, since the confirm's own
+  // verification read already ran (and matched) before the trailing
+  // autosave ever wrote. withOrderLock (see pages/api/portal/color-
+  // selection.js) is the actual fix: two requests for the SAME order can
+  // never run their read-validate-write sequence concurrently, so whichever
+  // one's turn comes second is forced to re-read AFTER the first one's
+  // entire sequence — including its write — has already landed.
+  //
+  // This fires both requests genuinely concurrently (no await between the
+  // two handler() calls) against a shared mock that reflects whatever was
+  // actually last written, the same real interleaving the lock exists to
+  // serialize — not two sequential calls with a pre-scripted mock queue
+  // (which every other race test above already covers for the narrower,
+  // single-read-then-write window).
+  it('a trailing autosave cannot land after a concurrent confirm already verified successfully (per-order lock closes the true confirm-lock race)', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockOrderReflectingWrites({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const confirmReq = { method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } };
+    const confirmRes = makeRes();
+
+    const trailingSelections = fullValidSelections();
+    trailingSelections.structure_frame_paint.legs = { brand: 'cardinal', code: 'P009-BG02' };
+    const autosaveReq = { method: 'POST', headers: {}, body: { selections: trailingSelections, confirm: false } };
+    const autosaveRes = makeRes();
+
+    // Genuinely concurrent: both handler() calls start (and run up to their
+    // first await) before either has finished, exactly like two real
+    // in-flight requests for the same order hitting the same warm instance.
+    await Promise.all([
+      handler(confirmReq, confirmRes),
+      handler(autosaveReq, autosaveRes),
+    ]);
+
+    // Whichever request's turn ran second re-read the order AFTER the
+    // first one's write had already landed — so it's impossible for both
+    // to have proceeded past the confirmedAt guard. Exactly one of the two
+    // must have been rejected as already-confirmed.
+    const statuses = [confirmRes.statusCode, autosaveRes.statusCode].sort();
+    expect(statuses).toEqual([200, 409]);
+
+    // Whatever the final persisted state is, confirmedAt must still be set
+    // — the exact bug this closes was a trailing autosave silently
+    // reverting a just-confirmed order's confirmedAt back to null.
+    const finalWrite = mockWriteColorSelectionSnapshot.mock.calls.at(-1);
+    expect(finalWrite[1].confirmedAt).not.toBeNull();
+    // No unconfirmed request should ever have been allowed to write once
+    // the order was confirmed — the 409'd request must not have persisted
+    // anything of its own after the confirm's write landed.
+    expect(mockWriteColorSelectionSnapshot).toHaveBeenCalledTimes(1);
   });
 });

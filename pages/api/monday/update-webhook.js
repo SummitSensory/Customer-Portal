@@ -20,10 +20,55 @@
  * var isn't configured.
  */
 
-import { getOrderById, getOrderByEmail, setStatusLabel, postTaggedUpdate } from '../../../lib/monday';
+import { getOrderById, getOrderByEmail, getOrderMessages, setStatusLabel, postTaggedUpdate } from '../../../lib/monday';
 import { sendCustomerReplyNotification } from '../../../lib/email';
 import { isStaffEmail, secretsMatch } from '../../../lib/auth';
 import { isPortalChatMessage, isStaffMessage } from '../../../lib/messageOrigin';
+
+/**
+ * PORTAL-064: this endpoint had no redelivery/idempotency guard at all —
+ * unlike every other frequently-retried webhook in this codebase
+ * (accessory-webhook.js, status-balance-webhook.js via
+ * hasNotifiedValue()/markNotifiedValue()), it only ever posted its
+ * "[PORTAL: Reply Notified]" tag AFTER successfully sending, never checked
+ * for one BEFORE. A Monday retry of the same "update created" event (a slow
+ * or ambiguous response, a timeout on our end after the email already went
+ * out) re-sends EM-11 for the same staff reply.
+ *
+ * The webhook payload carries no unique event/update id — just itemId,
+ * updateBody, and creatorEmail (see this file's own setup comment) — so
+ * there's no simple "have I seen this event id" check available the way
+ * hasNotifiedValue()'s kind+value tag works elsewhere. What IS reliable:
+ * this exact reply already exists in the order's own update history (it's
+ * what triggered the webhook), so its real created_at can be looked up
+ * there, and then checked against whether a "[PORTAL: Reply Notified]" tag
+ * already exists at or after that moment — the same age comparison
+ * cron/message-reply-safety-net.js already does from the other direction
+ * (see that file's own header comment). Deliberately keeps posting the tag
+ * with the exact same literal text ("PORTAL: Reply Notified", no suffix)
+ * that safety-net cron matches via `startsWith('[PORTAL: Reply Notified]')`
+ * — changing that format would silently break that cron's own dedupe logic,
+ * and that file is out of scope for this fix.
+ *
+ * If the triggering reply can't be found yet (e.g. a brief Monday
+ * read-after-write lag right after it was posted), this fails toward
+ * sending rather than silently dropping a real notification — an occasional
+ * duplicate is a known, disclosed tradeoff; a customer reply nobody was ever
+ * told about is the worse failure this whole endpoint exists to prevent.
+ */
+async function alreadyNotifiedThisReply(itemId, updateBody, creatorEmail) {
+  const updates = await getOrderMessages(itemId);
+  const sorted = [...updates].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  const thisReply = [...sorted].reverse().find(u =>
+    (u.body || '') === (updateBody || '') &&
+    (u.creator?.email || '').toLowerCase() === (creatorEmail || '').toLowerCase()
+  );
+  if (!thisReply) return false;
+  return sorted.some(u =>
+    (u.body || '').startsWith('[PORTAL: Reply Notified]') &&
+    new Date(u.created_at) >= new Date(thisReply.created_at)
+  );
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -79,6 +124,12 @@ export default async function handler(req, res) {
   if (!isStaff) return res.status(200).json({ skipped: 'Non-staff update, no notification sent.' });
 
   try {
+    // PORTAL-064: check BEFORE acting, not just after — see this file's own
+    // header comment on alreadyNotifiedThisReply for why.
+    if (await alreadyNotifiedThisReply(itemId, updateBody, creatorEmail)) {
+      return res.status(200).json({ ok: true, skipped: 'Already notified for this reply (redelivery).' });
+    }
+
     // Staff replied — clear the messaging queue flag regardless of whether the
     // update was on-topic (a message reply) or something else staff-only; keeps
     // the "Message Status" column from getting stuck on "Needs Reply" if staff

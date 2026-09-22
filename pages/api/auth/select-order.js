@@ -15,7 +15,7 @@
  */
 
 import { parse, serialize } from 'cookie';
-import { verifyCustomerSession, signCustomerSession, SESSION_COOKIE, cookieOptions } from '../../../lib/auth';
+import { verifyCustomerSession, signCustomerSession, signImpersonationSession, SESSION_COOKIE, cookieOptions } from '../../../lib/auth';
 import { getOrdersByEmail } from '../../../lib/monday';
 
 export default async function handler(req, res) {
@@ -42,8 +42,24 @@ export default async function handler(req, res) {
   const match = orders.find(o => o.id === orderId);
   if (!match) return res.status(403).json({ error: 'That order is not linked to your account.' });
 
-  const sessionToken = await signCustomerSession(session.email, match.id, match.name);
-  res.setHeader('Set-Cookie', serialize(SESSION_COOKIE, sessionToken, cookieOptions(60 * 60 * 24 * 7)));
+  // PORTAL-059: this used to unconditionally re-sign with
+  // signCustomerSession() (7-day, no impersonatedBy) regardless of what kind
+  // of session the CALLER actually had. A staff member "viewing/acting as"
+  // a customer (signImpersonationSession(), 2-hour, tagged with
+  // impersonatedBy) who then picked a different order for that customer via
+  // this endpoint had their session silently upgraded to a normal 7-day
+  // customer session with the impersonatedBy tag dropped — extending a
+  // deliberately short-lived session ~84x and erasing the accountability
+  // trail (the portal's impersonation banner and any action-attribution
+  // logic both key off impersonatedBy). Preserve the session KIND across the
+  // re-sign: an impersonation session stays an impersonation session (same
+  // 2-hour expiry, same impersonatedBy), and only a genuine customer session
+  // gets the normal 7-day re-sign.
+  const sessionToken = session.impersonatedBy
+    ? await signImpersonationSession(session.email, match.id, match.name, session.impersonatedBy)
+    : await signCustomerSession(session.email, match.id, match.name);
+  const maxAge = session.impersonatedBy ? 60 * 60 * 2 : 60 * 60 * 24 * 7;
+  res.setHeader('Set-Cookie', serialize(SESSION_COOKIE, sessionToken, cookieOptions(maxAge)));
 
   return res.status(200).json({ ok: true, order: match });
 }

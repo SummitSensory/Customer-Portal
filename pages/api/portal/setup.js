@@ -16,6 +16,7 @@ import {
   postTaggedUpdate,
   markSectionCompleteSafe,
   createDeliverySubmissionItem,
+  findRecentDeliverySubmission,
   setStatusLabel,
   uploadFileToColumn,
   COLS,
@@ -54,6 +55,60 @@ import { notifyTeamContactChange, notifyTeamFormCompleted } from '../../../lib/e
 // ever naming which specific restricted field actually changed.
 const RESTRICTED_FIELDS = ['Ship-To Address', 'Preferred Delivery Timing', 'Loading Dock / Liftgate Requirement'];
 
+// PORTAL-018-IDEMPOTENCY: the PORTAL-018 comment on the 'delivery' case
+// (further down, where freightAckBy/freightAckDate get folded into this same
+// request) calls the combined delivery+freight-ack submission "atomic" — but
+// it's really a sequence of independently-awaited Monday writes with no
+// rollback and no idempotency key. A failure partway through (Monday API
+// blip, connection reset) surfaces to the customer as a generic 500, and the
+// natural response — clicking Submit again, or a lost-response retry where
+// the FIRST request actually completed fine server-side but the client never
+// saw the 200 — re-runs the whole handler, including steps that already
+// succeeded. Most of those re-runs are harmless (updateOrderColumn
+// overwrites the same columns, postTaggedUpdate just appends another log
+// entry staff can ignore), but createDeliverySubmissionItem() (a new row on
+// the Delivery & Site Details Submissions board) and notifyTeamContactChange()
+// (a staff email) are both CUSTOMER-VISIBLE duplicates a retry would create —
+// a second row staff has to notice and reconcile, a second "Contact
+// Information Updated" email. This in-memory guard (same per-instance,
+// resets-on-cold-start scope/limitations as lib/rateLimit.js's `buckets` —
+// see that file's header) remembers the content of the last delivery
+// submission per order and skips re-creating the submission row / re-sending
+// the notification when a near-identical submission for the SAME order was
+// already recorded within the last 60 seconds. Matching on content (not just
+// order + timing) is deliberate: two genuinely different submissions from
+// the same customer within a minute (e.g. they immediately noticed a typo
+// and resubmitted with a real change) must both go through — only an exact
+// repeat of the same payload is treated as a retry.
+//
+// This in-memory guard alone was never a complete cross-instance/cross-
+// cold-start idempotency guarantee — a retry landing on a different warm
+// instance, or after this one recycled, sailed right past it. That gap is
+// now closed by findRecentDeliverySubmission (lib/monday.js), which actually
+// checks the real Delivery & Site Details Submissions board for a matching
+// recent row before a new one gets created — see its own header comment.
+// This in-memory guard stays as the cheap first check (catches the common
+// same-instance case with zero extra Monday API calls); the Monday-side
+// check only runs when this one doesn't already flag a duplicate.
+const recentDeliverySubmissions = new Map(); // order.id -> { signature, at }
+const DELIVERY_DEDUP_WINDOW_MS = 60_000;
+
+function isDuplicateDeliverySubmission(orderId, signature) {
+  const prev = recentDeliverySubmissions.get(orderId);
+  return !!prev && prev.signature === signature && (Date.now() - prev.at) < DELIVERY_DEDUP_WINDOW_MS;
+}
+
+function rememberDeliverySubmission(orderId, signature) {
+  recentDeliverySubmissions.set(orderId, { signature, at: Date.now() });
+  // Bound memory growth exactly like lib/rateLimit.js's `buckets` sweep.
+  if (recentDeliverySubmissions.size > 5000) {
+    const now = Date.now();
+    for (const [key, entry] of recentDeliverySubmissions) {
+      if (now - entry.at >= DELIVERY_DEDUP_WINDOW_MS) recentDeliverySubmissions.delete(key);
+    }
+  }
+}
+
 // PORTAL-010: this handler previously did zero validation beyond "tab and
 // data required" — any authenticated session could POST empty strings or
 // malformed data for any tab and it would still write to Monday and mark
@@ -84,7 +139,7 @@ function validateSetupData(tab, data) {
     }
     case 'delivery': {
       const { pocName, pocPhone, pocEmail, addressConfirmed, addressLine1, addressCity, addressState, addressZip,
-              hasSecondaryPoc, secondaryPocName, secondaryPocPhone } = data;
+              hasSecondaryPoc, secondaryPocName, secondaryPocPhone, freightAckBy, freightAckDate } = data;
       if (isBlank(pocName)) return 'Delivery point-of-contact name is required.';
       if (isBlank(pocPhone)) return 'Delivery point-of-contact phone is required.';
       if (isBlank(pocEmail) || !EMAIL_PATTERN.test(pocEmail)) return 'A valid delivery point-of-contact email is required.';
@@ -100,6 +155,24 @@ function validateSetupData(tab, data) {
         if (isBlank(secondaryPocName)) return 'A secondary contact name is required when a secondary contact is enabled.';
         if (isBlank(secondaryPocPhone)) return 'A secondary contact phone is required when a secondary contact is enabled.';
       }
+      // PORTAL-018-FOLLOWUP: the 'delivery' case's own PORTAL-018 comment
+      // (below, around the freightAckBy/freightAckDate write) claims these
+      // two fields are "already required fields on this same form" (per
+      // ackName/ackRead validation in DeliveryTab) and that folding freight
+      // acknowledgment into this single request is what makes the combined
+      // submission atomic — but that claim was never actually enforced HERE.
+      // This function only validated the delivery fields above; freightAckBy/
+      // freightAckDate were optional as far as the server was concerned (the
+      // handler below only acts on them `if (freightAckBy && freightAckDate)`
+      // and silently skips posting the acknowledgment update otherwise). That
+      // meant a direct/scripted POST to this endpoint — bypassing DeliveryTab's
+      // client-side ackName/ackRead checks entirely — could mark Delivery
+      // fully complete (markSectionCompleteSafe below always runs) without
+      // ever recording freight acknowledgment. Requiring both here closes
+      // that gap and makes the server-side validation actually match what
+      // the PORTAL-018 comment already claimed was true.
+      if (isBlank(freightAckBy)) return 'A name is required to acknowledge freight delivery requirements.';
+      if (isBlank(freightAckDate)) return 'An acknowledgment date is required.';
       return null;
     }
     case 'freight_ack': {
@@ -354,8 +427,12 @@ export default async function handler(req, res) {
         }
 
         // Push the full structured submission to the standalone Delivery &
-        // Site Details Submissions board in Monday (one row per submission)
-        await createDeliverySubmissionItem(order, {
+        // Site Details Submissions board in Monday (one row per submission),
+        // and notify the team — skipped when this is a retry of a submission
+        // already recorded moments ago. See the PORTAL-018-IDEMPOTENCY
+        // comment near the top of this file for why this guard exists and
+        // exactly what it does/doesn't cover.
+        const deliverySubmissionPayload = {
           customerEmail: session.email,
           pocName, pocPhone, phoneCanText, pocEmail, specialInstructions,
           hasSecondaryPoc, secondaryPocName, secondaryPocPhone, secondaryPhoneCanText, secondaryPocEmail,
@@ -366,13 +443,49 @@ export default async function handler(req, res) {
           loadingDock, deliveryTiming, preferredDeliveryDate,
           changedRestricted: safeChangedRestricted,
           freightAckBy, freightAckDate,
-        }).catch(err => console.error('createDeliverySubmissionItem failed:', err));
+        };
+        const deliverySubmissionSignature = JSON.stringify(deliverySubmissionPayload);
+        let isRetryOfRecentSubmission = isDuplicateDeliverySubmission(order.id, deliverySubmissionSignature);
+        if (!isRetryOfRecentSubmission) {
+          // The in-memory guard above only catches a retry that lands on
+          // THIS same warm serverless instance. A retry on a DIFFERENT
+          // instance, or after this one has cold-started fresh, sails right
+          // past it — findRecentDeliverySubmission (lib/monday.js) is the
+          // cross-instance backstop: it actually asks Monday whether a
+          // matching row was already created for this order in the last
+          // minute. Failing this open (treat as "not a duplicate") on a
+          // Monday read error matches the in-memory guard's own risk
+          // profile — worst case is the same harmless duplicate-row/email
+          // this whole guard exists to reduce, not a customer-visible error.
+          try {
+            const recentMatch = await findRecentDeliverySubmission(order.id, deliverySubmissionPayload);
+            isRetryOfRecentSubmission = !!recentMatch;
+          } catch (err) {
+            console.error('findRecentDeliverySubmission failed (treating as not-a-duplicate):', err.message);
+          }
+        }
 
-        // Notify team of delivery submission (always) + flag restricted changes
-        const notifyFields = safeChangedRestricted.length > 0
-          ? safeChangedRestricted
-          : ['Delivery Details'];
-        await notifyTeamContactChange(order.name, session.email, notifyFields).catch(console.error);
+        if (isRetryOfRecentSubmission) {
+          console.warn(`portal-setup: skipped duplicate delivery submission side effects for order ${order.id} (identical content resubmitted within ${DELIVERY_DEDUP_WINDOW_MS}ms)`);
+        } else {
+          // Recorded BEFORE the writes below (not after they succeed) —
+          // createDeliverySubmissionItem/notifyTeamContactChange are already
+          // best-effort (.catch()-guarded, don't fail this request), so the
+          // real risk this guard closes is the request having already fully
+          // succeeded server-side while the client never saw the response and
+          // retries; recording early is what actually catches that case.
+          rememberDeliverySubmission(order.id, deliverySubmissionSignature);
+
+          await createDeliverySubmissionItem(order, deliverySubmissionPayload)
+            .catch(err => console.error('createDeliverySubmissionItem failed:', err));
+
+          // Notify team of delivery submission (always) + flag restricted changes
+          const notifyFields = safeChangedRestricted.length > 0
+            ? safeChangedRestricted
+            : ['Delivery Details'];
+          await notifyTeamContactChange(order.name, session.email, notifyFields).catch(console.error);
+        }
+
         const deliverySynced = await markSectionCompleteSafe(order.id, 'portalDelivery');
 
         return res.status(200).json({ ok: true, requiresConfirmation: safeChangedRestricted.length > 0, checklistSyncPending: !deliverySynced });

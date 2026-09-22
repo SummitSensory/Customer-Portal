@@ -38,7 +38,7 @@
  * the Admin Portal path keeps working exactly as it does today.
  */
 
-import { getOrderById, hasNotifiedValue, markNotifiedValue, COLS } from '../../../lib/monday';
+import { getOrderById, sendCustomerNotificationOnce, COLS } from '../../../lib/monday';
 import { notifyCustomerStatusChange, notifyCustomerBalanceChange } from '../../../lib/email';
 import { secretsMatch } from '../../../lib/auth';
 
@@ -85,16 +85,25 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, skipped: 'No customer email on order.' });
     }
 
+    // PORTAL-059: sendCustomerNotificationOnce() (lib/monday.js) replaces the
+    // separate hasNotifiedValue()/markNotifiedValue() calls that used to live
+    // here — see that function's own header comment for the race it closes
+    // between this webhook and the Admin Portal PATCH path (orders.js), both
+    // of which can react to the exact same Monday column write. `sendFn`
+    // deliberately does NOT catch its own error here (matches this
+    // endpoint's prior behavior): a failed send should NOT be marked
+    // notified, so a later retry of this same automation can still succeed.
     if (columnId === COLS.status) {
       const status = order.status;
       if (!status || !status.trim()) {
         return res.status(200).json({ ok: true, skipped: 'No status value.' });
       }
-      if (await hasNotifiedValue(itemId, 'Status', status)) {
+      const result = await sendCustomerNotificationOnce(itemId, 'Status', status, () =>
+        notifyCustomerStatusChange(order.customerEmail, order.contactName, order.name, status)
+      );
+      if (!result.sent) {
         return res.status(200).json({ ok: true, skipped: 'Already notified for this status.' });
       }
-      await notifyCustomerStatusChange(order.customerEmail, order.contactName, order.name, status);
-      await markNotifiedValue(itemId, 'Status', status);
       return res.status(200).json({ ok: true, notified: 'status', value: status });
     }
 
@@ -104,11 +113,12 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true, skipped: 'No balance value.' });
       }
       const balanceKey = balance.toFixed(2);
-      if (await hasNotifiedValue(itemId, 'Balance', balanceKey)) {
+      const result = await sendCustomerNotificationOnce(itemId, 'Balance', balanceKey, () =>
+        notifyCustomerBalanceChange(order.customerEmail, order.contactName, order.name, balance)
+      );
+      if (!result.sent) {
         return res.status(200).json({ ok: true, skipped: 'Already notified for this balance.' });
       }
-      await notifyCustomerBalanceChange(order.customerEmail, order.contactName, order.name, balance);
-      await markNotifiedValue(itemId, 'Balance', balanceKey);
       return res.status(200).json({ ok: true, notified: 'balance', value: balanceKey });
     }
 

@@ -10,7 +10,7 @@ import Head from 'next/head';
 import dynamic from 'next/dynamic';
 import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
 import { isStaffMessage, stripPortalTags, messageDisplayName } from '../../lib/messageOrigin';
-import { requiredColorInputs, PART_LABELS } from '../../lib/colorRequirements';
+import { requiredColorInputs, unbuiltRequiredColorGates, PART_LABELS } from '../../lib/colorRequirements';
 import { resolveSelectedColor, displayColorName, findOrphanedSelections } from '../../lib/colorCatalog';
 
 // Lazy-loaded — most staff sessions never open Settings in a given visit,
@@ -934,14 +934,30 @@ function DeliveryDetailPanel({ order }) {
 // applied everywhere except here).
 function ColorSelectionDetailPanel({ order }) {
   const s = order.colorSelectionSnapshot || {};
-  const inputs = requiredColorInputs(order.productType) || [];
+  const inputs = requiredColorInputs(order) || [];
   const orphans = findOrphanedSelections(inputs, s.selections || {});
+  // Real, gated requirements ("Included" on Bryan's decision-tree columns)
+  // with no native picker built yet — see unbuiltRequiredColorGates() in
+  // lib/colorRequirements.js. Surfaced here so a real requirement never
+  // silently goes unnoticed just because there's nowhere for a customer to
+  // fulfill it yet.
+  const unbuiltGates = unbuiltRequiredColorGates(order);
 
   return (
     <div style={{ padding: '16px 20px', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
       <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12 }}>
         🎨 Color &amp; Product Selections — {order.name}
       </div>
+
+      {unbuiltGates.length > 0 && (
+        <div className="alert warn" style={{ marginBottom: 14 }}>
+          <span>⚠️</span>
+          <span>
+            Marked &quot;Included&quot; on Monday but no online picker exists yet: {unbuiltGates.map((g) => g.label).join(', ')}.
+            Handle these manually — the customer was not shown a picker for them.
+          </span>
+        </div>
+      )}
 
       {inputs.length === 0 && (
         <div style={{ fontSize: 13, color: 'var(--mut)' }}>

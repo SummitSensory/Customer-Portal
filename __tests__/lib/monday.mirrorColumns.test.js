@@ -73,3 +73,30 @@ describe('mirror columns', () => {
     expect(order.colorFrameType).toBe('Required');
   });
 });
+
+describe('mirror values from orders linked to several deals', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('collapses a repeated address and takes the first single-token value', async () => {
+    stubMonday(mondayItem({
+      [COLS.billingAddressOnFile]: '4301 S Federal Blvd Suite 102-103, Sheridan, CO 80110, 4301 S Federal Blvd Suite 102-103, Sheridan, CO 80110',
+      [COLS.billingZipOnFile]: '80110, 80110',
+      [COLS.contactName]: 'Christine  White, Kina  Koch',
+      [COLS.contactEmail]: 'a@childrens.com, b@yahoo.com',
+      [COLS.firstName]: 'Christeen, Christeen',
+    }));
+    const order = await getOrderById('12964423844');
+    expect(order.billingAddressOnFile).toBe('4301 S Federal Blvd Suite 102-103, Sheridan, CO 80110');
+    expect(order.contactName).toBe('Christine  White');
+    expect(order.contactEmail).toBe('a@childrens.com');
+    expect(order.firstName).toBe('Christeen');
+  });
+
+  it('does not request colorFormId or the GB tracking mirrors', async () => {
+    const bodies = stubMonday(mondayItem({}));
+    await getOrderById('12964423844');
+    const mirrorPart = bodies[0].query.match(/mirror_values: column_values\(ids: (\[[^\]]*\])/)[1];
+    expect(mirrorPart).not.toContain(COLS.colorFormId);
+    expect(mirrorPart).not.toContain('lookup_mm1kcbb5');
+  });
+});

@@ -239,7 +239,7 @@ function getCellValue(order, colId) {
   };
   if (colId in knownMap) return { type: 'text', value: knownMap[colId] };
   // Fall back to raw Monday.com column data
-  return { type: 'text', value: order.rawColumns?.[colId]?.text || '' };
+  return { type: 'text', value: order.rawColumns?.[colId]?.text || order.rawColumns?.[colId]?.display || '' };
 }
 
 function progressIsComplete(progress) {

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { DeliveryTab, parseCombinedAddress, addressOnFileString, addressOnFileParts } from '../../../pages/portal/index';
+import { DeliveryTab, parseCombinedAddress, addressOnFileString, addressOnFileParts, isPlausibleAddress } from '../../../pages/portal/index';
 
 // 2026-09-23 Delivery & Site Details audit: a customer could click
 // "Yes, this is correct" on an order with NO address on file, and the row on
@@ -85,5 +85,38 @@ describe('address on file (Location + Zip Code mirrors)', () => {
     expect(screen.getByRole('button', { name: /Yes, this is correct/ })).not.toBeDisabled();
     expect(screen.getByText('2301 Rexwoods Drive suite 118, Raleigh, NC 27607, United States')).toBeTruthy();
     cleanup();
+  });
+});
+
+// Real "Location" mirror values from Manufacturing Process (PR #11 review):
+// most are Google-Places style "Street, City, ST, USA" with the zip in its
+// own mirror column.
+describe('address on file — real Google-Places shapes', () => {
+  it('puts the zip with the state, before the country', () => {
+    expect(addressOnFileString({ billingAddressOnFile: '7251 Northwest 88th Avenue, Tamarac, FL, USA', billingZipOnFile: '33321' }))
+      .toBe('7251 Northwest 88th Avenue, Tamarac, FL 33321, USA');
+    expect(addressOnFileParts({ billingAddressOnFile: '7251 Northwest 88th Avenue, Tamarac, FL, USA', billingZipOnFile: '33321' })).toEqual({
+      line1: '7251 Northwest 88th Avenue', line2: '', city: 'Tamarac', state: 'FL', zip: '33321', country: 'USA',
+    });
+    expect(addressOnFileParts({ billingAddressOnFile: '2035 Monroe Avenue, Rochester, NY, USA', billingZipOnFile: '14618-2027' })).toEqual({
+      line1: '2035 Monroe Avenue', line2: '', city: 'Rochester', state: 'NY', zip: '14618-2027', country: 'USA',
+    });
+  });
+
+  it('a street number equal to the zip does not count as "zip already present"', () => {
+    expect(addressOnFileString({ billingAddressOnFile: '10801 Main St, Springfield, IL', billingZipOnFile: '10801' }))
+      .toBe('10801 Main St, Springfield, IL 10801');
+  });
+
+  it('keeps a city that is also a state name when there is no separate state', () => {
+    expect(parseCombinedAddress('123 Broadway, New York, 10001')).toEqual({
+      line1: '123 Broadway', line2: '', city: 'New York', state: '', zip: '10001', country: '',
+    });
+  });
+
+  it('never offers an implausible parse as confirmable', () => {
+    expect(isPlausibleAddress({ line1: '1 Main', line2: 'Tamarac', city: 'FL', state: 'USA', zip: '33321', country: '' })).toBe(false);
+    expect(isPlausibleAddress({ line1: '1 Main', line2: '', city: 'CO 80110 80110', state: '', zip: '', country: '' })).toBe(false);
+    expect(isPlausibleAddress({ line1: '1 Main', line2: '', city: 'Tamarac', state: 'FL', zip: '33321', country: 'USA' })).toBe(true);
   });
 });

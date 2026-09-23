@@ -1102,7 +1102,9 @@ export function parseCombinedAddress(combined) {
     // "…, Raleigh, NC, 27607" — state in its own comma part before a bare
     // zip. Without this the state was taken as the city ("NC") and the real
     // city slid into line 2. Only when a city part would still remain.
-    if (parts.length >= 2 && looksLikeState(parts[parts.length - 1])) state = parts.pop();
+    // Needs street + city still left after it: "123 Broadway, New York, 10001"
+    // has no separate state, and must keep New York as the city.
+    if (parts.length >= 3 && looksLikeState(parts[parts.length - 1])) state = parts.pop();
   } else {
     state = tail;
   }
@@ -1123,9 +1125,38 @@ export function parseCombinedAddress(combined) {
  */
 export function addressOnFileString(order) {
   const addr = (order?.billingAddressOnFile || '').trim();
-  const zip = (order?.billingZipOnFile || '').trim();
+  const zip = (order?.billingZipOnFile || '').split(',')[0].trim();
   if (!addr) return zip;
-  return zip && !addr.includes(zip) ? `${addr} ${zip}` : addr;
+  if (!zip) return addr;
+  const parts = addr.split(',').map((p) => p.trim()).filter(Boolean);
+  // Already has the zip as its own token after the street? (Checking only
+  // after the first part: a street number can equal the zip.)
+  const zipRe = new RegExp(`(^|\\s)${zip.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|\\s)`);
+  if (parts.slice(1).some((p) => zipRe.test(p))) return addr;
+  // Most on-file addresses are Google-Places style "Street, City, ST, USA"
+  // with the zip in its own column. The zip belongs with the state, BEFORE
+  // the country — appending it after "USA" made the parser read the state
+  // as the city and the country as the state.
+  if (parts.length >= 2 && COUNTRY_WORDS.has(parts[parts.length - 1].toLowerCase().replace(/\.$/, ''))) {
+    parts[parts.length - 2] = `${parts[parts.length - 2]} ${zip}`;
+    return parts.join(', ');
+  }
+  return `${addr} ${zip}`;
+}
+
+/**
+ * Whether a parsed on-file address is trustworthy enough to offer as
+ * "Yes, this is correct". A mis-parse still re-joins into text that LOOKS
+ * right, so the customer can't catch it — the six fields go to the
+ * submissions board / vendor sheet as-is. When in doubt, make them type it.
+ */
+export function isPlausibleAddress(p) {
+  if (!p?.line1?.trim() || !p?.city?.trim()) return false;
+  if (/\d/.test(p.city) || looksLikeState(p.city) || COUNTRY_WORDS.has(p.city.toLowerCase())) return false;
+  const us = !p.country || /^(us|usa|u\.s\.a?\.?|united states( of america)?)$/i.test(p.country.trim());
+  if (us && p.state && !looksLikeState(p.state)) return false;
+  if (p.state && COUNTRY_WORDS.has(p.state.toLowerCase())) return false;
+  return true;
 }
 
 /**
@@ -1133,13 +1164,15 @@ export function addressOnFileString(order) {
  * street-only value (no commas to split on) goes in Street, zip in Zip.
  */
 export function addressOnFileParts(order) {
-  const combined = addressOnFileString(order);
-  const parsed = parseCombinedAddress(combined);
-  if (parsed.line1 || parsed.city) return parsed;
-  return {
-    line1: (order?.billingAddressOnFile || '').trim(), line2: '', city: '', state: '',
-    zip: (order?.billingZipOnFile || '').trim(), country: '',
-  };
+  const parsed = parseCombinedAddress(addressOnFileString(order));
+  if (isPlausibleAddress(parsed)) return parsed;
+  // Street-only value (nothing to split) — Street + Zip, the rest typed.
+  const addr = (order?.billingAddressOnFile || '').trim();
+  if (addr && !addr.includes(',')) {
+    return { line1: addr, line2: '', city: '', state: '', zip: (order?.billingZipOnFile || '').split(',')[0].trim(), country: '' };
+  }
+  // Couldn't split it confidently: pre-fill nothing rather than something wrong.
+  return { line1: '', line2: '', city: '', state: '', zip: '', country: '' };
 }
 
 export function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBack }) {
@@ -1247,7 +1280,8 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
         country: b.billingCountry || '',
       };
     }
-    return parseCombinedAddress(billingAddressOnFile);
+    const parsed = parseCombinedAddress(billingAddressOnFile);
+    return isPlausibleAddress(parsed) ? parsed : { line1: '', line2: '', city: '', state: '', zip: '', country: '' };
   }
 
   const formatShipTo = (p) =>

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { DeliveryTab, parseCombinedAddress } from '../../../pages/portal/index';
+import { DeliveryTab, parseCombinedAddress, addressOnFileString, addressOnFileParts } from '../../../pages/portal/index';
 
 // 2026-09-23 Delivery & Site Details audit: a customer could click
 // "Yes, this is correct" on an order with NO address on file, and the row on
@@ -54,5 +54,36 @@ describe('DeliveryTab — confirming the ship-to address on file', () => {
     })} {...props} />);
     expect(screen.getByRole('button', { name: /Yes, this is correct/ })).not.toBeDisabled();
     expect(screen.getByText('905 Bethel Circle, Waunakee, WI 53597, United States')).toBeTruthy();
+  });
+});
+
+describe('address on file (Location + Zip Code mirrors)', () => {
+  it('does not append the zip a second time when the address already ends with it', () => {
+    expect(addressOnFileString({ billingAddressOnFile: '2301 Rexwoods Drive suite 118, Raleigh, NC 27607, United States', billingZipOnFile: '27607' }))
+      .toBe('2301 Rexwoods Drive suite 118, Raleigh, NC 27607, United States');
+    expect(addressOnFileString({ billingAddressOnFile: '123 Main St, Springfield, IL', billingZipOnFile: '62704' }))
+      .toBe('123 Main St, Springfield, IL 62704');
+  });
+
+  it('splits the on-file address into the Billing tab fields', () => {
+    expect(addressOnFileParts({ billingAddressOnFile: '2301 Rexwoods Drive suite 118, Raleigh, NC 27607, United States', billingZipOnFile: '27607' })).toEqual({
+      line1: '2301 Rexwoods Drive suite 118', line2: '', city: 'Raleigh', state: 'NC', zip: '27607', country: 'United States',
+    });
+  });
+
+  it('a street-only value goes in Street with the zip in Zip', () => {
+    expect(addressOnFileParts({ billingAddressOnFile: '123 Main St', billingZipOnFile: '62704' })).toEqual({
+      line1: '123 Main St', line2: '', city: '', state: '', zip: '62704', country: '',
+    });
+  });
+
+  it('Delivery tab lets the customer confirm a mirror-only address on file', () => {
+    render(<DeliveryTab order={{
+      id: 'o', name: 'Acme', stages: [{ key: 'placed' }, { key: 'shipped' }], stageIndex: 0,
+      billingAddressOnFile: '2301 Rexwoods Drive suite 118, Raleigh, NC 27607, United States', billingZipOnFile: '27607',
+    }} completions={{}} markComplete={() => {}} showToast={() => {}} onNext={() => {}} onBack={() => {}} />);
+    expect(screen.getByRole('button', { name: /Yes, this is correct/ })).not.toBeDisabled();
+    expect(screen.getByText('2301 Rexwoods Drive suite 118, Raleigh, NC 27607, United States')).toBeTruthy();
+    cleanup();
   });
 });

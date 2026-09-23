@@ -1060,6 +1060,16 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
 const COUNTRY_WORDS = new Set([
   'united states', 'united states of america', 'usa', 'us', 'u.s.', 'u.s.a.', 'canada', 'mexico',
 ]);
+const US_STATE_NAMES = new Set([
+  'alabama', 'alaska', 'arizona', 'arkansas', 'california', 'colorado', 'connecticut', 'delaware',
+  'district of columbia', 'florida', 'georgia', 'hawaii', 'idaho', 'illinois', 'indiana', 'iowa', 'kansas',
+  'kentucky', 'louisiana', 'maine', 'maryland', 'massachusetts', 'michigan', 'minnesota', 'mississippi',
+  'missouri', 'montana', 'nebraska', 'nevada', 'new hampshire', 'new jersey', 'new mexico', 'new york',
+  'north carolina', 'north dakota', 'ohio', 'oklahoma', 'oregon', 'pennsylvania', 'rhode island',
+  'south carolina', 'south dakota', 'tennessee', 'texas', 'utah', 'vermont', 'virginia', 'washington',
+  'west virginia', 'wisconsin', 'wyoming',
+]);
+const looksLikeState = (v) => /^[A-Za-z]{2}$/.test(v) || US_STATE_NAMES.has(v.toLowerCase());
 const US_ZIP_RE = /^\d{5}(?:-\d{4})?$/;
 const CA_POSTAL_RE = /^[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d$/;
 
@@ -1087,6 +1097,10 @@ export function parseCombinedAddress(combined) {
     state = words.slice(0, -2).join(' ');
   } else if (US_ZIP_RE.test(tail) || CA_POSTAL_RE.test(tail)) {
     zip = tail;
+    // "…, Raleigh, NC, 27607" — state in its own comma part before a bare
+    // zip. Without this the state was taken as the city ("NC") and the real
+    // city slid into line 2. Only when a city part would still remain.
+    if (parts.length >= 2 && looksLikeState(parts[parts.length - 1])) state = parts.pop();
   } else {
     state = tail;
   }
@@ -1185,6 +1199,14 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
         state: addressState, zip: addressZip, country: addressCountry,
       };
     }
+    return onFileShipToParts();
+  }
+
+  // The address "on file" that "Yes, this is correct" confirms — the SAME
+  // parts that get submitted, so what the customer is shown is exactly what
+  // lands on the submissions board. (It used to display the raw bill-to
+  // mirror while submitting the billing snapshot, which can differ.)
+  function onFileShipToParts() {
     const b = order.billingSnapshot || null;
     if (b && (b.billingAddress || b.billingCity)) {
       return {
@@ -1198,6 +1220,16 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
     }
     return parseCombinedAddress(billingAddressOnFile);
   }
+
+  const formatShipTo = (p) =>
+    [p.line1, p.line2, p.city, [p.state, p.zip].filter(Boolean).join(' '), p.country]
+      .filter(Boolean).join(', ');
+  const onFileParts = onFileShipToParts();
+  const onFileFormatted = formatShipTo(onFileParts) || billingAddressOnFile;
+  // Street + city is the minimum the submissions board / CRM can ship to.
+  // Without it there is nothing real to confirm — see the server's matching
+  // check in pages/api/portal/setup.js validateSetupData('delivery').
+  const hasUsableAddressOnFile = !!(onFileParts.line1?.trim() && onFileParts.city?.trim());
 
   function toggleCommMethod(setter, v) {
     setter(prev => prev.includes(v) ? prev.filter(m => m !== v) : [...prev, v]);
@@ -1222,6 +1254,11 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
     }
 
     if (addressConfirmed === null) e.addressConfirmed = 'Please confirm your ship-to address';
+    if (addressConfirmed === true && !hasUsableAddressOnFile) {
+      e.addressConfirmed = 'We don\'t have a complete ship-to address on file — please choose "No, I need to update it" and enter it.';
+    }
+    if (primaryCommMethods.includes('Text Message') && !primaryMobilePhone.trim()) e.primaryMobilePhone = 'Required for text messages';
+    if (hasSecondaryPoc && secondaryCommMethods.includes('Text Message') && !secondaryMobilePhone.trim()) e.secondaryMobilePhone = 'Required for text messages';
     if (addressConfirmed === false) {
       if (!addressLine1.trim()) e.addressLine1 = 'Required';
       if (!addressCity.trim()) e.addressCity = 'Required';
@@ -1286,7 +1323,7 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
       // Open the relevant section so errors are visible
-      if (errs.pocName || errs.pocPhone || errs.pocEmail || errs.secondaryPocName || errs.secondaryPocPhone || errs.secondaryPocEmail) setEditingPoc(true);
+      if (errs.pocName || errs.pocPhone || errs.pocEmail || errs.secondaryPocName || errs.secondaryPocPhone || errs.secondaryPocEmail || errs.primaryMobilePhone || errs.secondaryMobilePhone) setEditingPoc(true);
       if (errs.addressConfirmed || errs.addressLine1 || errs.addressCity || errs.addressState || errs.addressZip || errs.addressCountry || errs.deliveryTiming || errs.preferredDeliveryDate) setEditingLogistics(true);
       showToast('Please complete all required fields.');
       return;
@@ -1298,9 +1335,7 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
     // One object, both ways out: the six columns and the formatted line are built from
     // the same source, so they can never disagree about where the truck goes.
     const ship = shipToParts();
-    const formattedAddress =
-      [ship.line1, ship.line2, ship.city, [ship.state, ship.zip].filter(Boolean).join(' '), ship.country]
-        .filter(Boolean).join(', ') || billingAddressOnFile;
+    const formattedAddress = formatShipTo(ship) || billingAddressOnFile;
 
     const deliveryTimingLabel = deliveryTiming === 'asap'
       ? 'Ship as soon as my order is ready'
@@ -1347,7 +1382,9 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
         // the first write. The 'delivery' handler now records the freight
         // acknowledgment itself from these same fields in one atomic
         // request — see pages/api/portal/setup.js.
-        freightAckDate: new Date().toISOString().split('T')[0],
+        // The customer's own calendar date, not UTC (an evening submission
+        // used to be stamped with tomorrow's date).
+        freightAckDate: (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })(),
       };
       const deliveryResult = await saveSetup('delivery', deliveryPayload);
       markComplete('delivery', !deliveryResult.checklistSyncPending);
@@ -1463,8 +1500,10 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
               </div>
               {primaryCommMethods.includes('Text Message') && (
                 <div className="field">
-                  <label>Mobile Number for Text Messages</label>
-                  <input type="tel" value={primaryMobilePhone} onChange={e => setPrimaryMobilePhone(e.target.value)} placeholder="+1 303 555 0100" />
+                  <label><span style={{ color: 'var(--rose)' }}>*</span> Mobile Number for Text Messages</label>
+                  <input type="tel" value={primaryMobilePhone} onChange={e => { setPrimaryMobilePhone(e.target.value); setErrors(x => ({...x, primaryMobilePhone: ''})); }} placeholder="+1 303 555 0100"
+                    style={{ borderColor: errors.primaryMobilePhone ? 'var(--rose)' : '' }} />
+                  {errors.primaryMobilePhone && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.primaryMobilePhone}</div>}
                   <div className="hint">Standard message and data rates may apply.</div>
                 </div>
               )}
@@ -1535,8 +1574,10 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
               </div>
               {secondaryCommMethods.includes('Text Message') && (
                 <div className="field">
-                  <label>Mobile Number for Text Messages</label>
-                  <input type="tel" value={secondaryMobilePhone} onChange={e => setSecondaryMobilePhone(e.target.value)} placeholder="+1 303 555 0100" />
+                  <label><span style={{ color: 'var(--rose)' }}>*</span> Mobile Number for Text Messages</label>
+                  <input type="tel" value={secondaryMobilePhone} onChange={e => { setSecondaryMobilePhone(e.target.value); setErrors(x => ({...x, secondaryMobilePhone: ''})); }} placeholder="+1 303 555 0100"
+                    style={{ borderColor: errors.secondaryMobilePhone ? 'var(--rose)' : '' }} />
+                  {errors.secondaryMobilePhone && <div style={{ color: 'var(--rose)', fontSize: 12, marginTop: 3 }}>{errors.secondaryMobilePhone}</div>}
                   <div className="hint">Standard message and data rates may apply.</div>
                 </div>
               )}
@@ -1566,13 +1607,17 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
               <div className="field">
                 <label>Ship-To Address <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(on file)</span></label>
                 <div style={{ padding: '10px 14px', background: 'var(--paper)', borderRadius: 8, fontSize: 13.5, color: 'var(--mut)', border: '1px solid var(--line)', marginBottom: 12 }}>
-                  {billingAddressOnFile || <em>No billing address on file</em>}
+                  {hasUsableAddressOnFile ? onFileFormatted : (onFileFormatted
+                    ? <><span>{onFileFormatted}</span><br /><em>This address is incomplete — please choose "No, I need to update it" and enter the full ship-to address.</em></>
+                    : <em>No ship-to address on file — please choose "No, I need to update it" and enter it.</em>)}
                 </div>
                 <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8 }}>
                   <span style={{ color: 'var(--rose)' }}>*</span> Is this the correct ship-to address?
                 </label>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                   <button type="button" className={`chip${addressConfirmed === true ? ' on' : ''}`}
+                    disabled={!hasUsableAddressOnFile}
+                    style={!hasUsableAddressOnFile ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
                     onClick={() => { setAddressConfirmed(true); setErrors(v => ({...v, addressConfirmed: ''})); }}>
                     Yes, this is correct
                   </button>
@@ -1681,7 +1726,7 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
               <ReadField label="Ship-To Address" value={
                 addressConfirmed === false
                   ? [addressLine1, addressLine2, addressCity, [addressState, addressZip].filter(Boolean).join(' '), addressCountry].filter(Boolean).join(', ') || '—'
-                  : (billingAddressOnFile || '—')
+                  : (onFileFormatted || '—')
               } />
               <ReadField label="Loading Dock at Facility" value={hasLoadingDock === 'yes' ? 'Yes, No need for lift gate delivery' : 'No, I need liftgate delivery'} />
               <ReadField label="Delivery Timing" value={

@@ -38,6 +38,7 @@ function isOrderShipped(order) {
   return SHIPPED_STAGE_INDEX >= 0 && (order.stageIndex ?? 0) >= SHIPPED_STAGE_INDEX;
 }
 import { notifyTeamContactChange, notifyTeamFormCompleted } from '../../../lib/email';
+import { reportCriticalFailure } from '../../../lib/monitoring';
 
 // Fields that require Summit confirmation when changed.
 // PORTAL-046: these values must match EXACTLY what DeliveryTab's
@@ -150,6 +151,21 @@ function validateSetupData(tab, data) {
         if (isBlank(addressCity)) return 'A delivery city is required.';
         if (isBlank(addressState)) return 'A delivery state is required.';
         if (isBlank(addressZip)) return 'A delivery zip/postal code is required.';
+      } else if (isBlank(addressLine1) || isBlank(addressCity)) {
+        // "Yes, this is correct" is only meaningful when there IS an address
+        // on file. With none, the client still let the customer confirm it
+        // and the Delivery & Site Details Submissions row went in with every
+        // ship-to column blank (Pediatric Therapy Associates, 2026-09-08 —
+        // staff had to fill it in by hand a week later). The client derives
+        // these fields from the address on file (shipToParts), so blank here
+        // means there was nothing real to confirm.
+        return 'We don\'t have a complete ship-to address on file for this order — please choose "No, I need to update it" and enter the address.';
+      }
+      if (Array.isArray(data.primaryCommMethods) && data.primaryCommMethods.includes('Text Message') && isBlank(data.primaryMobilePhone)) {
+        return 'A mobile number is required when Text Message is a preferred communication method.';
+      }
+      if (hasSecondaryPoc && Array.isArray(data.secondaryCommMethods) && data.secondaryCommMethods.includes('Text Message') && isBlank(data.secondaryMobilePhone)) {
+        return 'A mobile number for the secondary contact is required when Text Message is selected for them.';
       }
       if (hasSecondaryPoc) {
         if (isBlank(secondaryPocName)) return 'A secondary contact name is required when a secondary contact is enabled.';
@@ -476,8 +492,14 @@ export default async function handler(req, res) {
           // retries; recording early is what actually catches that case.
           rememberDeliverySubmission(order.id, deliverySubmissionSignature);
 
+          // Still best-effort for the customer (the snapshot + tagged update
+          // above already hold everything), but no longer silent: a missing
+          // row on the submissions board is exactly what staff/the CRM read,
+          // so a failure here has to reach a human.
           await createDeliverySubmissionItem(order, deliverySubmissionPayload)
-            .catch(err => console.error('createDeliverySubmissionItem failed:', err));
+            .catch(err => reportCriticalFailure('delivery-submission-board',
+              `Delivery & Site Details submission for "${order.name}" (order ${order.id}) was NOT written to the submissions board. The full details are in the order's "PORTAL: Delivery Details" update — add the row manually.`,
+              { orderId: order.id, error: err?.message }));
 
           // Notify team of delivery submission (always) + flag restricted changes
           const notifyFields = safeChangedRestricted.length > 0

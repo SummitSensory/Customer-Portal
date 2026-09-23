@@ -49,6 +49,11 @@ vi.mock('../../../lib/rateLimit', () => ({
   allowRequest: () => true,
 }));
 
+const mockReportCriticalFailure = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../../lib/monitoring', () => ({
+  reportCriticalFailure: (...args) => mockReportCriticalFailure(...args),
+}));
+
 vi.mock('../../../lib/email', () => ({
   notifyTeamContactChange: vi.fn().mockResolvedValue(undefined),
   notifyTeamFormCompleted: vi.fn().mockResolvedValue(undefined),
@@ -159,6 +164,10 @@ const VALID_DELIVERY_DATA = {
   pocPhone: '555-111-2222',
   pocEmail: 'jane@example.com',
   addressConfirmed: true,
+  addressLine1: '123 Main St',
+  addressCity: 'Springfield',
+  addressState: 'IL',
+  addressZip: '62704',
   formattedAddress: '123 Main St, Springfield, IL 62704',
   freightAckBy: 'Jane Doe',
   freightAckDate: '2026-09-21',
@@ -224,6 +233,25 @@ describe('setup.js — delivery tab: PORTAL-018 freight-ack server-side validati
       'real-order-123', 'PORTAL: Freight Delivery Acknowledgment', expect.any(String)
     );
     expect(mockMarkSectionCompleteSafe).toHaveBeenCalledWith('real-order-123', 'portalDelivery');
+  });
+
+  // 2026-09-23: 'Yes, this is correct' on an order with no address on file
+  // produced a submissions-board row with every ship-to column blank.
+  it('rejects a confirmed ship-to address that has no street/city behind it', async () => {
+    const data = { ...VALID_DELIVERY_DATA, addressLine1: '', addressCity: '', formattedAddress: '' };
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { tab: 'delivery', data } }, res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toMatch(/No, I need to update it/);
+    expect(mockCreateDeliverySubmissionItem).not.toHaveBeenCalled();
+  });
+
+  it('rejects Text Message as a preferred method with no mobile number', async () => {
+    const data = { ...VALID_DELIVERY_DATA, primaryCommMethods: ['Email', 'Text Message'], primaryMobilePhone: '' };
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { tab: 'delivery', data } }, res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toMatch(/mobile number/i);
   });
 });
 
@@ -334,6 +362,19 @@ describe('setup.js — delivery tab: idempotency guard against retry-duplicated 
     expect(res.statusCode).toBe(200);
     expect(mockFindRecentDeliverySubmission).toHaveBeenCalledWith(orderId, expect.objectContaining({ pocName: VALID_DELIVERY_DATA.pocName }));
     expect(mockCreateDeliverySubmissionItem).not.toHaveBeenCalled();
+  });
+
+  it('alerts staff (does not fail silently) when the submissions-board row cannot be created', async () => {
+    const orderId = nextOrderId();
+    mockGetOrderById.mockResolvedValue({ id: orderId, name: 'Alert Order', stageIndex: 0 });
+    mockCreateDeliverySubmissionItem.mockRejectedValueOnce(new Error('Monday down'));
+    mockReportCriticalFailure.mockClear();
+
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { tab: 'delivery', data: VALID_DELIVERY_DATA } }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(mockReportCriticalFailure).toHaveBeenCalledWith('delivery-submission-board', expect.stringContaining('Alert Order'), expect.objectContaining({ orderId }));
   });
 
   // The Monday-side check is a network call and can fail independently of

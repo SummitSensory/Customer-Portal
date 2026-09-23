@@ -1,6 +1,8 @@
 import Head from 'next/head';
 import Script from 'next/script';
 import { SessionProvider } from 'next-auth/react';
+import { Analytics } from '@vercel/analytics/next';
+import { SpeedInsights } from '@vercel/speed-insights/next';
 import '../styles/globals.css';
 
 const GOOGLE_PLACES_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_PLACES_API_KEY;
@@ -21,6 +23,8 @@ export default function App({ Component, pageProps: { session, ...pageProps } })
       <SessionProvider session={session}>
         <Component {...pageProps} />
       </SessionProvider>
+      <Analytics />
+      <SpeedInsights />
     </>
   );
 }

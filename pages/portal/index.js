@@ -863,14 +863,16 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
   // regardless of what the customer had already submitted. Fixed 2026-08-17.
   const savedBilling = order.billingSnapshot || null;
   const previouslyConfirmedAddress = order.billingAddressConfirmed || '';
-  const [billingAddress, setBillingAddress] = useState(
-    savedBilling?.billingAddress || (previouslyConfirmedAddress ? '' : (order.billingAddressOnFile || ''))
-  );
-  const [billingAddressSuite, setBillingAddressSuite] = useState(savedBilling?.billingAddressSuite || '');
-  const [billingCity, setBillingCity] = useState(savedBilling?.billingCity || '');
-  const [billingState, setBillingState] = useState(savedBilling?.billingState || '');
-  const [billingZip, setBillingZip] = useState(savedBilling?.billingZip || (previouslyConfirmedAddress ? '' : (order.billingZipOnFile || '')));
-  const [billingCountry, setBillingCountry] = useState(savedBilling?.billingCountry || '');
+  // The on-file address is one combined string ("street, city, ST zip,
+  // country") — split it into the separate inputs rather than dropping the
+  // whole thing into Street.
+  const onFile = (!savedBilling && !previouslyConfirmedAddress) ? addressOnFileParts(order) : null;
+  const [billingAddress, setBillingAddress] = useState(savedBilling?.billingAddress || onFile?.line1 || '');
+  const [billingAddressSuite, setBillingAddressSuite] = useState(savedBilling?.billingAddressSuite || onFile?.line2 || '');
+  const [billingCity, setBillingCity] = useState(savedBilling?.billingCity || onFile?.city || '');
+  const [billingState, setBillingState] = useState(savedBilling?.billingState || onFile?.state || '');
+  const [billingZip, setBillingZip] = useState(savedBilling?.billingZip || onFile?.zip || '');
+  const [billingCountry, setBillingCountry] = useState(savedBilling?.billingCountry || onFile?.country || '');
   const [sameContact, setSameContact] = useState(savedBilling?.billingContactSameAsPrimary || false);
   const [billingName, setBillingName] = useState(savedBilling?.billingName || '');
   const [billingPhone, setBillingPhone] = useState(savedBilling?.billingPhone || '');
@@ -1111,6 +1113,35 @@ export function parseCombinedAddress(combined) {
   return { line1, line2, city, state, zip, country };
 }
 
+/**
+ * The bill-to address on file (the "Location" + "Zip Code" mirrors) as one
+ * string. The Location mirror usually already ends with the zip, so it is
+ * only appended when missing — appending it blindly produced
+ * "…, NC 27607, United States 27607", which parseCombinedAddress then read
+ * as state "United States". (These mirrors always read blank before
+ * 2026-09-23 — lib/monday.js now fetches their display_value.)
+ */
+export function addressOnFileString(order) {
+  const addr = (order?.billingAddressOnFile || '').trim();
+  const zip = (order?.billingZipOnFile || '').trim();
+  if (!addr) return zip;
+  return zip && !addr.includes(zip) ? `${addr} ${zip}` : addr;
+}
+
+/**
+ * The address on file split into the Billing tab's separate inputs. A
+ * street-only value (no commas to split on) goes in Street, zip in Zip.
+ */
+export function addressOnFileParts(order) {
+  const combined = addressOnFileString(order);
+  const parsed = parseCombinedAddress(combined);
+  if (parsed.line1 || parsed.city) return parsed;
+  return {
+    line1: (order?.billingAddressOnFile || '').trim(), line2: '', city: '', state: '',
+    zip: (order?.billingZipOnFile || '').trim(), country: '',
+  };
+}
+
 export function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBack }) {
   // Lock logistics editing once order has shipped
   const shippedIdx = order.stages?.findIndex(s => s.key === 'shipped') ?? 3;
@@ -1173,9 +1204,7 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
   const today = new Date().toISOString().split('T')[0];
 
   // Default ship-to address comes from the Billing Information tab's Bill-To Address (Monday-sourced)
-  const billingAddressOnFile = order.billingAddressOnFile
-    ? `${order.billingAddressOnFile}${order.billingZipOnFile ? ' ' + order.billingZipOnFile : ''}`
-    : '';
+  const billingAddressOnFile = addressOnFileString(order);
 
   /**
    * The ship-to address as SIX FIELDS, whichever way the customer answered.

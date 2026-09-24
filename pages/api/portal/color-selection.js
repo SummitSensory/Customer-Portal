@@ -23,6 +23,23 @@ import { syncConfirmedColorsToBoards } from '../../../lib/colorBoardSync';
 // calls); give it room so a slow Monday response can't time the confirm out.
 export const config = { maxDuration: 60 };
 
+const BOARD_SYNC_DEADLINE_MS = 20_000;
+
+function boardSyncEnabled() {
+  const flag = (process.env.COLOR_BOARD_SYNC || '').toLowerCase();
+  if (flag === 'off') return false;
+  if (flag === 'on') return true;
+  return process.env.VERCEL_ENV === 'production';
+}
+
+function withDeadline(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`timed out after ${ms / 1000}s`)), ms); }),
+  ]);
+}
+
 // Real race found by independent code review (2026-09-09): the re-check-
 // before-write below (added 2026-09-02/03) only ever catches a concurrent
 // write that lands BEFORE ITS OWN verification read — a slower autosave
@@ -280,24 +297,11 @@ export default async function handler(req, res) {
         );
       }
 
-      // Fill the staff color boards automatically — nobody re-types these
-      // (lib/colorBoardSync.js). Never fails the confirm: the snapshot above
-      // is already the real record. Anything that didn't land is alerted.
-      let boardSync = null;
-      try {
-        boardSync = await syncConfirmedColorsToBoards(order, requiredColorInputs(order) || [], cleanSelections);
-      } catch (err) {
-        boardSync = { boards: {}, errors: [err.message], skipped: [] };
-      }
-      if (boardSync.errors.length) {
-        await reportCriticalFailure('color-selection-board-sync',
-          `Order ${order.id} ("${order.name}") confirmed colors, but writing them to the staff color boards failed: ${boardSync.errors.join('; ')}. The picks are in the order's "Portal: Color Selection Answers (JSON)" column and the admin portal.`,
-          { orderId: order.id, errors: boardSync.errors });
-      }
-
-      // Staff email (with the upcharge up front). Never fails the confirm;
-      // a failed email with money attached is escalated.
-      await notifyTeamColorsConfirmed(order.name, session.email, totalUpcharge, boardSync).catch(async (err) => {
+      // Staff email (with the upcharge up front) and the checklist flag come
+      // FIRST — they are the billing signal and the customer-visible state, so
+      // nothing slower (the board fill below) can ever keep them from landing.
+      // Never fails the confirm; a failed email with money attached is escalated.
+      await notifyTeamColorsConfirmed(order.name, session.email, totalUpcharge).catch(async (err) => {
         console.error('color-selection: confirm email failed:', err.message);
         if (totalUpcharge > 0) {
           await reportCriticalFailure('color-selection-confirm-email',
@@ -307,6 +311,32 @@ export default async function handler(req, res) {
       });
 
       const synced = await markSectionCompleteSafe(order.id, 'portalColors');
+
+      // Then fill the staff color boards (lib/colorBoardSync.js) so nobody
+      // re-types these. Bounded, so a slow Monday can't time the confirm out;
+      // anything that didn't land (or may have landed) is alerted. Only on
+      // production unless deliberately switched on: Preview deployments share
+      // the production Monday account, and a test confirm there would create
+      // real GB/R rows — and R's "Received" automation starts a real
+      // Production (R) item and emails its subscribers.
+      if (boardSyncEnabled()) {
+        let boardSync;
+        try {
+          boardSync = await withDeadline(
+            syncConfirmedColorsToBoards(order, requiredColorInputs(order) || [], cleanSelections),
+            BOARD_SYNC_DEADLINE_MS,
+          );
+        } catch (err) {
+          boardSync = { boards: {}, errors: [err.message], skipped: [], notes: [] };
+        }
+        if (boardSync.errors.length || boardSync.notes?.length || boardSync.skipped?.length) {
+          await reportCriticalFailure(
+            boardSync.errors.length ? 'color-selection-board-sync' : 'color-selection-board-sync-notes',
+            `Order ${order.id} ("${order.name}") confirmed colors. ${boardSync.errors.length ? `Writing them to the staff color boards did not finish cleanly (a row may or may not have been written — check before adding one by hand): ${boardSync.errors.join('; ')}. ` : ''}${[...(boardSync.notes || []), ...(boardSync.skipped || [])].join('; ')}. The picks are in the order's "Portal: Color Selection Answers (JSON)" column and the admin portal.`,
+            { orderId: order.id, errors: boardSync.errors, notes: boardSync.notes, skipped: boardSync.skipped, boards: boardSync.boards });
+        }
+      }
+
       return res.status(200).json({ ok: true, totalUpcharge, checklistSyncPending: !synced, auditUpdatePending });
     }
 

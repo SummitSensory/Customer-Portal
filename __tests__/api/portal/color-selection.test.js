@@ -26,6 +26,11 @@ vi.mock('../../../lib/monitoring', () => ({
   reportCriticalFailure: (...args) => mockReportCriticalFailure(...args),
 }));
 
+const mockNotifyColorsConfirmed = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../../lib/email', () => ({
+  notifyTeamColorsConfirmed: (...args) => mockNotifyColorsConfirmed(...args),
+}));
+
 const handlerModule = await import('../../../pages/api/portal/color-selection.js');
 const { default: handler, validateColorSelectionData, computeTotalUpcharge } = handlerModule;
 
@@ -336,6 +341,35 @@ describe('handler — auth and customer isolation', () => {
     // 3 calls: initial load, re-check-before-write, post-write race check.
     expect(mockGetOrderById).toHaveBeenCalledTimes(3);
     expect(res.statusCode).toBe(200);
+  });
+
+  // Review 2026-09-23: confirming used to email nobody, so an upcharge could go unbilled.
+  it('emails staff with the total upcharge on confirm', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockOrderReflectingWrites({ id: 'real-order-123', name: 'Acme Gym', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockNotifyColorsConfirmed.mockClear();
+
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(mockNotifyColorsConfirmed).toHaveBeenCalledWith('Acme Gym', 'a@b.com', res.body.totalUpcharge);
+  });
+
+  it('a failed confirm email with an upcharge attached raises an alert, and the confirm still succeeds', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    const sel = fullValidSelections();
+    sel.structure_frame_paint.legs = { brand: 'prismatic', code: 'PRB-4432' };
+    mockOrderReflectingWrites({ id: 'real-order-123', name: 'Acme Gym', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockNotifyColorsConfirmed.mockRejectedValueOnce(new Error('resend down'));
+    mockReportCriticalFailure.mockClear();
+
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { selections: sel, confirm: true } }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.totalUpcharge).toBe(500);
+    expect(mockReportCriticalFailure).toHaveBeenCalledWith('color-selection-confirm-email', expect.stringContaining('$500'), expect.objectContaining({ totalUpcharge: 500 }));
   });
 
   it('rejects a confirm request that was in flight when a DIFFERENT concurrent confirm already landed — closes the double-confirm race, not just the confirm-after-autosave one', async () => {

@@ -16,6 +16,7 @@ import { requiredColorInputs } from '../../../lib/colorRequirements';
 import { validatePresentSelections, validateColorSelectionData, computeTotalUpcharge, sanitizeSelections } from '../../../lib/colorSelectionValidation';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { requireCustomerSession, loadSessionOrder, enforceRateLimit } from '../../../lib/apiAuth';
+import { notifyTeamColorsConfirmed } from '../../../lib/email';
 
 // Real race found by independent code review (2026-09-09): the re-check-
 // before-write below (added 2026-09-02/03) only ever catches a concurrent
@@ -273,6 +274,17 @@ export default async function handler(req, res) {
           { orderId: order.id, error: err.message }
         );
       }
+
+      // Staff email (with the upcharge up front). Never fails the confirm;
+      // a failure with money attached is escalated.
+      await notifyTeamColorsConfirmed(order.name, session.email, totalUpcharge).catch(async (err) => {
+        console.error('color-selection: confirm email failed:', err.message);
+        if (totalUpcharge > 0) {
+          await reportCriticalFailure('color-selection-confirm-email',
+            `Order ${order.id} ("${order.name}") confirmed colors with a $${totalUpcharge} upcharge, but the staff email failed — add it to the invoice.`,
+            { orderId: order.id, totalUpcharge, error: err.message });
+        }
+      });
 
       const synced = await markSectionCompleteSafe(order.id, 'portalColors');
       return res.status(200).json({ ok: true, totalUpcharge, checklistSyncPending: !synced, auditUpdatePending });

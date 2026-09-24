@@ -75,6 +75,19 @@ describe('planBoardWrites', () => {
     expect(plan.acc.color_mm7eb6xn).toEqual({ label: 'Received' });
   });
 
+  it('R: Soar column wraps and floor padding each get their own column', () => {
+    const soar = { id: '2', productType: SOAR, colorFrameType: 'Soar', colorGates: { soarMat: 'Included' } };
+    const { plan: p } = planBoardWrites(soar, requiredColorInputs(soar), {
+      soar_mat: {
+        column_wraps: { brand: 'vinyl', code: 'Navy' },
+        floor_padding: { brand: 'vinyl', code: 'Tan' },
+      },
+    });
+    expect(p.r.text_mm7g4k9f).toBe('Navy'); // "Soar Column Wraps Color"
+    expect(p.r.text_mm7g3sm1).toBe('Tan'); // "Soar Floor Padding Color"
+    expect(p.r.status9__1).toEqual({ label: 'Navy' });
+  });
+
   it('only writes parts on the current checklist, and skips boards with nothing to write', () => {
     const soarOnly = { id: '1', productType: SOAR, colorGates: { soarMat: 'NOT Included' } };
     const { plan: p } = planBoardWrites(soarOnly, requiredColorInputs(soarOnly), {

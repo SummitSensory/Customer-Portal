@@ -31,6 +31,11 @@ vi.mock('../../../lib/email', () => ({
   notifyTeamColorsConfirmed: (...args) => mockNotifyColorsConfirmed(...args),
 }));
 
+const mockSyncBoards = vi.fn().mockResolvedValue({ boards: {}, errors: [], skipped: [] });
+vi.mock('../../../lib/colorBoardSync', () => ({
+  syncConfirmedColorsToBoards: (...args) => mockSyncBoards(...args),
+}));
+
 const handlerModule = await import('../../../pages/api/portal/color-selection.js');
 const { default: handler, validateColorSelectionData, computeTotalUpcharge } = handlerModule;
 
@@ -81,13 +86,15 @@ function fullValidSelections() {
       climbing_wall: { brand: 'cardinal', code: 'T009-BG01' },
     },
     adventure_mat: {
-      zip_line: { brand: 'vinyl', code: 'Black' },
+      adventure_mat_system: { brand: 'vinyl', code: 'Black' },
     },
     wall_padding_mat: {
       column_wraps_pads: { brand: 'vinyl', code: 'Black' },
     },
+    slide_platform_paint: {
+      slide_platform: { brand: 'cardinal', code: 'T009-BG01' },
+    },
     slide: {
-      slide_platform: { brand: 'plastic', code: 'Blue' },
       slide_color: { brand: 'plastic', code: 'Blue' },
     },
     climbing_wall_mat: {
@@ -95,13 +102,6 @@ function fullValidSelections() {
     },
     ball_pit: {
       ball_pit_vinyl: { brand: 'vinyl', code: 'Black' },
-      mat_section_1: { brand: 'vinyl', code: 'Black' },
-      mat_section_2: { brand: 'vinyl', code: 'Black' },
-      mat_section_3: { brand: 'vinyl', code: 'Black' },
-      mat_section_4: { brand: 'vinyl', code: 'Black' },
-      mat_section_5: { brand: 'vinyl', code: 'Black' },
-      mat_section_6: { brand: 'vinyl', code: 'Black' },
-      mat_section_7: { brand: 'vinyl', code: 'Black' },
     },
   };
 }
@@ -121,8 +121,8 @@ describe('validateColorSelectionData (pure)', () => {
 
   it('rejects an unrecognized catalog code — never trusts a client-supplied color', () => {
     const s = fullValidSelections();
-    s.adventure_mat.zip_line = { brand: 'vinyl', code: 'MADE-UP-COLOR' };
-    expect(validateColorSelectionData(order, s)).toMatch(/zip_line/);
+    s.adventure_mat.adventure_mat_system = { brand: 'vinyl', code: 'MADE-UP-COLOR' };
+    expect(validateColorSelectionData(order, s)).toMatch(/adventure_mat_system/);
   });
 
   it('rejects an unsupported product type outright', () => {
@@ -164,8 +164,8 @@ describe('validateColorSelectionData — brand must be allowed for the part (reg
 
   it('rejects a real, valid Cardinal paint code on a vinyl (adventure_mat) part', () => {
     const s = fullValidSelections();
-    s.adventure_mat.zip_line = { brand: 'cardinal', code: 'T009-BG01' };
-    expect(validateColorSelectionData({ productType: ADVENTURE_SERIES }, s)).toMatch(/zip_line/);
+    s.adventure_mat.adventure_mat_system = { brand: 'cardinal', code: 'T009-BG01' };
+    expect(validateColorSelectionData({ productType: ADVENTURE_SERIES }, s)).toMatch(/adventure_mat_system/);
   });
 });
 
@@ -293,7 +293,7 @@ describe('handler — auth and customer isolation', () => {
     mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
 
     const incomplete = fullValidSelections();
-    delete incomplete.adventure_mat.zip_line;
+    delete incomplete.adventure_mat.adventure_mat_system;
 
     const req = { method: 'POST', headers: {}, body: { selections: incomplete, confirm: true } };
     const res = makeRes();
@@ -353,7 +353,46 @@ describe('handler — auth and customer isolation', () => {
     await handler({ method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } }, res);
 
     expect(res.statusCode).toBe(200);
-    expect(mockNotifyColorsConfirmed).toHaveBeenCalledWith('Acme Gym', 'a@b.com', res.body.totalUpcharge);
+    expect(mockNotifyColorsConfirmed).toHaveBeenCalledWith('Acme Gym', 'a@b.com', res.body.totalUpcharge, expect.objectContaining({ errors: [] }));
+  });
+
+  it('fills the staff color boards on confirm, with the order checklist and the cleaned selections', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockOrderReflectingWrites({ id: 'real-order-123', name: 'Acme Gym', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockSyncBoards.mockClear();
+
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(mockSyncBoards).toHaveBeenCalledTimes(1);
+    const [order, inputs, selections] = mockSyncBoards.mock.calls[0];
+    expect(order.id).toBe('real-order-123');
+    expect(inputs.length).toBeGreaterThan(0);
+    expect(selections.adventure_mat.adventure_mat_system.code).toBe('Black');
+  });
+
+  it('a board-sync failure alerts staff but never fails the confirm', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockOrderReflectingWrites({ id: 'real-order-123', name: 'Acme Gym', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockSyncBoards.mockResolvedValueOnce({ boards: { gb: { itemId: '1', created: false } }, errors: ['R: label missing'], skipped: [] });
+    mockReportCriticalFailure.mockClear();
+
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(mockReportCriticalFailure).toHaveBeenCalledWith('color-selection-board-sync', expect.stringContaining('R: label missing'), expect.anything());
+  });
+
+  it('does not touch the boards on an autosave (only on confirm)', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockOrderReflectingWrites({ id: 'real-order-123', name: 'Acme Gym', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockSyncBoards.mockClear();
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { selections: fullValidSelections() } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockSyncBoards).not.toHaveBeenCalled();
   });
 
   it('a failed confirm email with an upcharge attached raises an alert, and the confirm still succeeds', async () => {

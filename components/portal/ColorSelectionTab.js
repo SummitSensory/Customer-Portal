@@ -401,6 +401,7 @@ function MatPadPartPicker({ part, selection, onChange, onBack, onContinue, input
     <>
       <button type="button" className="lk" style={{ marginBottom: 14 }} onClick={onBack}>← Back</button>
       <h3 style={{ fontSize: 16, marginBottom: 10 }}>{PART_LABELS[part] || part}</h3>
+      {input.image && <ProductDiagram src={input.image} label={input.label} compact />}
       <input
         type="text"
         placeholder="Search mat/pad colors…"
@@ -424,6 +425,17 @@ function MatPadPartPicker({ part, selection, onChange, onBack, onContinue, input
   );
 }
 
+// A numbered product diagram (e.g. the 90 Degree Climb & Slide's pieces
+// 1-3) so the customer can see which physical piece each pick colors.
+function ProductDiagram({ src, label, compact = false }) {
+  return (
+    <div style={{ margin: '8px 0 14px', padding: 10, background: 'var(--paper)', border: '1px solid var(--line)', borderRadius: 10, textAlign: 'center' }}>
+      <img src={src} alt={`${label} — numbered mat pieces`} style={{ maxWidth: '100%', maxHeight: compact ? 160 : 280, objectFit: 'contain' }} />
+      <div style={{ fontSize: 12, color: 'var(--mut)', marginTop: 4 }}>The numbers match the mat pieces below.</div>
+    </div>
+  );
+}
+
 // ── One input's part list (e.g. all 6 Structure & Frame Paint parts) ──
 // requiredInputs is the FULL checklist, not just this one input — pricing
 // (which Prismatic selection counts as "first" vs "additional") depends on
@@ -441,6 +453,7 @@ function InputPartList({ input, requiredInputs, selections, onOpenPart, onBack }
       <p style={{ fontSize: 13, color: 'var(--mut)', marginBottom: 6 }}>
         Select a color for each part below. Your choices save automatically.
       </p>
+      {input.image && <ProductDiagram src={input.image} label={input.label} />}
       <div>
         {input.parts.map((part) => {
           const color = resolveSelectedColor(selections?.[input.input]?.[part]);
@@ -979,7 +992,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
       COLOR_INPUT.MAT_PAD_COLOR, COLOR_INPUT.ADVENTURE_MAT, COLOR_INPUT.WALL_PADDING,
       COLOR_INPUT.CLIMBING_WALL_MAT, COLOR_INPUT.SOAR_MAT, COLOR_INPUT.FLEX_MAT,
       COLOR_INPUT.PALISADES_MAT, COLOR_INPUT.BALL_PIT, COLOR_INPUT.SLIDE,
-      COLOR_INPUT.FOUNDATION_MAT,
+      COLOR_INPUT.FOUNDATION_MAT, COLOR_INPUT.CLIMB_SLIDE,
     ];
     const PartPicker = FLAT_SWATCH_INPUT_TYPES.includes(input.input) ? MatPadPartPicker : StructurePartPicker;
     body = (

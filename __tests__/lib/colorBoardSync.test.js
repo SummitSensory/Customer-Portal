@@ -92,92 +92,152 @@ function ok(data) {
   return { ok: true, status: 200, json: async () => ({ data }) };
 }
 
+const MFG = '6533700776';
+
+/**
+ * A tiny fake of the Monday API for these tests.
+ *   mfgLinks:   { [mfgLinkColumnId]: [{ id, board }], link_to_deals__1: [...] } for the order
+ *   backLinks:  { [rowId]: [orderIds] }             — each target-board row's back-link
+ *   rows:       { [boardId]: [{ id, created_at }] }  — rows on each target board
+ *   mfgForward: { [orderId]: { [mfgLinkColumnId]: [rowIds] } } — OTHER orders' forward links
+ *   fail:       (body) => boolean                     — make a mutation fail
+ */
+function fakeMonday({ mfgLinks = {}, backLinks = {}, rows = {}, mfgForward = {}, fail = () => false } = {}) {
+  const calls = [];
+  vi.stubGlobal('fetch', vi.fn(async (_u, init) => {
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    const q = body.query;
+    const v = body.variables || {};
+    if (q.includes('mutation')) {
+      if (fail(body)) return { ok: true, status: 200, json: async () => ({ errors: [{ message: 'Monday rejected the write' }] }) };
+      if (q.includes('create_item')) return ok({ create_item: { id: '777' } });
+      return ok({ change_multiple_column_values: { id: 'x' } });
+    }
+    if (q.includes('linked_items')) {
+      return ok({ items: [{ column_values: Object.entries(mfgLinks).map(([id, linked_items]) => ({ id, linked_items })) }] });
+    }
+    if (q.includes('items(ids')) {
+      return ok({ items: [{ column_values: [{ linked_item_ids: backLinks[v.i?.[0]] || [] }] }] });
+    }
+    if (q.includes('items_page')) {
+      const boardId = String(v.b?.[0]);
+      if (boardId === MFG) {
+        const col = v.col[0];
+        return ok({ boards: [{ items_page: { cursor: null, items: Object.entries(mfgForward).map(([id, links]) => ({ id, column_values: [{ linked_item_ids: links[col] || [] }] })) } }] });
+      }
+      return ok({ boards: [{ items_page: { cursor: null, items: (rows[boardId] || []).map((r) => ({ ...r, column_values: [{ linked_item_ids: backLinks[r.id] || [] }] })) } }] });
+    }
+    throw new Error('unexpected ' + q);
+  }));
+  return calls;
+}
+
 describe('syncConfirmedColorsToBoards', () => {
-  let calls;
-  beforeEach(() => {
-    calls = [];
-    process.env.MONDAY_BOARD_ID = '6533700776';
-  });
+  beforeEach(() => { process.env.MONDAY_BOARD_ID = MFG; });
   afterEach(() => vi.unstubAllGlobals());
 
-  function stub(handler) {
-    vi.stubGlobal('fetch', vi.fn(async (_u, init) => {
-      const body = JSON.parse(init.body);
-      calls.push(body);
-      return ok(handler(body));
-    }));
-  }
   const soarOrder = { id: '555', name: 'Acme Soar', productType: SOAR, colorGates: {} };
   const soarSel = { structure_frame_paint: { soar_frame: { brand: 'cardinal', code: 'T009-BL01' } } };
+  const writes = (calls) => calls.filter((c) => c.query.includes('change_multiple_column_values'));
 
-  it('uses the row linked from Manufacturing, keeps its existing back-links, and does not create one', async () => {
-    stub((b) => {
-      if (b.query.includes('linked_items')) return { items: [{ column_values: [{ id: BOARDS.gb.mfgLink, linked_items: [{ id: '900', board: { id: BOARDS.gb.id } }] }] }] };
-      if (b.query.includes('linked_item_ids') && b.query.includes('items(ids')) return { items: [{ column_values: [{ linked_item_ids: ['111'] }] }] };
-      if (b.query.includes('change_multiple_column_values')) return { change_multiple_column_values: { id: '900' } };
-      throw new Error('unexpected ' + b.query);
+  it("updates the row linked from Manufacturing when it belongs to this order only, marking it 'Per unique color'", async () => {
+    const calls = fakeMonday({
+      mfgLinks: { [BOARDS.gb.mfgLink]: [{ id: '900', board: { id: BOARDS.gb.id } }] },
+      backLinks: { 900: ['555'] },
     });
     const res = await syncConfirmedColorsToBoards(soarOrder, requiredColorInputs(soarOrder), soarSel);
     expect(res.errors).toEqual([]);
     expect(res.boards.gb).toEqual({ itemId: '900', created: false });
-    const write = calls.find((c) => c.query.includes('change_multiple_column_values'));
-    expect(write.variables.i).toBe('900');
-    const v = JSON.parse(write.variables.v);
-    expect(v[BOARDS.gb.backLink]).toEqual({ item_ids: [111, 555] }); // 111 kept
+    const v = JSON.parse(writes(calls)[0].variables.v);
+    expect(writes(calls)[0].variables.i).toBe('900');
     expect(v.color_mkmfthfx).toEqual({ label: 'Cardinal Paint (Included)' });
+    expect(v.text_mm7gyr52).toBe('Per unique color');
     expect(calls.some((c) => c.query.includes('create_item'))).toBe(false);
   });
 
-  it('creates a row when none is linked either way, and links it back from Manufacturing', async () => {
-    stub((b) => {
-      if (b.query.includes('linked_items')) return { items: [{ column_values: [] }] };
-      if (b.query.includes('items_page')) return { boards: [{ items_page: { cursor: null, items: [{ id: '1', column_values: [{ linked_item_ids: ['999'] }] }] } }] };
-      if (b.query.includes('create_item')) return { create_item: { id: '777' } };
-      if (b.query.includes('change_multiple_column_values')) return { change_multiple_column_values: { id: '555' } };
-      throw new Error('unexpected ' + b.query);
+  it('never writes onto a row shared with another order — creates a new row and says why', async () => {
+    const calls = fakeMonday({
+      mfgLinks: { [BOARDS.gb.mfgLink]: [{ id: '900', board: { id: BOARDS.gb.id } }] },
+      backLinks: { 900: ['555', '444'] }, // also belongs to order 444
     });
     const res = await syncConfirmedColorsToBoards(soarOrder, requiredColorInputs(soarOrder), soarSel);
-    expect(res.errors).toEqual([]);
+    expect(res.boards.gb).toEqual({ itemId: '777', created: true });
+    expect(writes(calls).some((c) => c.variables.i === '900')).toBe(false);
+    expect(res.notes.join(' ')).toMatch(/shared with other order/);
+  });
+
+  it('also treats a row as shared when ANOTHER Manufacturing order links forward to it', async () => {
+    const calls = fakeMonday({
+      mfgLinks: { [BOARDS.gb.mfgLink]: [{ id: '900', board: { id: BOARDS.gb.id } }] },
+      backLinks: { 900: ['555'] },
+      mfgForward: { 444: { [BOARDS.gb.mfgLink]: ['900'] } },
+    });
+    const res = await syncConfirmedColorsToBoards(soarOrder, requiredColorInputs(soarOrder), soarSel);
+    expect(res.boards.gb.created).toBe(true);
+    expect(writes(calls).some((c) => c.variables.i === '900')).toBe(false);
+  });
+
+  it('creates a row (name marked, Deals linked) when none exists, and links it back from Manufacturing', async () => {
+    const calls = fakeMonday({ mfgLinks: { link_to_deals__1: [{ id: '42', board: { id: '6527740233' } }] } });
+    const res = await syncConfirmedColorsToBoards(soarOrder, requiredColorInputs(soarOrder), soarSel);
     expect(res.boards.gb).toEqual({ itemId: '777', created: true });
     const create = calls.find((c) => c.query.includes('create_item'));
-    expect(create.variables.n).toBe('Acme Soar');
-    expect(JSON.parse(create.variables.v)[BOARDS.gb.backLink]).toEqual({ item_ids: [555] });
-    const mfgLink = calls.find((c) => c.query.includes('change_multiple_column_values'));
-    expect(mfgLink.variables.b).toBe('6533700776');
-    expect(JSON.parse(mfgLink.variables.v)[BOARDS.gb.mfgLink]).toEqual({ item_ids: [777] });
+    expect(create.variables.n).toBe('Acme Soar — portal');
+    const v = JSON.parse(create.variables.v);
+    expect(v[BOARDS.gb.backLink]).toEqual({ item_ids: [555] });
+    expect(v[BOARDS.gb.dealsLink]).toEqual({ item_ids: [42] });
+    const mfg = writes(calls).find((c) => c.variables.b === MFG);
+    expect(JSON.parse(mfg.variables.v)[BOARDS.gb.mfgLink]).toEqual({ item_ids: [777] });
   });
 
-  it('finds a row by its back-link when Manufacturing has no link to it', async () => {
-    stub((b) => {
-      if (b.query.includes('linked_items')) return { items: [{ column_values: [] }] };
-      if (b.query.includes('items_page')) return { boards: [{ items_page: { cursor: null, items: [{ id: '321', column_values: [{ linked_item_ids: ['555'] }] }] } }] };
-      if (b.query.includes('linked_item_ids') && b.query.includes('items(ids')) return { items: [{ column_values: [{ linked_item_ids: ['555'] }] }] };
-      if (b.query.includes('change_multiple_column_values')) return { change_multiple_column_values: { id: 'x' } };
-      throw new Error('unexpected ' + b.query);
+  it('with several rows back-linked to this order, updates the newest and says so', async () => {
+    const calls = fakeMonday({
+      backLinks: { 1: ['555'], 2: ['555'], 3: ['555'] },
+      rows: { [BOARDS.gb.id]: [
+        { id: '1', created_at: '2026-01-01T00:00:00Z' },
+        { id: '3', created_at: '2026-03-01T00:00:00Z' },
+        { id: '2', created_at: '2026-02-01T00:00:00Z' },
+      ] },
     });
     const res = await syncConfirmedColorsToBoards(soarOrder, requiredColorInputs(soarOrder), soarSel);
-    expect(res.boards.gb).toEqual({ itemId: '321', created: false });
+    expect(res.boards.gb).toEqual({ itemId: '3', created: false });
+    expect(res.notes.join(' ')).toMatch(/3 rows belong to this order/);
     expect(calls.some((c) => c.query.includes('create_item'))).toBe(false);
+  });
+
+  it('ignores back-linked rows that are shared with another order', async () => {
+    fakeMonday({
+      backLinks: { 1: ['555', '444'] },
+      rows: { [BOARDS.gb.id]: [{ id: '1', created_at: '2026-01-01T00:00:00Z' }] },
+    });
+    const res = await syncConfirmedColorsToBoards(soarOrder, requiredColorInputs(soarOrder), soarSel);
+    expect(res.boards.gb.created).toBe(true);
   });
 
   it('a failure on one board is reported without stopping the others', async () => {
     const both = { id: '555', name: 'Acme', productType: ADVENTURE, colorGates: { ballPitMat: 'Included' } };
-    const sel = { ...selections };
-    stub((b) => {
-      if (b.query.includes('linked_items')) return { items: [{ column_values: [
-        { id: BOARDS.gb.mfgLink, linked_items: [{ id: '1', board: { id: BOARDS.gb.id } }] },
-        { id: BOARDS.acc.mfgLink, linked_items: [{ id: '3', board: { id: BOARDS.acc.id } }] },
-        { id: BOARDS.r.mfgLink, linked_items: [{ id: '2', board: { id: BOARDS.r.id } }] },
-      ] }] };
-      if (b.query.includes('linked_item_ids') && b.query.includes('items(ids')) return { items: [{ column_values: [{ linked_item_ids: ['555'] }] }] };
-      if (b.query.includes('change_multiple_column_values') && b.variables.b === BOARDS.gb.id) throw new Error('GB down');
-      if (b.query.includes('change_multiple_column_values')) return { change_multiple_column_values: { id: 'x' } };
-      throw new Error('unexpected ' + b.query);
+    fakeMonday({
+      mfgLinks: {
+        [BOARDS.gb.mfgLink]: [{ id: '1', board: { id: BOARDS.gb.id } }],
+        [BOARDS.r.mfgLink]: [{ id: '2', board: { id: BOARDS.r.id } }],
+        [BOARDS.acc.mfgLink]: [{ id: '3', board: { id: BOARDS.acc.id } }],
+      },
+      backLinks: { 1: ['555'], 2: ['555'], 3: ['555'] },
+      fail: (b) => b.variables.b === BOARDS.gb.id,
     });
-    // The fetch stub throwing becomes a rejected mondayQuery.
-    const res = await syncConfirmedColorsToBoards(both, requiredColorInputs(both), sel);
+    const res = await syncConfirmedColorsToBoards(both, requiredColorInputs(both), selections);
     expect(res.errors.some((e) => e.startsWith('GB:'))).toBe(true);
-    expect(res.boards.acc).toBeTruthy();
-    expect(res.boards.r).toBeTruthy();
+    expect(res.boards.r).toEqual({ itemId: '2', created: false });
+    expect(res.boards.acc).toEqual({ itemId: '3', created: false });
+  });
+});
+
+describe('planBoardWrites — label safety', () => {
+  it('never writes a slide color the GB column has no label for (it would fail the whole row)', () => {
+    const o = { id: '1', productType: ADVENTURE, colorGates: { slideColor: 'Included' } };
+    const { plan, skipped } = planBoardWrites(o, requiredColorInputs(o), { slide: { slide_color: { brand: 'plastic', code: 'Gray' } } });
+    expect(plan.gb?.status_mkkdc95c).toBeUndefined();
+    expect(skipped.join(' ')).toMatch(/Gray/);
   });
 });

@@ -353,10 +353,11 @@ describe('handler — auth and customer isolation', () => {
     await handler({ method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } }, res);
 
     expect(res.statusCode).toBe(200);
-    expect(mockNotifyColorsConfirmed).toHaveBeenCalledWith('Acme Gym', 'a@b.com', res.body.totalUpcharge, expect.objectContaining({ errors: [] }));
+    expect(mockNotifyColorsConfirmed).toHaveBeenCalledWith('Acme Gym', 'a@b.com', res.body.totalUpcharge);
   });
 
   it('fills the staff color boards on confirm, with the order checklist and the cleaned selections', async () => {
+    process.env.VERCEL_ENV = 'production';
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
     mockOrderReflectingWrites({ id: 'real-order-123', name: 'Acme Gym', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
     mockSyncBoards.mockClear();
@@ -373,6 +374,7 @@ describe('handler — auth and customer isolation', () => {
   });
 
   it('a board-sync failure alerts staff but never fails the confirm', async () => {
+    process.env.VERCEL_ENV = 'production';
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
     mockOrderReflectingWrites({ id: 'real-order-123', name: 'Acme Gym', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
     mockSyncBoards.mockResolvedValueOnce({ boards: { gb: { itemId: '1', created: false } }, errors: ['R: label missing'], skipped: [] });
@@ -383,6 +385,33 @@ describe('handler — auth and customer isolation', () => {
 
     expect(res.statusCode).toBe(200);
     expect(mockReportCriticalFailure).toHaveBeenCalledWith('color-selection-board-sync', expect.stringContaining('R: label missing'), expect.anything());
+  });
+
+  it('does not fill the boards outside production (Preview shares the real Monday account)', async () => {
+    process.env.VERCEL_ENV = 'preview';
+    delete process.env.COLOR_BOARD_SYNC;
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockOrderReflectingWrites({ id: 'real-order-123', name: 'Acme Gym', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockSyncBoards.mockClear();
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockSyncBoards).not.toHaveBeenCalled();
+    expect(mockMarkSectionCompleteSafe).toHaveBeenCalled();
+  });
+
+  it('sends the staff email and marks the checklist even if the board fill hangs', async () => {
+    process.env.VERCEL_ENV = 'production';
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockOrderReflectingWrites({ id: 'real-order-123', name: 'Acme Gym', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    const order = [];
+    mockNotifyColorsConfirmed.mockImplementationOnce(async () => { order.push('email'); });
+    mockMarkSectionCompleteSafe.mockImplementationOnce(async () => { order.push('checklist'); return true; });
+    mockSyncBoards.mockImplementationOnce(async () => { order.push('sync'); return { boards: {}, errors: [], skipped: [], notes: [] }; });
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(order).toEqual(['email', 'checklist', 'sync']);
   });
 
   it('does not touch the boards on an autosave (only on confirm)', async () => {

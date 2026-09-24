@@ -17,6 +17,11 @@ import { validatePresentSelections, validateColorSelectionData, computeTotalUpch
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { requireCustomerSession, loadSessionOrder, enforceRateLimit } from '../../../lib/apiAuth';
 import { notifyTeamColorsConfirmed } from '../../../lib/email';
+import { syncConfirmedColorsToBoards } from '../../../lib/colorBoardSync';
+
+// A confirm now also writes the GB / R / Accessories rows (several Monday
+// calls); give it room so a slow Monday response can't time the confirm out.
+export const config = { maxDuration: 60 };
 
 // Real race found by independent code review (2026-09-09): the re-check-
 // before-write below (added 2026-09-02/03) only ever catches a concurrent
@@ -275,9 +280,24 @@ export default async function handler(req, res) {
         );
       }
 
+      // Fill the staff color boards automatically — nobody re-types these
+      // (lib/colorBoardSync.js). Never fails the confirm: the snapshot above
+      // is already the real record. Anything that didn't land is alerted.
+      let boardSync = null;
+      try {
+        boardSync = await syncConfirmedColorsToBoards(order, requiredColorInputs(order) || [], cleanSelections);
+      } catch (err) {
+        boardSync = { boards: {}, errors: [err.message], skipped: [] };
+      }
+      if (boardSync.errors.length) {
+        await reportCriticalFailure('color-selection-board-sync',
+          `Order ${order.id} ("${order.name}") confirmed colors, but writing them to the staff color boards failed: ${boardSync.errors.join('; ')}. The picks are in the order's "Portal: Color Selection Answers (JSON)" column and the admin portal.`,
+          { orderId: order.id, errors: boardSync.errors });
+      }
+
       // Staff email (with the upcharge up front). Never fails the confirm;
-      // a failure with money attached is escalated.
-      await notifyTeamColorsConfirmed(order.name, session.email, totalUpcharge).catch(async (err) => {
+      // a failed email with money attached is escalated.
+      await notifyTeamColorsConfirmed(order.name, session.email, totalUpcharge, boardSync).catch(async (err) => {
         console.error('color-selection: confirm email failed:', err.message);
         if (totalUpcharge > 0) {
           await reportCriticalFailure('color-selection-confirm-email',

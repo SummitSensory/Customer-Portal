@@ -10,7 +10,9 @@ vi.mock('../../../lib/monday', () => ({
   getOrderMessages: (...args) => mockGetOrderMessages(...args),
   setStatusLabel: (...args) => mockSetStatusLabel(...args),
   postTaggedUpdate: (...args) => mockPostTaggedUpdate(...args),
+  deleteUpdate: (...args) => mockDeleteUpdate(...args),
 }));
+const mockDeleteUpdate = vi.fn().mockResolvedValue(undefined);
 
 const mockSendPortalInvitation = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../../lib/email', () => ({
@@ -55,8 +57,9 @@ describe('POST /api/monday/invite-webhook', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toMatchObject({ ok: true, resend: true, manual: true });
     expect(mockSendPortalInvitation).toHaveBeenCalledWith('pat@acme.test', 'Pat', 'Acme Soar');
-    expect(mockPostTaggedUpdate.mock.calls[0][2]).toContain('re-sent');
-    expect(mockPostTaggedUpdate.mock.calls[0][2]).toContain('"Manually Send Invite"');
+    const sent = mockPostTaggedUpdate.mock.calls.find((c) => c[1] === 'PORTAL: Invitation Sent');
+    expect(sent[2]).toContain('re-sent');
+    expect(sent[2]).toContain('"Manually Send Invite"');
     expect(mockSetStatusLabel).toHaveBeenCalledWith(123, 'manualInvite', 'Manually Sent Invite');
     expect(mockSetStatusLabel).not.toHaveBeenCalledWith(expect.anything(), 'inviteStatus', expect.anything());
   });
@@ -78,5 +81,71 @@ describe('POST /api/monday/invite-webhook', () => {
     expect(res.body).toMatchObject({ ok: true, manual: false });
     expect(mockSendPortalInvitation).toHaveBeenCalledTimes(1);
     expect(mockSetStatusLabel).toHaveBeenCalledWith(123, 'inviteStatus', 'Invite Sent');
+  });
+});
+
+// Monday fires "Manufacturing Phase → Incoming Order" twice for an order
+// created at Incoming Order; every new customer got two invites ~1s apart.
+describe('POST /api/monday/invite-webhook — duplicate trigger guard', () => {
+  const INCOMING = { pulseId: 123, columnId: 'status__1', value: { label: { text: 'Incoming Order' } } };
+  const now = () => new Date().toISOString();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetOrderById.mockResolvedValue(ORDER);
+  });
+
+  it('the later of two simultaneous requests backs off and removes its claim', async () => {
+    mockPostTaggedUpdate.mockResolvedValueOnce({ id: '502' }); // this request's claim
+    mockGetOrderMessages.mockResolvedValue([
+      { id: '501', body: '[PORTAL: Invitation Claim]\n…', created_at: now() }, // the other request's
+      { id: '502', body: '[PORTAL: Invitation Claim]\n…', created_at: now() },
+    ]);
+    const res = makeRes();
+    await handler(makeReq(INCOMING), res);
+
+    expect(res.body.skipped).toMatch(/Duplicate/);
+    expect(mockSendPortalInvitation).not.toHaveBeenCalled();
+    expect(mockDeleteUpdate).toHaveBeenCalledWith('502');
+  });
+
+  it('the earliest claim sends once, then removes its claim', async () => {
+    mockPostTaggedUpdate.mockResolvedValueOnce({ id: '501' });
+    mockGetOrderMessages.mockResolvedValue([
+      { id: '501', body: '[PORTAL: Invitation Claim]\n…', created_at: now() },
+      { id: '502', body: '[PORTAL: Invitation Claim]\n…', created_at: now() },
+    ]);
+    const res = makeRes();
+    await handler(makeReq(INCOMING), res);
+
+    expect(res.body.ok).toBe(true);
+    expect(mockSendPortalInvitation).toHaveBeenCalledTimes(1);
+    expect(mockDeleteUpdate).toHaveBeenCalledWith('501');
+  });
+
+  it('skips when an invite was already sent in the last 2 minutes', async () => {
+    mockPostTaggedUpdate.mockResolvedValueOnce({ id: '510' });
+    mockGetOrderMessages.mockResolvedValue([
+      { id: '500', body: '[PORTAL: Invitation Sent]\nsent', created_at: now() },
+      { id: '510', body: '[PORTAL: Invitation Claim]\n…', created_at: now() },
+    ]);
+    const res = makeRes();
+    await handler(makeReq(INCOMING), res);
+
+    expect(res.body.skipped).toMatch(/Duplicate/);
+    expect(mockSendPortalInvitation).not.toHaveBeenCalled();
+  });
+
+  it('a deliberate resend later on still sends', async () => {
+    mockPostTaggedUpdate.mockResolvedValueOnce({ id: '510' });
+    mockGetOrderMessages.mockResolvedValue([
+      { id: '500', body: '[PORTAL: Invitation Sent]\nsent', created_at: new Date(Date.now() - 10 * 60 * 1000).toISOString() },
+      { id: '510', body: '[PORTAL: Invitation Claim]\n…', created_at: now() },
+    ]);
+    const res = makeRes();
+    await handler(makeReq({ pulseId: 123, columnId: 'color_mm7mvqg9', value: { label: { text: 'Manually Send Invite' } } }), res);
+
+    expect(res.body).toMatchObject({ ok: true, resend: true });
+    expect(mockSendPortalInvitation).toHaveBeenCalledTimes(1);
   });
 });

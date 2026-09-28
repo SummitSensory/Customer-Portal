@@ -40,6 +40,7 @@
 
 import {
   COLS,
+  deleteUpdate,
   getOrderById,
   getOrderMessages,
   postTaggedUpdate,
@@ -47,6 +48,10 @@ import {
 } from '../../../lib/monday';
 import { sendPortalInvitation } from '../../../lib/email';
 import { secretsMatch } from '../../../lib/auth';
+
+const SENT_TAG = 'PORTAL: Invitation Sent';
+const CLAIM_TAG = 'PORTAL: Invitation Claim';
+const DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -80,16 +85,38 @@ export default async function handler(req, res) {
     return res.status(200).json({ skipped: `Column changed to "${label}", not "Manually Send Invite".` });
   }
 
+  let claim = null;
+  const releaseClaim = async () => {
+    if (claim?.id) await deleteUpdate(claim.id).catch(() => {});
+  };
+
   try {
     const order = await getOrderById(itemId);
     if (!order?.customerEmail) {
       return res.status(200).json({ skipped: 'Order has no customer email.' });
     }
 
+    // Duplicate guard. Monday fires the "Manufacturing Phase → Incoming Order"
+    // automation twice when an order is created already at Incoming Order, so
+    // every new customer got the invite twice, ~1s apart (6 customers,
+    // 2026-09-24 → 09-28). Each request posts a claim, then re-reads: only the
+    // earliest claim sends, and nothing sends if an invite already went out in
+    // the last DUPLICATE_WINDOW_MS. A deliberate resend minutes later is
+    // unaffected.
+    // A failed claim write doesn't block the send — it only loses the guard.
+    claim = await postTaggedUpdate(itemId, CLAIM_TAG, `Sending the portal invitation (Monday "${trigger}")…`).catch(() => null);
+    const updates = await getOrderMessages(itemId).catch(() => []);
+    const since = Date.now() - DUPLICATE_WINDOW_MS;
+    const recent = (tag) => updates.filter(u => (u.body || '').includes(`[${tag}]`) && new Date(u.created_at).getTime() >= since);
+    const firstClaim = recent(CLAIM_TAG).sort((a, b) => Number(a.id) - Number(b.id))[0];
+    if (recent(SENT_TAG).length || (firstClaim && claim?.id && String(firstClaim.id) !== String(claim.id))) {
+      await releaseClaim();
+      return res.status(200).json({ skipped: 'Duplicate trigger — this invitation was already sent (or is being sent) moments ago.' });
+    }
+
     // Not a gate — just used to word the logged update as "Sent" vs "Resent"
     // so Monday's history stays clear about which this was.
-    const updates = await getOrderMessages(itemId).catch(() => []);
-    const isResend = updates.some(u => (u.body || '').includes('[PORTAL: Invitation Sent]'));
+    const isResend = updates.some(u => (u.body || '').includes(`[${SENT_TAG}]`));
 
     await sendPortalInvitation(
       order.customerEmail,
@@ -99,7 +126,7 @@ export default async function handler(req, res) {
 
     await postTaggedUpdate(
       itemId,
-      'PORTAL: Invitation Sent',
+      SENT_TAG,
       `Portal invitation ${isResend ? 're-sent' : 'sent'} to ${order.customerEmail} on ${new Date().toLocaleDateString()} (triggered by Monday "${trigger}").`
     );
 
@@ -110,8 +137,10 @@ export default async function handler(req, res) {
       await setStatusLabel(itemId, 'inviteStatus', process.env.MONDAY_INVITE_SENT_LABEL || 'Invite Sent').catch(() => {});
     }
 
+    await releaseClaim();
     return res.status(200).json({ ok: true, invited: order.customerEmail, resend: isResend, manual });
   } catch (err) {
+    await releaseClaim();
     console.error('Invite webhook error:', err);
     return res.status(500).json({ error: 'Failed to send invitation.' });
   }

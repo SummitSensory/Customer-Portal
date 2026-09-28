@@ -23,7 +23,9 @@ import { syncConfirmedColorsToBoards } from '../../../lib/colorBoardSync';
 // calls); give it room so a slow Monday response can't time the confirm out.
 export const config = { maxDuration: 60 };
 
-const BOARD_SYNC_DEADLINE_MS = 20_000;
+// 20s was hit on 2026-09-28 by a sync that did finish ~1s later. The function
+// allows 60s; the steps before this take a few seconds.
+const BOARD_SYNC_DEADLINE_MS = 40_000;
 
 function boardSyncEnabled() {
   const flag = (process.env.COLOR_BOARD_SYNC || '').toLowerCase();

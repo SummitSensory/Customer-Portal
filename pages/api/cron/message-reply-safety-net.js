@@ -34,7 +34,7 @@
  * message-history fetch entirely.
  */
 
-import { getAllOrders, getOrderMessages } from '../../../lib/monday';
+import { getOrderSummaries, getOrderMessages } from '../../../lib/monday';
 import { isPortalChatMessage, isStaffMessage } from '../../../lib/messageOrigin';
 import { isStaffEmail } from '../../../lib/auth';
 import { reportCriticalFailure } from '../../../lib/monitoring';
@@ -78,7 +78,9 @@ export default async function handler(req, res) {
   const flagged = [];
 
   try {
-    const orders = await getAllOrders();
+    // Only email + Message Status are read here — the full order load is
+    // far heavier and was timing out on Monday (2026-09-28).
+    const orders = await getOrderSummaries();
     const withEmail = orders.filter(o => o.customerEmail);
     results.checked = withEmail.length;
 

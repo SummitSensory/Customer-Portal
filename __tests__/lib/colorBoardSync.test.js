@@ -75,6 +75,7 @@ describe('planBoardWrites', () => {
     expect(plan.acc.color_mm7gvxhs).toEqual({ label: 'Received' });
     expect(plan.acc.text_mm7e27px).toBe('Red/Blue');
     expect(plan.acc.color_mm7eb6xn).toEqual({ label: 'Received' });
+    expect(plan.acc.color_mm7mkrfb).toEqual({ label: 'Portal' }); // Form of Submission
   });
 
   it('R: Soar column wraps and floor padding each get their own column', () => {

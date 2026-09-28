@@ -49,6 +49,7 @@ describe('planBoardWrites', () => {
     expect(plan.gb.text_mkkdxjxv).toBe('P000-BK247'); // climbing wall
     expect(plan.gb.status_mkkdc95c).toEqual({ label: 'Green' });
     expect(plan.gb.project_status).toEqual({ label: 'Received' });
+    expect(plan.gb.color_mm7mywjv).toEqual({ label: 'Portal' }); // Form of Submission
   });
 
   it('R: one text column per area, the main status, form label and Received', () => {
@@ -58,6 +59,7 @@ describe('planBoardWrites', () => {
     expect(plan.r.status9__1).toEqual({ label: 'Lime' }); // main = Adventure Mat System
     expect(plan.r.color_Mjj63A3N).toEqual({ label: 'Adventure Series' });
     expect(plan.r.project_status).toEqual({ label: 'Received' });
+    expect(plan.r.color_mm7ms39b).toEqual({ label: 'Portal' }); // Form of Submission
   });
 
   it('Accessories: ball pit, 7 Palisades pieces, 3 climb & slide pieces, foundation, each product Received', () => {
@@ -73,6 +75,7 @@ describe('planBoardWrites', () => {
     expect(plan.acc.color_mm7gvxhs).toEqual({ label: 'Received' });
     expect(plan.acc.text_mm7e27px).toBe('Red/Blue');
     expect(plan.acc.color_mm7eb6xn).toEqual({ label: 'Received' });
+    expect(plan.acc.color_mm7mkrfb).toEqual({ label: 'Portal' }); // Form of Submission
   });
 
   it('R: Soar column wraps and floor padding each get their own column', () => {
@@ -196,7 +199,7 @@ describe('syncConfirmedColorsToBoards', () => {
     const res = await syncConfirmedColorsToBoards(soarOrder, requiredColorInputs(soarOrder), soarSel);
     expect(res.boards.gb).toEqual({ itemId: '777', created: true });
     const create = calls.find((c) => c.query.includes('create_item'));
-    expect(create.variables.n).toBe('Acme Soar — portal');
+    expect(create.variables.n).toBe('Acme Soar');
     const v = JSON.parse(create.variables.v);
     expect(v[BOARDS.gb.backLink]).toEqual({ item_ids: [555] });
     expect(v[BOARDS.gb.dealsLink]).toEqual({ item_ids: [42] });

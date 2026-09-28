@@ -17,9 +17,18 @@
  * Each send is still logged to Monday (worded "Sent" vs "Resent" based on
  * whether a prior invite update exists) so there's a visible history either way.
  *
+ * Manual resend (2026-09-28): the same endpoint also handles the separate
+ * "Manually Send Invite" column (COLS.manualInvite). A second Monday automation:
+ *   When [Manually Send Invite] changes to "Manually Send Invite",
+ *   Send a webhook to: (the same URL as above)
+ * sends the exact same invitation, regardless of any earlier send, then flips
+ * THAT column to "Manually Sent Invite" (the "Customer Portal Invite" column is
+ * left alone). Which column fired is read from Monday's event.columnId.
+ *
  * Env:
  *   MONDAY_INVITE_SECRET   shared secret in the webhook URL — required, no fallback
  *   MONDAY_INVITE_SENT_LABEL   label to set after sending (default "Invite Sent")
+ *   MONDAY_MANUAL_INVITE_SENT_LABEL   same, for the manual column (default "Manually Sent Invite")
  *
  * PORTAL-012: this used to fall back to CRON_SECRET when MONDAY_INVITE_SECRET
  * was unset, and skipped verification entirely if BOTH were unset — either
@@ -30,6 +39,7 @@
  */
 
 import {
+  COLS,
   getOrderById,
   getOrderMessages,
   postTaggedUpdate,
@@ -60,6 +70,16 @@ export default async function handler(req, res) {
   const itemId = req.body?.itemId || req.body?.event?.pulseId;
   if (!itemId) return res.status(400).json({ error: 'No item id in payload.' });
 
+  const manual = !!COLS.manualInvite && req.body?.event?.columnId === COLS.manualInvite;
+  const trigger = manual ? 'Manually Send Invite' : 'Send Invite';
+  // Only the one label sends — so flipping the column to "Manually Sent Invite"
+  // (below) or "Do Not Send" can't send again if the automation is set to fire
+  // on any change of the column.
+  const label = req.body?.event?.value?.label?.text;
+  if (manual && label && label !== 'Manually Send Invite') {
+    return res.status(200).json({ skipped: `Column changed to "${label}", not "Manually Send Invite".` });
+  }
+
   try {
     const order = await getOrderById(itemId);
     if (!order?.customerEmail) {
@@ -80,13 +100,17 @@ export default async function handler(req, res) {
     await postTaggedUpdate(
       itemId,
       'PORTAL: Invitation Sent',
-      `Portal invitation ${isResend ? 're-sent' : 'sent'} to ${order.customerEmail} on ${new Date().toLocaleDateString()} (triggered by Monday "Send Invite").`
+      `Portal invitation ${isResend ? 're-sent' : 'sent'} to ${order.customerEmail} on ${new Date().toLocaleDateString()} (triggered by Monday "${trigger}").`
     );
 
-    // Flip the status back so the column reflects the latest send.
-    await setStatusLabel(itemId, 'inviteStatus', process.env.MONDAY_INVITE_SENT_LABEL || 'Invite Sent').catch(() => {});
+    // Flip the triggering column so it reflects the latest send.
+    if (manual) {
+      await setStatusLabel(itemId, 'manualInvite', process.env.MONDAY_MANUAL_INVITE_SENT_LABEL || 'Manually Sent Invite').catch(() => {});
+    } else {
+      await setStatusLabel(itemId, 'inviteStatus', process.env.MONDAY_INVITE_SENT_LABEL || 'Invite Sent').catch(() => {});
+    }
 
-    return res.status(200).json({ ok: true, invited: order.customerEmail, resend: isResend });
+    return res.status(200).json({ ok: true, invited: order.customerEmail, resend: isResend, manual });
   } catch (err) {
     console.error('Invite webhook error:', err);
     return res.status(500).json({ error: 'Failed to send invitation.' });

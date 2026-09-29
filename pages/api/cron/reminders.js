@@ -24,9 +24,10 @@ import { mapWithConcurrency } from '../../../lib/concurrency';
 
 // Orders were previously processed one at a time; this run took as long as
 // (order count) × (message fetch + reminder send latency). 8 concurrent
-// orders keeps well under Monday/AfterShip's rate limits while cutting run
-// time roughly 8x on boards with many orders.
-const REMINDER_CONCURRENCY = 8;
+// orders kept under Monday/AfterShip's rate limits, but on 2026-09-28 several
+// concurrent update-history reads timed out; 4 (with completed orders now
+// skipped before any fetch) keeps the run short without piling on Monday.
+const REMINDER_CONCURRENCY = 4;
 
 // Must match the tabs in the portal (site is merged into delivery)
 const SETUP_TABS = [
@@ -80,6 +81,20 @@ export default async function handler(req, res) {
     // sequential loop, just faster on boards with many orders.
     await mapWithConcurrency(withEmail, REMINDER_CONCURRENCY, async (order) => {
       try {
+        // Determine which tabs are still incomplete — read directly from the
+        // durable Portal:* status columns (order.progress), not from
+        // free-text update history (see PROGRESS_KEYS comment above).
+        // Checked BEFORE fetching the update history: it needs no Monday
+        // call, and fetching history for every order (most of them done)
+        // timed out on Monday several times per run (2026-09-28).
+        const incompleteTabs = SETUP_TABS.filter(tab => {
+          const progressKey = PROGRESS_KEYS[tab.key];
+          return order.progress?.[progressKey] !== '✅';
+        });
+
+        // All done — no reminder needed
+        if (incompleteTabs.length === 0) { results.skipped++; return; }
+
         const updates = await getOrderMessages(order.id);
         const bodies = updates.map(u => u.body || '');
 
@@ -89,17 +104,6 @@ export default async function handler(req, res) {
 
         const inviteDate = new Date(inviteUpdate.created_at);
         const daysSinceInvite = Math.floor((now - inviteDate) / (1000 * 60 * 60 * 24));
-
-        // Determine which tabs are still incomplete — read directly from the
-        // durable Portal:* status columns (order.progress), not from
-        // free-text update history (see PROGRESS_KEYS comment above).
-        const incompleteTabs = SETUP_TABS.filter(tab => {
-          const progressKey = PROGRESS_KEYS[tab.key];
-          return order.progress?.[progressKey] !== '✅';
-        });
-
-        // All done — no reminder needed
-        if (incompleteTabs.length === 0) { results.skipped++; return; }
 
         // Count how many reminders have already been sent
         const sentCount = bodies.filter(b => b.match(/\[PORTAL: Reminder #\d+\]/)).length;

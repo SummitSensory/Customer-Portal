@@ -121,12 +121,15 @@ export function mergeProgress(resolvedOrder, localCompletions) {
   // optimistic "complete" sitting in localCompletions for mergeProgress to
   // race against and lose — by the time a local completion exists at all,
   // Monday's own column is already what wrote it.
+  // "N/A" (staff: this step doesn't apply to the order) counts as done, same
+  // as the admin dashboard and the reminders cron.
+  const done = (v) => v === '✅' || v === 'N/A';
   const fromMonday = {
-    contact:   p.contact === '✅',
-    billing:   p.billing === '✅',
-    delivery:  p.delivery === '✅',
-    color:     p.colors === '✅',
-    documents: p.documents === '✅',
+    contact:   done(p.contact),
+    billing:   done(p.billing),
+    delivery:  done(p.delivery),
+    color:     done(p.colors),
+    documents: done(p.documents),
   };
   return { ...localCompletions, ...fromMonday };
 }

@@ -55,6 +55,49 @@ const SETUP_TABS = [
 // logs, fixes this for good and can't drift out of sync again.
 const PROGRESS_KEYS = { contact: 'contact', billing: 'billing', delivery: 'delivery', color: 'colors', documents: 'documents' };
 
+// "N/A" is how staff mark a step that doesn't apply to an order. It used to
+// count as incomplete here, so an order with every step N/A got the "order on
+// hold" email listing all five (2026-09-28).
+export const DONE_LABELS = new Set(['✅', 'N/A']);
+
+// Manufacturing Phase labels that mean the order is already past customer
+// setup — staff have the details (often gathered outside the portal) or the
+// order is shipped / closed. No setup reminders once an order reaches one:
+// Wiggle Room got "Order on hold — manufacturing cannot begin" on 2026-09-28
+// while at GB Fab Details Sent. Any phase NOT listed (Incoming Order, Color
+// Details Needed, Waiting on Customer Info, a new label…) keeps reminding.
+// Override with REMINDER_STOP_PHASES (comma-separated labels).
+const DEFAULT_STOP_PHASES = [
+  'Details Obtained', 'Ready for Manufacturing', 'GB Fab Details Sent',
+  'Great Mats Order Submitted', 'RES Order Submitted', 'Sports Play Order Submitted',
+  'Needs Install Drawing', 'Install Doc Sent', 'Shipped', 'Order Complete',
+  'ORDER CANCELLED', 'No Action Needed',
+];
+export function stopPhases() {
+  const raw = process.env.REMINDER_STOP_PHASES;
+  return new Set((raw ? raw.split(',') : DEFAULT_STOP_PHASES).map(s => s.trim()).filter(Boolean));
+}
+
+// The portal's Documents tab lists the JOTFORM_FORM_MAP forms on the
+// "required_documents" tab for the order's product type (pages/portal/index.js
+// docForms), and shows "No forms required" when there are none — so an order
+// with none has nothing to do there and isn't reminded about it.
+function hasRequiredDocuments(productType) {
+  let map = {};
+  try { map = JSON.parse(process.env.JOTFORM_FORM_MAP || '{}'); } catch { return true; }
+  return Object.values(map).some(f =>
+    f?.tab === 'required_documents' && (!f.productTypes || f.productTypes.includes(productType))
+  );
+}
+
+export function incompleteSetupTabs(order) {
+  return SETUP_TABS.filter(tab => {
+    if (DONE_LABELS.has(order.progress?.[PROGRESS_KEYS[tab.key]])) return false;
+    if (tab.key === 'documents' && !hasRequiredDocuments(order.productType)) return false;
+    return true;
+  });
+}
+
 export default async function handler(req, res) {
   const authHeader = req.headers['authorization'];
   // PORTAL-033: an unset CRON_SECRET used to make this a literal string
@@ -70,6 +113,7 @@ export default async function handler(req, res) {
 
   const now = new Date();
   const results = { checked: 0, reminded: 0, skipped: 0, errors: 0 };
+  const STOP_PHASES = stopPhases();
 
   try {
     const orders = await getAllOrders();
@@ -87,10 +131,8 @@ export default async function handler(req, res) {
         // Checked BEFORE fetching the update history: it needs no Monday
         // call, and fetching history for every order (most of them done)
         // timed out on Monday several times per run (2026-09-28).
-        const incompleteTabs = SETUP_TABS.filter(tab => {
-          const progressKey = PROGRESS_KEYS[tab.key];
-          return order.progress?.[progressKey] !== '✅';
-        });
+        if (STOP_PHASES.has((order.status || '').trim())) { results.skipped++; return; }
+        const incompleteTabs = incompleteSetupTabs(order);
 
         // All done — no reminder needed
         if (incompleteTabs.length === 0) { results.skipped++; return; }

@@ -53,7 +53,8 @@ describe('GET /api/cron/reminders', () => {
   const OLD_ENV = process.env;
 
   beforeEach(() => {
-    process.env = { ...OLD_ENV, CRON_SECRET: 'test-cron-secret', REMINDER_INTERVAL_DAYS: '3', REMINDER_MAX_COUNT: '6' };
+    process.env = { ...OLD_ENV, CRON_SECRET: 'test-cron-secret', REMINDER_INTERVAL_DAYS: '3', REMINDER_MAX_COUNT: '6',
+      JOTFORM_FORM_MAP: JSON.stringify({ 111: { tab: 'required_documents', name: 'W-9' } }) };
     mockGetAllOrders.mockReset();
     mockGetOrderMessages.mockReset();
     mockPostTaggedUpdate.mockReset().mockResolvedValue(undefined);
@@ -247,5 +248,48 @@ describe('GET /api/cron/reminders', () => {
       expect.stringContaining('failed before completing'),
       expect.anything()
     );
+  });
+  // 2026-09-28 audit: customers were told their order was on hold for steps
+  // that were N/A, had nothing to do, or that staff had already handled.
+  it("treats an N/A step as done (no reminder when every step is N/A or ✅)", async () => {
+    const naProgress = { contact: "N/A", billing: "✅", delivery: "N/A", colors: "N/A", documents: "N/A" };
+    mockGetAllOrders.mockResolvedValue([{ id: "1", customerEmail: "a@b.com", name: "Order A", progress: naProgress }]);
+    mockGetOrderMessages.mockResolvedValue([inviteUpdate(30)]);
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.body.skipped).toBe(1);
+    expect(mockSendSetupReminder).not.toHaveBeenCalled();
+    expect(mockGetOrderMessages).not.toHaveBeenCalled();
+  });
+
+  it("stops reminding once the order is past setup (e.g. GB Fab Details Sent, Shipped)", async () => {
+    mockGetAllOrders.mockResolvedValue([
+      { id: "1", customerEmail: "a@b.com", name: "A", status: "GB Fab Details Sent", progress: INCOMPLETE_PROGRESS },
+      { id: "2", customerEmail: "c@d.com", name: "B", status: "Shipped", progress: INCOMPLETE_PROGRESS },
+    ]);
+    mockGetOrderMessages.mockResolvedValue([inviteUpdate(30)]);
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.body.skipped).toBe(2);
+    expect(mockSendSetupReminder).not.toHaveBeenCalled();
+  });
+
+  it("still reminds while the order is waiting on the customer (e.g. Incoming Order)", async () => {
+    mockGetAllOrders.mockResolvedValue([{ id: "1", customerEmail: "a@b.com", name: "A", status: "Incoming Order", progress: INCOMPLETE_PROGRESS }]);
+    mockGetOrderMessages.mockResolvedValue([inviteUpdate(4)]);
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.body.reminded).toBe(1);
+    expect(mockSendSetupReminder.mock.calls[0][3]).toEqual(["Required Documents"]);
+  });
+
+  it("does not ask for Required Documents when no document form applies to the product", async () => {
+    process.env.JOTFORM_FORM_MAP = JSON.stringify({ 111: { tab: "required_documents", productTypes: ["Therapy Mats & Pads"] } });
+    mockGetAllOrders.mockResolvedValue([{ id: "1", customerEmail: "a@b.com", name: "A", productType: "Other", progress: INCOMPLETE_PROGRESS }]);
+    mockGetOrderMessages.mockResolvedValue([inviteUpdate(4)]);
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.body.skipped).toBe(1);
+    expect(mockSendSetupReminder).not.toHaveBeenCalled();
   });
 });

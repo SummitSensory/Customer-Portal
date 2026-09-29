@@ -48,4 +48,9 @@ describe('mergeProgress', () => {
     const merged = mergeProgress({ progress: {} }, { someOtherFlag: true });
     expect(merged.someOtherFlag).toBe(true);
   });
+
+  it("counts a step staff marked N/A as done (it does not apply to the order)", () => {
+    const merged = mergeProgress({ progress: { contact: "✅", billing: "N/A", delivery: "🚫", colors: "N/A", documents: "" } }, {});
+    expect(merged).toMatchObject({ contact: true, billing: true, delivery: false, color: true, documents: false });
+  });
 });

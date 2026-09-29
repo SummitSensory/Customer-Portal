@@ -98,6 +98,8 @@ describe('GET /api/cron/reminders', () => {
 
     expect(res.body.skipped).toBe(1);
     expect(mockSendSetupReminder).not.toHaveBeenCalled();
+    // No Monday history read for a completed order (these reads were timing out).
+    expect(mockGetOrderMessages).not.toHaveBeenCalled();
   });
 
   it('skips an order that has already received the max number of reminders', async () => {

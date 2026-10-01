@@ -20,7 +20,7 @@
  */
 
 import { getAllOrders, getOrderMessages, postTaggedUpdate } from '../../../lib/monday';
-import { sendSetupReminder, notifyTeamRemindersExhausted } from '../../../lib/email';
+import { sendSetupReminder, sendCombinedSetupReminder, notifyTeamRemindersExhausted } from '../../../lib/email';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
 
@@ -162,6 +162,7 @@ export default async function handler(req, res) {
   const now = new Date();
   const results = { checked: 0, reminded: 0, skipped: 0, errors: 0, exhausted: 0 };
   const exhaustedOrders = [];
+  const dueReminders = [];
   const STOP_PHASES = stopPhases();
 
   try {
@@ -169,9 +170,10 @@ export default async function handler(req, res) {
     const withEmail = orders.filter(o => o.customerEmail);
     results.checked = withEmail.length;
 
-    // Processed concurrently (see mapWithConcurrency's comment) instead of
-    // one order at a time — behavior/counting is identical to the old
-    // sequential loop, just faster on boards with many orders.
+    // Two passes. First decide, per order (concurrently), which reminders are
+    // due. Then send ONE email per customer address: a customer with two
+    // orders due the same day (Box Butte General Hospital has two) used to
+    // get two reminders seconds apart.
     await mapWithConcurrency(withEmail, REMINDER_CONCURRENCY, async (order) => {
       try {
         // Determine which tabs are still incomplete — read directly from the
@@ -195,19 +197,44 @@ export default async function handler(req, res) {
           return;
         }
         if (decision.action !== 'send') { results.skipped++; return; }
+        dueReminders.push({ order, labels: incompleteTabs.map(t => t.label), number: decision.number });
+      } catch (orderErr) {
+        console.error(`Reminder error for order ${order.id}:`, orderErr);
+        results.errors++;
+      }
+    });
 
-        // Send the reminder
-        const reminderNumber = decision.number;
-        const customerName = order.firstName || order.pocName?.split(' ')[0] || '';
+    const byCustomer = new Map();
+    for (const d of dueReminders) {
+      const key = d.order.customerEmail.toLowerCase().trim();
+      if (!byCustomer.has(key)) byCustomer.set(key, []);
+      byCustomer.get(key).push(d);
+    }
 
-        const sent = await sendSetupReminder(
-          order.customerEmail,
-          customerName,
-          order.name,
-          incompleteTabs.map(t => t.label),
-          reminderNumber
-        );
+    await mapWithConcurrency([...byCustomer.values()], REMINDER_CONCURRENCY, async (group) => {
+      const first = group[0].order;
+      const customerName = first.firstName || first.pocName?.split(' ')[0] || '';
+      let sent;
+      try {
+        sent = group.length === 1
+          ? await sendSetupReminder(first.customerEmail, customerName, first.name, group[0].labels, group[0].number)
+          : await sendCombinedSetupReminder(
+            first.customerEmail,
+            customerName,
+            group.map(d => ({ name: d.order.name, incomplete: d.labels })),
+            Math.max(...group.map(d => d.number))
+          );
+      } catch (sendErr) {
+        console.error(`Reminder send failed for ${first.customerEmail} (orders ${group.map(d => d.order.id).join(', ')}):`, sendErr);
+        results.errors += group.length;
+        return;
+      }
+      const combinedNote = group.length > 1
+        ? ` One email covered ${group.length} orders: ${group.map(d => d.order.name).join('; ')}.`
+        : '';
 
+      for (const { order, labels, number: reminderNumber } of group) {
+        const incompleteTabs = labels.map(label => ({ label }));
         // Log this reminder so we don't send it again. This write is split into
         // its OWN try/catch, separate from the send above (same pattern already
         // used for the send/dedupe-write pair in pages/api/aftership/webhook.js's
@@ -228,7 +255,7 @@ export default async function handler(req, res) {
           await postTaggedUpdate(
             order.id,
             `PORTAL: Reminder #${reminderNumber}`,
-            `Reminder #${reminderNumber} sent to ${order.customerEmail} on ${now.toLocaleDateString()}. Incomplete: ${incompleteTabs.map(t => t.label).join(', ')}.${sent?.id ? ` Email ID: ${sent.id}` : ''}`
+            `Reminder #${reminderNumber} sent to ${order.customerEmail} on ${now.toLocaleDateString()}. Incomplete: ${incompleteTabs.map(t => t.label).join(', ')}.${combinedNote}${sent?.id ? ` Email ID: ${sent.id}` : ''}`
           );
         } catch (markerErr) {
           await reportCriticalFailure(
@@ -239,9 +266,6 @@ export default async function handler(req, res) {
         }
 
         results.reminded++;
-      } catch (orderErr) {
-        console.error(`Reminder error for order ${order.id}:`, orderErr);
-        results.errors++;
       }
     });
 

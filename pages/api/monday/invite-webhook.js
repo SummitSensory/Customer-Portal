@@ -42,6 +42,7 @@ import {
   COLS,
   deleteUpdate,
   getOrderById,
+  getOrderIdsByEmail,
   getOrderMessages,
   postTaggedUpdate,
   setStatusLabel,
@@ -103,14 +104,46 @@ export default async function handler(req, res) {
     // earliest claim sends, and nothing sends if an invite already went out in
     // the last DUPLICATE_WINDOW_MS. A deliberate resend minutes later is
     // unaffected.
+    //
+    // The guard spans every order with this customer's email, not just this
+    // one: Box Butte General Hospital has two Monday orders created seconds
+    // apart, and each sent its own invitation to the same person 4s apart
+    // (2026-10-01). Monday update ids increase across the whole account, so
+    // "earliest claim wins" works across orders too. One login covers all of
+    // a customer's orders, so one invitation is all they need; the other
+    // orders get an "Invitation Sent" note (their reminder clock still starts).
     // A failed claim write doesn't block the send — it only loses the guard.
     claim = await postTaggedUpdate(itemId, CLAIM_TAG, `Sending the portal invitation (Monday "${trigger}")…`).catch(() => null);
-    const updates = await getOrderMessages(itemId).catch(() => []);
+    const self = String(itemId);
+    const siblingIds = await Promise.resolve().then(() => getOrderIdsByEmail(order.customerEmail)).catch(() => []);
+    const ids = [...new Set([self, ...siblingIds.map(String)])];
+    const histories = await Promise.all(ids.map(id =>
+      getOrderMessages(id).then(list => list.map(u => ({ ...u, itemId: id }))).catch(() => [])
+    ));
+    const updates = histories[0];
+    const all = histories.flat();
     const since = Date.now() - DUPLICATE_WINDOW_MS;
-    const recent = (tag) => updates.filter(u => (u.body || '').includes(`[${tag}]`) && new Date(u.created_at).getTime() >= since);
+    const recent = (tag) => all.filter(u => (u.body || '').includes(`[${tag}]`) && new Date(u.created_at).getTime() >= since);
     const firstClaim = recent(CLAIM_TAG).sort((a, b) => Number(a.id) - Number(b.id))[0];
-    if (recent(SENT_TAG).length || (firstClaim && claim?.id && String(firstClaim.id) !== String(claim.id))) {
+    const recentSent = recent(SENT_TAG);
+    const lostClaim = !!(firstClaim && claim?.id && String(firstClaim.id) !== String(claim.id));
+    if (recentSent.length || lostClaim) {
       await releaseClaim();
+      const ownSent = recentSent.some(u => u.itemId === self);
+      const coveredBy = recentSent.find(u => u.itemId !== self) || (lostClaim && firstClaim.itemId !== self ? firstClaim : null);
+      if (coveredBy && !ownSent) {
+        await postTaggedUpdate(
+          itemId,
+          SENT_TAG,
+          `No separate email — ${order.customerEmail} was sent the portal invitation moments ago for another of their orders (Monday item ${coveredBy.itemId}). One login covers all of their orders.`
+        ).catch(() => {});
+        if (manual) {
+          await setStatusLabel(itemId, 'manualInvite', process.env.MONDAY_MANUAL_INVITE_SENT_LABEL || 'Manually Sent Invite').catch(() => {});
+        } else {
+          await setStatusLabel(itemId, 'inviteStatus', process.env.MONDAY_INVITE_SENT_LABEL || 'Invite Sent').catch(() => {});
+        }
+        return res.status(200).json({ skipped: 'Covered by the invitation just sent for another order with this customer email.', coveredBy: coveredBy.itemId });
+      }
       return res.status(200).json({ skipped: 'Duplicate trigger — this invitation was already sent (or is being sent) moments ago.' });
     }
 

@@ -4,7 +4,9 @@ const mockGetOrderById = vi.fn();
 const mockGetOrderMessages = vi.fn();
 const mockSetStatusLabel = vi.fn().mockResolvedValue(undefined);
 const mockPostTaggedUpdate = vi.fn().mockResolvedValue(undefined);
+const mockGetOrderIdsByEmail = vi.fn().mockResolvedValue([]);
 vi.mock('../../../lib/monday', () => ({
+  getOrderIdsByEmail: (...args) => mockGetOrderIdsByEmail(...args),
   COLS: { inviteStatus: 'color_mm5427cr', manualInvite: 'color_mm7mvqg9' },
   getOrderById: (...args) => mockGetOrderById(...args),
   getOrderMessages: (...args) => mockGetOrderMessages(...args),
@@ -146,6 +148,79 @@ describe('POST /api/monday/invite-webhook — duplicate trigger guard', () => {
     await handler(makeReq({ pulseId: 123, columnId: 'color_mm7mvqg9', value: { label: { text: 'Manually Send Invite' } } }), res);
 
     expect(res.body).toMatchObject({ ok: true, resend: true });
+    expect(mockSendPortalInvitation).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Box Butte General Hospital: two Monday orders for the same contact, created
+// seconds apart — each sent its own invitation, 4s apart (2026-10-01).
+describe('POST /api/monday/invite-webhook — one invitation per customer email', () => {
+  const INCOMING = (pulseId) => ({ pulseId, columnId: 'color_mm5427cr', value: { label: { text: 'Send Invite' } } });
+  const now = () => new Date().toISOString();
+  const A = { id: '686785', name: 'Box Butte (A)', customerEmail: 'gbehling@bbgh.org' };
+  const B = { id: '694238', name: 'Box Butte (B)', customerEmail: 'gbehling@bbgh.org' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetOrderIdsByEmail.mockResolvedValue([A.id, B.id]);
+  });
+
+  it('the other order of the same customer claimed first: no email, an "Invitation Sent" note so its reminders still start', async () => {
+    mockGetOrderById.mockResolvedValue(B);
+    mockPostTaggedUpdate.mockResolvedValueOnce({ id: '902' }); // B's claim
+    mockGetOrderMessages.mockImplementation(async (id) => String(id) === A.id
+      ? [{ id: '901', body: '[PORTAL: Invitation Claim]\n…', created_at: now() }]
+      : [{ id: '902', body: '[PORTAL: Invitation Claim]\n…', created_at: now() }]);
+
+    const res = makeRes();
+    await handler(makeReq(INCOMING(Number(B.id))), res);
+
+    expect(mockSendPortalInvitation).not.toHaveBeenCalled();
+    expect(res.body).toMatchObject({ coveredBy: A.id });
+    expect(mockDeleteUpdate).toHaveBeenCalledWith('902');
+    const note = mockPostTaggedUpdate.mock.calls.find((c) => c[1] === 'PORTAL: Invitation Sent');
+    expect(note[0]).toBe(Number(B.id));
+    expect(note[2]).toContain('No separate email');
+    expect(mockSetStatusLabel).toHaveBeenCalledWith(Number(B.id), 'inviteStatus', 'Invite Sent');
+  });
+
+  it('the order that claimed first sends the one invitation', async () => {
+    mockGetOrderById.mockResolvedValue(A);
+    mockPostTaggedUpdate.mockResolvedValueOnce({ id: '901' });
+    mockGetOrderMessages.mockImplementation(async (id) => String(id) === A.id
+      ? [{ id: '901', body: '[PORTAL: Invitation Claim]\n…', created_at: now() }]
+      : [{ id: '902', body: '[PORTAL: Invitation Claim]\n…', created_at: now() }]);
+
+    const res = makeRes();
+    await handler(makeReq(INCOMING(Number(A.id))), res);
+
+    expect(res.body.ok).toBe(true);
+    expect(mockSendPortalInvitation).toHaveBeenCalledTimes(1);
+  });
+
+  it('an invitation already sent for the other order moments ago covers this one', async () => {
+    mockGetOrderById.mockResolvedValue(B);
+    mockPostTaggedUpdate.mockResolvedValueOnce({ id: '910' });
+    mockGetOrderMessages.mockImplementation(async (id) => String(id) === A.id
+      ? [{ id: '905', body: '[PORTAL: Invitation Sent]\nsent', created_at: now() }]
+      : [{ id: '910', body: '[PORTAL: Invitation Claim]\n…', created_at: now() }]);
+
+    const res = makeRes();
+    await handler(makeReq(INCOMING(Number(B.id))), res);
+
+    expect(mockSendPortalInvitation).not.toHaveBeenCalled();
+    expect(res.body.coveredBy).toBe(A.id);
+  });
+
+  it('if the sibling lookup fails, it still sends (falls back to this order only)', async () => {
+    mockGetOrderById.mockResolvedValue(A);
+    mockGetOrderIdsByEmail.mockRejectedValue(new Error('Monday down'));
+    mockPostTaggedUpdate.mockResolvedValueOnce({ id: '901' });
+    mockGetOrderMessages.mockResolvedValue([{ id: '901', body: '[PORTAL: Invitation Claim]\n…', created_at: now() }]);
+
+    const res = makeRes();
+    await handler(makeReq(INCOMING(Number(A.id))), res);
+
     expect(mockSendPortalInvitation).toHaveBeenCalledTimes(1);
   });
 });

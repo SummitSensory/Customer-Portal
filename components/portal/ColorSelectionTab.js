@@ -993,6 +993,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
       COLOR_INPUT.CLIMBING_WALL_MAT, COLOR_INPUT.SOAR_MAT, COLOR_INPUT.FLEX_MAT,
       COLOR_INPUT.PALISADES_MAT, COLOR_INPUT.BALL_PIT, COLOR_INPUT.SLIDE,
       COLOR_INPUT.FOUNDATION_MAT, COLOR_INPUT.CLIMB_SLIDE,
+      COLOR_INPUT.SOFT_STEPS_2, COLOR_INPUT.SOFT_STEPS_3,
     ];
     const PartPicker = FLAT_SWATCH_INPUT_TYPES.includes(input.input) ? MatPadPartPicker : StructurePartPicker;
     body = (

@@ -565,7 +565,7 @@ export default function CustomerPortal() {
               // picker that can never save — see lib/monday.js's parseOrderItem
               // comment on colorSelectionWritable for the full incident this
               // fixes (found in code review before it ever shipped).
-              isColorSelectionSupported(order?.productType) && order?.colorSelectionWritable
+              isColorSelectionSupported(order) && order?.colorSelectionWritable
                 ? <ColorSelectionTab order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('documents')} onBack={() => setActiveTab('delivery')} />
                 : <ColorTab order={order} completions={completions} markComplete={markComplete} showToast={showToast} colorForms={colorForms} onNext={() => setActiveTab('documents')} onBack={() => setActiveTab('delivery')} />
             )}

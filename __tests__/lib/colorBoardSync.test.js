@@ -12,6 +12,7 @@ const order = {
     adventureMat: 'Included', climbingWallColor: 'Included', climbingWallMat: 'Included',
     wallPaddingMat: 'Included', slideColor: 'Included', ballPitMat: 'Included',
     palisadesMat: 'Included', climbSlideMat: 'Included', foundationMat: 'Included',
+    softSteps2: 'Included', softSteps3: 'Included',
   },
 };
 const selections = {
@@ -34,6 +35,8 @@ const selections = {
     climb_slide_piece_3: { brand: 'vinyl', code: 'Kelly Green' },
   },
   foundation_mat: { foundation_mat: { brand: 'foundation', code: 'Red/Blue' } },
+  soft_steps_2_mat: { soft_steps_2: { brand: 'vinyl', code: 'Purple' } },
+  soft_steps_3_mat: { soft_steps_3: { brand: 'vinyl', code: 'Tan' } },
 };
 
 describe('planBoardWrites', () => {
@@ -75,6 +78,10 @@ describe('planBoardWrites', () => {
     expect(plan.acc.color_mm7gvxhs).toEqual({ label: 'Received' });
     expect(plan.acc.text_mm7e27px).toBe('Red/Blue');
     expect(plan.acc.color_mm7eb6xn).toEqual({ label: 'Received' });
+    expect(plan.acc.text_mm7qs549).toBe('Purple'); // Soft Steps (2 Steps)
+    expect(plan.acc.color_mm7qzkd4).toEqual({ label: 'Received' });
+    expect(plan.acc.text_mm7qq3wq).toBe('Tan'); // Soft Steps (3 Steps)
+    expect(plan.acc.color_mm7qeb43).toEqual({ label: 'Received' });
     expect(plan.acc.color_mm7mkrfb).toEqual({ label: 'Portal' }); // Form of Submission
   });
 

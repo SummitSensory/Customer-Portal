@@ -38,6 +38,8 @@ const DEMO_COLOR_GATES = {
   slideColor: 'Included',
   ballPitMat: 'Included',
   foundationMat: 'Included',
+  softSteps2: 'Included',
+  softSteps3: 'Included',
 };
 const VIEWER_COOKIE = 'summit_demo_viewer';
 

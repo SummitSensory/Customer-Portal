@@ -11,7 +11,9 @@ vi.mock('../../../lib/monday', () => ({
 
 const mockSendSetupReminder = vi.fn().mockResolvedValue(undefined);
 const mockNotifyExhausted = vi.fn().mockResolvedValue({ id: 'team-1' });
+const mockSendCombined = vi.fn().mockResolvedValue({ id: 'combined-1' });
 vi.mock('../../../lib/email', () => ({
+  sendCombinedSetupReminder: (...args) => mockSendCombined(...args),
   sendSetupReminder: (...args) => mockSendSetupReminder(...args),
   notifyTeamRemindersExhausted: (...args) => mockNotifyExhausted(...args),
 }));
@@ -63,6 +65,43 @@ describe('GET /api/cron/reminders', () => {
     mockSendSetupReminder.mockReset().mockResolvedValue(undefined);
     mockReportCriticalFailure.mockReset().mockResolvedValue(undefined);
     mockNotifyExhausted.mockReset().mockResolvedValue({ id: 'team-1' });
+    mockSendCombined.mockReset().mockResolvedValue({ id: 'combined-1' });
+  });
+
+  it('two orders for the same customer due the same day get ONE email, and both orders are marked', async () => {
+    mockGetAllOrders.mockResolvedValue([
+      { id: '1', customerEmail: 'gbehling@bbgh.org', name: 'Box Butte (A)', progress: INCOMPLETE_PROGRESS },
+      { id: '2', customerEmail: 'GBehling@bbgh.org', name: 'Box Butte (B)', progress: INCOMPLETE_PROGRESS },
+    ]);
+    mockGetOrderMessages.mockResolvedValue([inviteUpdate(3)]);
+
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(mockSendSetupReminder).not.toHaveBeenCalled();
+    expect(mockSendCombined).toHaveBeenCalledTimes(1);
+    const [, , orders, number] = mockSendCombined.mock.calls[0];
+    expect(orders.map((o) => o.name).sort()).toEqual(['Box Butte (A)', 'Box Butte (B)']);
+    expect(number).toBe(1);
+    expect(mockPostTaggedUpdate).toHaveBeenCalledWith('1', 'PORTAL: Reminder #1', expect.stringContaining('One email covered 2 orders'));
+    expect(mockPostTaggedUpdate).toHaveBeenCalledWith('2', 'PORTAL: Reminder #1', expect.stringContaining('Email ID: combined-1'));
+    expect(res.body.reminded).toBe(2);
+  });
+
+  it('a failed combined send counts an error per order and writes no markers', async () => {
+    mockGetAllOrders.mockResolvedValue([
+      { id: '1', customerEmail: 'x@y.org', name: 'A', progress: INCOMPLETE_PROGRESS },
+      { id: '2', customerEmail: 'x@y.org', name: 'B', progress: INCOMPLETE_PROGRESS },
+    ]);
+    mockGetOrderMessages.mockResolvedValue([inviteUpdate(3)]);
+    mockSendCombined.mockRejectedValue(new Error('Resend down'));
+
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(res.body.errors).toBe(2);
+    expect(res.body.reminded).toBe(0);
+    expect(mockPostTaggedUpdate).not.toHaveBeenCalled();
   });
 
   it('rejects a request with no/wrong CRON_SECRET configured (fail closed)', async () => {

@@ -6,7 +6,8 @@
  *
  * Sends setup reminder emails on a configurable repeating schedule until ALL
  * setup tabs are complete. Reminders stop automatically once the customer
- * finishes every step.
+ * finishes every step. Re-sending the invitation restarts the cycle; an
+ * order that uses up every reminder is reported to staff once.
  *
  * Configuration (Vercel env vars):
  *   REMINDER_INTERVAL_DAYS  — days between reminders (default: 3)
@@ -14,11 +15,12 @@
  *
  * Completion tracking:   reads Monday.com tagged updates, e.g. [PORTAL: Contact Confirmed]
  * Reminder tracking:     logs [PORTAL: Reminder #N] update to prevent duplicates
- * Invitation tracking:   reads [PORTAL: Invitation Sent] to know when the clock starts
+ * Invitation tracking:   reads the LATEST [PORTAL: Invitation Sent] — the cycle start
+ * Escalation tracking:   logs [PORTAL: Reminders Exhausted] once per cycle
  */
 
 import { getAllOrders, getOrderMessages, postTaggedUpdate } from '../../../lib/monday';
-import { sendSetupReminder } from '../../../lib/email';
+import { sendSetupReminder, notifyTeamRemindersExhausted } from '../../../lib/email';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
 
@@ -90,6 +92,52 @@ function hasRequiredDocuments(productType) {
   );
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+// The cron runs once a weekday at 14:00 UTC, and the previous reminder was
+// logged a minute or two after a previous run — so "3 days later" lands a few
+// minutes SHORT of 72h. Without slack every reminder slipped a whole run.
+const DUE_SLACK_MS = 6 * 60 * 60 * 1000;
+
+const INVITE_TAG = '[PORTAL: Invitation Sent]';
+const REMINDER_RE = /\[PORTAL: Reminder #\d+\]/;
+const EXHAUSTED_TAG = '[PORTAL: Reminders Exhausted]';
+export const EXHAUSTED_LABEL = 'PORTAL: Reminders Exhausted';
+
+/**
+ * What to do for one incomplete order, from its Monday update history.
+ * Pure — no I/O — so the scheduling rules are tested directly.
+ *
+ * The cycle starts at the LATEST invitation: only reminders logged after it
+ * count, so re-sending the invite from Monday restarts reminders. (Counting
+ * every reminder ever sent meant Brighton Central School District, capped
+ * out on 2026-09-02, still got nothing after staff re-invited on 2026-10-01.)
+ *
+ * Each reminder is due `intervalDays` after the PREVIOUS email (the last
+ * reminder, or the invite) — not N × interval after the invite, which after
+ * a few missed weekday runs sent Brighton's reminders #2–#6 within 9 days.
+ *
+ * Returns { action: 'no-invite' | 'wait' | 'send' | 'exhausted' | 'escalated', number? }.
+ */
+export function reminderDecision(updates, now, intervalDays, maxReminders) {
+  const at = (u) => new Date(u.created_at).getTime();
+  const invites = updates.filter(u => (u.body || '').includes(INVITE_TAG));
+  if (!invites.length) return { action: 'no-invite' };
+  const cycleStart = Math.max(...invites.map(at));
+  const inCycle = updates.filter(u => at(u) >= cycleStart);
+  const reminders = inCycle.filter(u => REMINDER_RE.test(u.body || ''));
+  const lastEmail = Math.max(cycleStart, ...reminders.map(at));
+  const due = now.getTime() - lastEmail >= intervalDays * DAY_MS - DUE_SLACK_MS;
+
+  if (reminders.length >= maxReminders) {
+    if (inCycle.some(u => (u.body || '').includes(EXHAUSTED_TAG))) return { action: 'escalated' };
+    // Reported when the next reminder WOULD have gone out — the customer
+    // has had the full interval to act on the last one.
+    return due ? { action: 'exhausted' } : { action: 'wait' };
+  }
+  if (!due) return { action: 'wait' };
+  return { action: 'send', number: reminders.length + 1 };
+}
+
 export function incompleteSetupTabs(order) {
   return SETUP_TABS.filter(tab => {
     if (DONE_LABELS.has(order.progress?.[PROGRESS_KEYS[tab.key]])) return false;
@@ -112,7 +160,8 @@ export default async function handler(req, res) {
   const MAX_REMINDERS = parseInt(process.env.REMINDER_MAX_COUNT || '6', 10);
 
   const now = new Date();
-  const results = { checked: 0, reminded: 0, skipped: 0, errors: 0 };
+  const results = { checked: 0, reminded: 0, skipped: 0, errors: 0, exhausted: 0 };
+  const exhaustedOrders = [];
   const STOP_PHASES = stopPhases();
 
   try {
@@ -138,31 +187,20 @@ export default async function handler(req, res) {
         if (incompleteTabs.length === 0) { results.skipped++; return; }
 
         const updates = await getOrderMessages(order.id);
-        const bodies = updates.map(u => u.body || '');
+        const decision = reminderDecision(updates, now, INTERVAL_DAYS, MAX_REMINDERS);
 
-        // Find when the portal invitation was sent — this starts the reminder clock
-        const inviteUpdate = updates.find(u => u.body?.includes('[PORTAL: Invitation Sent]'));
-        if (!inviteUpdate) { results.skipped++; return; }
-
-        const inviteDate = new Date(inviteUpdate.created_at);
-        const daysSinceInvite = Math.floor((now - inviteDate) / (1000 * 60 * 60 * 24));
-
-        // Count how many reminders have already been sent
-        const sentCount = bodies.filter(b => b.match(/\[PORTAL: Reminder #\d+\]/)).length;
-
-        // Stop if we've hit the max
-        if (sentCount >= MAX_REMINDERS) { results.skipped++; return; }
-
-        // Determine if the next reminder is due
-        // Reminder N is due after N * INTERVAL_DAYS since the invitation
-        const nextReminderDue = (sentCount + 1) * INTERVAL_DAYS;
-        if (daysSinceInvite < nextReminderDue) { results.skipped++; return; }
+        if (decision.action === 'exhausted') {
+          exhaustedOrders.push({ id: order.id, name: order.name, customerEmail: order.customerEmail, incomplete: incompleteTabs.map(t => t.label) });
+          results.skipped++;
+          return;
+        }
+        if (decision.action !== 'send') { results.skipped++; return; }
 
         // Send the reminder
-        const reminderNumber = sentCount + 1;
+        const reminderNumber = decision.number;
         const customerName = order.firstName || order.pocName?.split(' ')[0] || '';
 
-        await sendSetupReminder(
+        const sent = await sendSetupReminder(
           order.customerEmail,
           customerName,
           order.name,
@@ -190,7 +228,7 @@ export default async function handler(req, res) {
           await postTaggedUpdate(
             order.id,
             `PORTAL: Reminder #${reminderNumber}`,
-            `Reminder #${reminderNumber} sent to ${order.customerEmail} on ${now.toLocaleDateString()}. Incomplete: ${incompleteTabs.map(t => t.label).join(', ')}.`
+            `Reminder #${reminderNumber} sent to ${order.customerEmail} on ${now.toLocaleDateString()}. Incomplete: ${incompleteTabs.map(t => t.label).join(', ')}.${sent?.id ? ` Email ID: ${sent.id}` : ''}`
           );
         } catch (markerErr) {
           await reportCriticalFailure(
@@ -207,6 +245,26 @@ export default async function handler(req, res) {
       }
     });
 
+    // One staff email per run for every order that ran out of reminders,
+    // then a marker on each so it's reported once per invite cycle. If the
+    // email fails, no markers are written and the next run tries again.
+    if (exhaustedOrders.length) {
+      try {
+        await notifyTeamRemindersExhausted(exhaustedOrders);
+        await mapWithConcurrency(exhaustedOrders, REMINDER_CONCURRENCY, async (o) => {
+          try {
+            await postTaggedUpdate(o.id, EXHAUSTED_LABEL, `All ${MAX_REMINDERS} setup reminders have been sent to ${o.customerEmail} and setup is still incomplete (${o.incomplete.join(', ')}). Staff were emailed on ${now.toLocaleDateString()}. Re-send the portal invitation to restart reminders.`);
+            results.exhausted++;
+          } catch (err) {
+            console.error(`Reminders-exhausted marker failed for order ${o.id} — staff may be re-notified next run:`, err.message);
+          }
+        });
+      } catch (err) {
+        console.error('Reminders-exhausted staff email failed:', err);
+        results.errors++;
+      }
+    }
+
     // PORTAL-022: this summary previously only went out in the HTTP response
     // body, which nothing reads for a Vercel Cron invocation — a partial run
     // (see PORTAL-021: any hung/failed outbound call mid-loop lands in
@@ -214,7 +272,7 @@ export default async function handler(req, res) {
     // expected vs. actual outcomes in Monday, with no log line to grep for.
     // Logging it explicitly makes every run's outcome visible in Vercel's
     // function logs regardless of whether anyone is watching the response.
-    console.log(`Cron reminders summary: checked=${results.checked} reminded=${results.reminded} skipped=${results.skipped} errors=${results.errors}`);
+    console.log(`Cron reminders summary: checked=${results.checked} reminded=${results.reminded} skipped=${results.skipped} exhausted=${results.exhausted} errors=${results.errors}`);
 
     // The run itself completing normally (reaching this line) previously
     // meant "no alert" even when every single order attempted failed — each

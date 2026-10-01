@@ -118,7 +118,7 @@ export default async function handler(req, res) {
     // so Monday's history stays clear about which this was.
     const isResend = updates.some(u => (u.body || '').includes(`[${SENT_TAG}]`));
 
-    await sendPortalInvitation(
+    const sent = await sendPortalInvitation(
       order.customerEmail,
       order.pocName || order.firstName || '',
       order.name
@@ -127,7 +127,7 @@ export default async function handler(req, res) {
     await postTaggedUpdate(
       itemId,
       SENT_TAG,
-      `Portal invitation ${isResend ? 're-sent' : 'sent'} to ${order.customerEmail} on ${new Date().toLocaleDateString()} (triggered by Monday "${trigger}").`
+      `Portal invitation ${isResend ? 're-sent' : 'sent'} to ${order.customerEmail} on ${new Date().toLocaleDateString()} (triggered by Monday "${trigger}").${sent?.id ? ` Email ID: ${sent.id}` : ''}`
     );
 
     // Flip the triggering column so it reflects the latest send.

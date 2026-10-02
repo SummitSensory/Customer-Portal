@@ -37,12 +37,11 @@ const SETUP_TABS = [
   { key: 'billing',   label: 'Billing Information' },
   { key: 'delivery',  label: 'Delivery & Site Details' },
   { key: 'color',     label: 'Color & Product Selections' },
-  { key: 'documents', label: 'Required Documents' },
 ];
 
 // Maps each reminder tab key to its key in order.progress (lib/monday.js's
 // parseOrderItem — sourced from the durable Portal: Contact/Billing/Delivery/
-// Colors/Documents status columns, flipped by markSectionComplete whenever a
+// Colors status columns, flipped by markSectionComplete whenever a
 // tab's setup POST succeeds). Previously this cron scanned tagged-update
 // bodies for one specific legacy phrase per tab (e.g. exactly
 // "[PORTAL: Contact Confirmed]") — but a customer who used the "edit and
@@ -55,11 +54,11 @@ const SETUP_TABS = [
 // same source of truth the portal UI itself now uses (see mergeProgress in
 // pages/portal/index.js) — instead of re-deriving completion from free-text
 // logs, fixes this for good and can't drift out of sync again.
-const PROGRESS_KEYS = { contact: 'contact', billing: 'billing', delivery: 'delivery', color: 'colors', documents: 'documents' };
+const PROGRESS_KEYS = { contact: 'contact', billing: 'billing', delivery: 'delivery', color: 'colors' };
 
 // "N/A" is how staff mark a step that doesn't apply to an order. It used to
 // count as incomplete here, so an order with every step N/A got the "order on
-// hold" email listing all five (2026-09-28).
+// hold" email listing every step (2026-09-28).
 export const DONE_LABELS = new Set(['✅', 'N/A']);
 
 // Manufacturing Phase labels that mean the order is already past customer
@@ -78,18 +77,6 @@ const DEFAULT_STOP_PHASES = [
 export function stopPhases() {
   const raw = process.env.REMINDER_STOP_PHASES;
   return new Set((raw ? raw.split(',') : DEFAULT_STOP_PHASES).map(s => s.trim()).filter(Boolean));
-}
-
-// The portal's Documents tab lists the JOTFORM_FORM_MAP forms on the
-// "required_documents" tab for the order's product type (pages/portal/index.js
-// docForms), and shows "No forms required" when there are none — so an order
-// with none has nothing to do there and isn't reminded about it.
-function hasRequiredDocuments(productType) {
-  let map = {};
-  try { map = JSON.parse(process.env.JOTFORM_FORM_MAP || '{}'); } catch { return true; }
-  return Object.values(map).some(f =>
-    f?.tab === 'required_documents' && (!f.productTypes || f.productTypes.includes(productType))
-  );
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -139,11 +126,7 @@ export function reminderDecision(updates, now, intervalDays, maxReminders) {
 }
 
 export function incompleteSetupTabs(order) {
-  return SETUP_TABS.filter(tab => {
-    if (DONE_LABELS.has(order.progress?.[PROGRESS_KEYS[tab.key]])) return false;
-    if (tab.key === 'documents' && !hasRequiredDocuments(order.productType)) return false;
-    return true;
-  });
+  return SETUP_TABS.filter(tab => !DONE_LABELS.has(order.progress?.[PROGRESS_KEYS[tab.key]]));
 }
 
 export default async function handler(req, res) {

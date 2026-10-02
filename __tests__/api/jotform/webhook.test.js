@@ -205,9 +205,10 @@ describe('POST /api/jotform/webhook — dedupe marker write failure is reported,
       expect.stringContaining('order-only'),
       expect.objectContaining({ orderId: 'order-only', formID: DOCUMENTS_FORM_ID, submissionID: 'sub-abc123' })
     );
-    // The rest of the flow (checklist sync, staff notification) must still
-    // run — a failed audit-trail write shouldn't also break completion.
-    expect(mockMarkSectionCompleteSafe).toHaveBeenCalled();
+    // The staff notification must still run — a failed audit-trail write
+    // shouldn't also break it. A documents form has no checklist column to
+    // flip any more (Required Documents was removed from the portal).
+    expect(mockMarkSectionCompleteSafe).not.toHaveBeenCalled();
     expect(mockNotifyTeamFormCompleted).toHaveBeenCalled();
   });
 

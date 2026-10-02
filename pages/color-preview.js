@@ -59,7 +59,7 @@ export default function ColorPreviewPage() {
               completions={{}}
               markComplete={() => {}}
               showToast={showToast}
-              onNext={() => showToast('This is where the real portal would move to the next tab (Required Documents).')}
+              onNext={() => showToast('This is where the real portal would move to the next tab (Dashboard).')}
               onBack={() => showToast('This is where the real portal would move back to the Delivery tab.')}
               apiBase="/api/demo/color-selection"
             />

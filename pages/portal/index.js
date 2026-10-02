@@ -40,7 +40,6 @@ const SETUP_TABS = [
   { id: 'billing',   label: 'Billing Information',        icon: '💳' },
   { id: 'delivery',  label: 'Delivery & Site Details',   icon: '🚚' },
   { id: 'color',     label: 'Color & Product Selections', icon: '🎨' },
-  { id: 'documents', label: 'Required Documents',         icon: '📋' },
 ];
 
 const ORDER_TABS = [
@@ -83,7 +82,7 @@ const ORDER_TABS = [
 // page module — importing from here would defeat the point of splitting
 // ShowcaseTab into its own chunk.
 
-// Monday's Portal: Contact/Billing/Delivery/Colors/Documents status columns
+// Monday's Portal: Contact/Billing/Delivery/Colors status columns
 // (flipped server-side by markSectionComplete once a tab's setup POST
 // succeeds) are the real, durable, cross-device record of what's complete —
 // order.progress already surfaces them. Merge them into `completions` on
@@ -110,7 +109,7 @@ export function mergeProgress(resolvedOrder, localCompletions) {
   // from before the revert then kept showing on every future load — even
   // on a totally different browser/device — with nothing telling the
   // customer their step had been reopened. fromMonday now sets EVERY one
-  // of the 5 tab keys explicitly (true or false) from Monday's actual
+  // of the 4 tab keys explicitly (true or false) from Monday's actual
   // column value, then is spread OVER localCompletions so Monday always
   // wins the conflict, in both directions.
   // This intentionally does NOT reintroduce the older, separately-fixed
@@ -129,7 +128,6 @@ export function mergeProgress(resolvedOrder, localCompletions) {
     billing:   done(p.billing),
     delivery:  done(p.delivery),
     color:     done(p.colors),
-    documents: done(p.documents),
   };
   return { ...localCompletions, ...fromMonday };
 }
@@ -333,7 +331,7 @@ export default function CustomerPortal() {
   // Derived values below were previously plain `const`s recomputed on every
   // render (including re-renders triggered by unrelated state, e.g. toast
   // timers or mobileNavOpen toggling) — cheap individually, but this
-  // component re-renders often and productForms/colorForms/docForms filter
+  // component re-renders often and productForms/colorForms filter
   // Object.entries(formMap) each time. Memoized here, ABOVE the loading/
   // order-picker/no-order early returns below, so these hooks are always
   // called in the same order every render (React's Rules of Hooks forbid
@@ -376,7 +374,6 @@ export default function CustomerPortal() {
     !f.productTypes || f.productTypes.includes(order?.productType)
   ), [formMap, order?.productType]);
   const colorForms = useMemo(() => productForms.filter(([, f]) => f.tab === 'color_selection'), [productForms]);
-  const docForms = useMemo(() => productForms.filter(([, f]) => f.tab === 'required_documents'), [productForms]);
 
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
@@ -566,10 +563,9 @@ export default function CustomerPortal() {
               // comment on colorSelectionWritable for the full incident this
               // fixes (found in code review before it ever shipped).
               isColorSelectionSupported(order) && order?.colorSelectionWritable
-                ? <ColorSelectionTab order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('documents')} onBack={() => setActiveTab('delivery')} />
-                : <ColorTab order={order} completions={completions} markComplete={markComplete} showToast={showToast} colorForms={colorForms} onNext={() => setActiveTab('documents')} onBack={() => setActiveTab('delivery')} />
+                ? <ColorSelectionTab order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('dashboard')} onBack={() => setActiveTab('delivery')} />
+                : <ColorTab order={order} completions={completions} markComplete={markComplete} showToast={showToast} colorForms={colorForms} onNext={() => setActiveTab('dashboard')} onBack={() => setActiveTab('delivery')} />
             )}
-            {activeTab === 'documents'    && <DocumentsTab    order={order} completions={completions} markComplete={markComplete} showToast={showToast} docForms={docForms} onNext={() => setActiveTab('dashboard')} onBack={() => setActiveTab('color')} />}
             {activeTab === 'dashboard'    && <DashboardTab    order={order} completions={completions} setupComplete={setupComplete} setupCount={setupCount} setupTotal={setupTotal} onNav={setActiveTab} />}
             {activeTab === 'status'       && <StatusTab       order={order} />}
             {activeTab === 'installation' && <InstallationTab order={order} onNav={setActiveTab} />}
@@ -1995,75 +1991,6 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
               <span>ℹ️</span>
               <span>After submitting the form, click "Mark as Complete" below. Our team will confirm your selections and follow up if any clarification is needed.</span>
             </div>
-          </div>
-        ))
-      )}
-
-      <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
-        <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back</button>
-        <button
-          className="btn btn-moss"
-          onClick={complete}
-          disabled={saving}
-        >
-          {saving ? 'Saving…' : 'Mark as Complete & Continue →'}
-        </button>
-      </div>
-    </>
-  );
-}
-
-// ── Tab: Required Documents ───────────────────────────────────────────────────
-
-function DocumentsTab({ order, completions, markComplete, showToast, docForms, onNext, onBack }) {
-  // See ColorTab above — same fix: this button previously never told the
-  // server anything happened, so Monday's "Portal: Required" status column
-  // never flipped and the "completion" only ever existed in localStorage.
-  const [saving, setSaving] = useState(false);
-  async function complete() {
-    setSaving(true);
-    try {
-      const docsResult = await saveSetup('documents', {});
-      markComplete('documents', !docsResult.checklistSyncPending);
-      showToast(docsResult.checklistSyncPending
-        ? "Saved — confirming with our system now. This may take a moment to show as complete."
-        : 'Documents marked complete.');
-      onNext();
-    } catch {
-      showToast('Error saving. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  }
-  return (
-    <>
-      <div className="ph"><h2>Required Documents</h2><p>Complete the required forms below before your order can be processed.</p></div>
-      {completions.documents && <div className="alert success" style={{ marginBottom: 16 }}>✅ Required documents submitted.</div>}
-
-      {docForms.length === 0 ? (
-        <div className="card">
-          <div className="empty">
-            <div className="ei">📋</div>
-            <h3>No forms required</h3>
-            <p>No additional forms are required for your order at this time.</p>
-          </div>
-        </div>
-      ) : (
-        docForms.map(([id, form]) => (
-          <div key={id} className="card" style={{ marginBottom: 16 }}>
-            <div className="ch"><h3>{form.name}</h3></div>
-            <p style={{ color: 'var(--mut)', fontSize: 13.5, marginBottom: 20 }}>
-              {form.description || 'This form must be completed before your order can ship.'}
-            </p>
-            <a
-              href={`https://form.jotform.com/${id}`}
-              target="_blank"
-              rel="noreferrer"
-              className="btn btn-moss"
-              style={{ display: 'inline-flex', marginBottom: 16 }}
-            >
-              Complete Form →
-            </a>
           </div>
         ))
       )}

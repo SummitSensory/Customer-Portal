@@ -388,13 +388,15 @@ export default async function handler(req, res) {
     }
   }
 
-  // Flip the matching portal checklist column (Portal: Color Selections / Portal: Documents)
-  // to ✅ — only once every form mapped to this tab has been submitted.
+  // Flip Portal: Color Selections to ✅ — only once every form mapped to the
+  // color tab has been submitted. The Required Documents tab was removed from
+  // the portal (2026-10-02), so any other mapped form is only recorded above
+  // and reported to staff below; it has no checklist column to flip.
   // PORTAL-014: retried and reported honestly instead of silently swallowed —
   // see markSectionCompleteSafe() in lib/monday.js.
   let checklistSynced = true;
-  if (tabComplete) {
-    checklistSynced = await markSectionCompleteSafe(order.id, isColor ? 'portalColors' : 'portalDocuments');
+  if (tabComplete && isColor) {
+    checklistSynced = await markSectionCompleteSafe(order.id, 'portalColors');
   }
 
   // Notify team

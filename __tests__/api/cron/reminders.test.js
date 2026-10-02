@@ -38,8 +38,8 @@ function makeReq() {
   return { headers: { authorization: 'Bearer test-cron-secret' } };
 }
 
-const INCOMPLETE_PROGRESS = { contact: '✅', billing: '✅', delivery: '✅', colors: '✅', documents: '' };
-const COMPLETE_PROGRESS = { contact: '✅', billing: '✅', delivery: '✅', colors: '✅', documents: '✅' };
+const INCOMPLETE_PROGRESS = { contact: '✅', billing: '✅', delivery: '✅', colors: '' };
+const COMPLETE_PROGRESS = { contact: '✅', billing: '✅', delivery: '✅', colors: '✅' };
 
 function daysAgoISO(days) {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
@@ -57,8 +57,7 @@ describe('GET /api/cron/reminders', () => {
   const OLD_ENV = process.env;
 
   beforeEach(() => {
-    process.env = { ...OLD_ENV, CRON_SECRET: 'test-cron-secret', REMINDER_INTERVAL_DAYS: '3', REMINDER_MAX_COUNT: '6',
-      JOTFORM_FORM_MAP: JSON.stringify({ 111: { tab: 'required_documents', name: 'W-9' } }) };
+    process.env = { ...OLD_ENV, CRON_SECRET: 'test-cron-secret', REMINDER_INTERVAL_DAYS: '3', REMINDER_MAX_COUNT: '6' };
     mockGetAllOrders.mockReset();
     mockGetOrderMessages.mockReset();
     mockPostTaggedUpdate.mockReset().mockResolvedValue(undefined);
@@ -175,7 +174,7 @@ describe('GET /api/cron/reminders', () => {
     expect(mockSendSetupReminder).not.toHaveBeenCalled();
     expect(mockNotifyExhausted).toHaveBeenCalledTimes(1);
     expect(mockNotifyExhausted.mock.calls[0][0].map((o) => o.name).sort()).toEqual(['Order A', 'Order B']);
-    expect(mockNotifyExhausted.mock.calls[0][0][0].incomplete).toEqual(['Required Documents']);
+    expect(mockNotifyExhausted.mock.calls[0][0][0].incomplete).toEqual(['Color & Product Selections']);
     expect(mockPostTaggedUpdate).toHaveBeenCalledWith('1', 'PORTAL: Reminders Exhausted', expect.stringContaining('Re-send the portal invitation'));
     expect(mockPostTaggedUpdate).toHaveBeenCalledWith('2', 'PORTAL: Reminders Exhausted', expect.any(String));
     expect(res.body.exhausted).toBe(2);
@@ -241,7 +240,7 @@ describe('GET /api/cron/reminders', () => {
     // already '✅' since markSectionComplete flipped the real column.
     mockGetAllOrders.mockResolvedValue([{
       id: '1', customerEmail: 'kalen@example.com', name: 'Kalen Siddens',
-      progress: { contact: '✅', billing: '', delivery: '', colors: '', documents: '' },
+      progress: { contact: '✅', billing: '', delivery: '', colors: '' },
     }]);
     mockGetOrderMessages.mockResolvedValue([
       inviteUpdate(5),
@@ -264,7 +263,7 @@ describe('GET /api/cron/reminders', () => {
     const res = makeRes();
     await handler(makeReq(), res);
 
-    expect(mockSendSetupReminder).toHaveBeenCalledWith('a@b.com', 'Alex', 'Order A', expect.arrayContaining(['Required Documents']), 1);
+    expect(mockSendSetupReminder).toHaveBeenCalledWith('a@b.com', 'Alex', 'Order A', expect.arrayContaining(['Color & Product Selections']), 1);
     expect(mockPostTaggedUpdate).toHaveBeenCalledWith('1', 'PORTAL: Reminder #1', expect.any(String));
     expect(res.body.reminded).toBe(1);
     expect(res.body.errors).toBe(0);
@@ -357,7 +356,7 @@ describe('GET /api/cron/reminders', () => {
   // 2026-09-28 audit: customers were told their order was on hold for steps
   // that were N/A, had nothing to do, or that staff had already handled.
   it("treats an N/A step as done (no reminder when every step is N/A or ✅)", async () => {
-    const naProgress = { contact: "N/A", billing: "✅", delivery: "N/A", colors: "N/A", documents: "N/A" };
+    const naProgress = { contact: "N/A", billing: "✅", delivery: "N/A", colors: "N/A" };
     mockGetAllOrders.mockResolvedValue([{ id: "1", customerEmail: "a@b.com", name: "Order A", progress: naProgress }]);
     mockGetOrderMessages.mockResolvedValue([inviteUpdate(30)]);
     const res = makeRes();
@@ -385,17 +384,7 @@ describe('GET /api/cron/reminders', () => {
     const res = makeRes();
     await handler(makeReq(), res);
     expect(res.body.reminded).toBe(1);
-    expect(mockSendSetupReminder.mock.calls[0][3]).toEqual(["Required Documents"]);
-  });
-
-  it("does not ask for Required Documents when no document form applies to the product", async () => {
-    process.env.JOTFORM_FORM_MAP = JSON.stringify({ 111: { tab: "required_documents", productTypes: ["Therapy Mats & Pads"] } });
-    mockGetAllOrders.mockResolvedValue([{ id: "1", customerEmail: "a@b.com", name: "A", productType: "Other", progress: INCOMPLETE_PROGRESS }]);
-    mockGetOrderMessages.mockResolvedValue([inviteUpdate(4)]);
-    const res = makeRes();
-    await handler(makeReq(), res);
-    expect(res.body.skipped).toBe(1);
-    expect(mockSendSetupReminder).not.toHaveBeenCalled();
+    expect(mockSendSetupReminder.mock.calls[0][3]).toEqual(["Color & Product Selections"]);
   });
 });
 

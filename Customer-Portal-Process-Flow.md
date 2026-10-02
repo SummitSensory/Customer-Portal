@@ -296,7 +296,7 @@ The portal shows a 5-step setup checklist. Completing each one: (a) posts a tagg
 
 **S-2.4 Color & Product Selections** `[LIVE]` → Jotform embedded (form ID from DS-16, fallback DS-17). On submit, EP-16 matches the order by email and tags `[PORTAL: Color Selections]` → DS-27 ✅ + EM-10 to team. Customer may also be prompted by EM-05 when the form is assigned.
 
-**S-2.5 Required Documents** `[LIVE]` → Jotform (documents forms) → EP-16 → tag `[PORTAL: Documents Submitted]` → DS-28 ✅ + EM-10.
+**S-2.5 Required Documents** `[REMOVED 2026-10-02]` — tab removed from the portal, the setup checklist, reminders, the invitation email and the admin progress dots. A documents-type Jotform submission is still logged (`[PORTAL: Documents Submitted]`) and reported to staff (EM-10), but DS-28 is no longer flipped or read.
 
 **S-2.6 Reminders until complete** `[LIVE]` → SYS-7 (EP-17) runs weekdays 8:00 AM Mountain (`0 14 * * 1-5`). Every `REMINDER_INTERVAL_DAYS` (default 3), up to `REMINDER_MAX_COUNT` (default 6), it emails EM-03 listing only the incomplete sections, and stops automatically once all 5 tags are present. Each send logs `[PORTAL: Reminder #N]`.
 
@@ -343,7 +343,7 @@ The portal shows a 5-step setup checklist. Completing each one: (a) posts a tagg
 
 ## 6. Customer portal screen map (`/portal`)
 
-**Setup tabs (onboarding):** Contact · Billing · Delivery & Site Details · Color & Product Selections · Required Documents (map to S-2.1…2.5).
+**Setup tabs (onboarding):** Contact · Billing · Delivery & Site Details · Color & Product Selections (map to S-2.1…2.4).
 
 **Order tabs (ongoing):**
 

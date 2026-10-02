@@ -20,8 +20,8 @@ describe('DashboardTab — return-visit incomplete-items banner (PORTAL-064)', (
   const baseProps = {
     order: { id: 'order-A', firstName: 'Jane', name: 'Order A' },
     completions: {},
-    setupCount: 3,
-    setupTotal: 5,
+    setupCount: 2,
+    setupTotal: 4,
     onNav: () => {},
   };
 
@@ -40,7 +40,7 @@ describe('DashboardTab — return-visit incomplete-items banner (PORTAL-064)', (
   it('never shows the banner once setup is actually complete, even on a return visit', () => {
     const { unmount } = render(<DashboardTab {...baseProps} setupComplete={false} />);
     unmount();
-    render(<DashboardTab {...baseProps} setupComplete setupCount={5} />);
+    render(<DashboardTab {...baseProps} setupComplete setupCount={4} />);
     expect(screen.queryByText(/still incomplete/)).not.toBeInTheDocument();
   });
 
@@ -71,9 +71,9 @@ describe('DashboardTab — return-visit incomplete-items banner (PORTAL-064)', (
   });
 
   it('shows the correct singular/plural item count', () => {
-    const { unmount } = render(<DashboardTab {...baseProps} setupComplete={false} setupCount={4} />);
+    const { unmount } = render(<DashboardTab {...baseProps} setupComplete={false} setupCount={3} />);
     unmount();
-    render(<DashboardTab {...baseProps} setupComplete={false} setupCount={4} />);
+    render(<DashboardTab {...baseProps} setupComplete={false} setupCount={3} />);
     expect(screen.getByText(/1 item still incomplete/)).toBeInTheDocument();
   });
 });

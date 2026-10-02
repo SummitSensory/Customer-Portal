@@ -197,7 +197,7 @@ function validateSetupData(tab, data) {
       if (isBlank(acknowledgedAt)) return 'An acknowledgment date is required.';
       return null;
     }
-    // 'contact' and 'color'/'documents' completion markers carry no
+    // 'contact' and 'color' completion markers carry no
     // customer-entered fields to validate; 'tax_exemption' already checks
     // its own required fields (fileBase64/fileName) inline below.
     default:
@@ -534,15 +534,6 @@ export default async function handler(req, res) {
         );
         const colorSynced = await markSectionCompleteSafe(order.id, 'portalColors');
         return res.status(200).json({ ok: true, checklistSyncPending: !colorSynced });
-      }
-
-      // ── Tab 5: Required Documents ───────────────────────────────────────
-      case 'documents': {
-        await postTaggedUpdate(order.id, 'PORTAL: Documents Submitted',
-          `Customer marked required documents complete on ${new Date().toLocaleDateString()}.`
-        );
-        const documentsSynced = await markSectionCompleteSafe(order.id, 'portalDocuments');
-        return res.status(200).json({ ok: true, checklistSyncPending: !documentsSynced });
       }
 
       // ── Invoice & Payment: Tax Exemption ─────────────────────────────────

@@ -206,14 +206,13 @@ const FIXED_COLS = ['_name', '_actions'];
 // Default columns shown on first visit
 const DEFAULT_COL_IDS = ['_name', 'email__1', 'color_mkvw7b8', 'status__1', '_progress', 'lookup_mm1kcbb5', '_balance', '_actions'];
 
-// Setup-progress checklist — Contact/Billing/Delivery/Colors/Documents, so staff
+// Setup-progress checklist — Contact/Billing/Delivery/Colors, so staff
 // can see at a glance what a customer still needs help finishing.
 const PROGRESS_STEPS = [
   { key: 'contact',   label: 'Contact' },
   { key: 'billing',   label: 'Billing' },
   { key: 'delivery',  label: 'Delivery' },
   { key: 'colors',    label: 'Colors' },
-  { key: 'documents', label: 'Documents' },
 ];
 
 function getCellValue(order, colId) {
@@ -1299,8 +1298,8 @@ function AdminMessagesTab({ orders, showToast }) {
 // ── Shared Components ─────────────────────────────────────────────────────────
 
 /**
- * Compact 5-dot setup-progress readout (Contact/Billing/Delivery/Colors/
- * Documents) so staff can tell what a customer still needs help completing
+ * Compact 4-dot setup-progress readout (Contact/Billing/Delivery/Colors)
+ * so staff can tell what a customer still needs help completing
  * without opening the order. Reads the same ✅/🚫/N/A labels the portal
  * itself writes via markSectionComplete.
  */

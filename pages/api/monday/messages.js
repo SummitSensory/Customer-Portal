@@ -46,7 +46,7 @@ async function notifyCustomerOfStaffReply(orderId, text) {
     if (!preview) return;
     await sendCustomerReplyNotification(
       order.customerEmail,
-      order.pocName || order.firstName || '',
+      order.firstName || order.pocName?.split(' ')[0] || '',
       order.name,
       preview
     );

@@ -44,7 +44,7 @@ export default async function handler(req, res) {
   try {
     sent = await sendPortalInvitation(
       order.customerEmail,
-      order.pocName || order.firstName || '',
+      order.firstName || order.pocName?.split(' ')[0] || '',
       order.name
     );
   } catch (err) {

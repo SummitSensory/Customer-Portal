@@ -39,7 +39,10 @@ const selections = {
     soft_steps_2: { brand: 'vinyl', code: 'Purple' },
     soft_steps_2_piece_2: { brand: 'vinyl', code: 'Lime' },
   },
-  soft_steps_3_mat: { soft_steps_3: { brand: 'vinyl', code: 'Tan' } },
+  soft_steps_3_mat: {
+    soft_steps_3: { brand: 'vinyl', code: 'Tan' },
+    soft_steps_3_piece_2: { brand: 'vinyl', code: 'Navy' },
+  },
 };
 
 describe('planBoardWrites', () => {
@@ -84,7 +87,8 @@ describe('planBoardWrites', () => {
     expect(plan.acc.text_mm7qs549).toBe('Purple'); // Soft Steps (2 Steps) - Mat 1
     expect(plan.acc.text_mm7vjys0).toBe('Lime'); // Soft Steps (2 Steps) - Mat 2
     expect(plan.acc.color_mm7qzkd4).toEqual({ label: 'Received' });
-    expect(plan.acc.text_mm7qq3wq).toBe('Tan'); // Soft Steps (3 Steps)
+    expect(plan.acc.text_mm7qq3wq).toBe('Tan'); // Soft Steps (3 Steps) - Mat 1
+    expect(plan.acc.text_mm7vrx44).toBe('Navy'); // Soft Steps (3 Steps) - Mat 2
     expect(plan.acc.color_mm7qeb43).toEqual({ label: 'Received' });
     expect(plan.acc.color_mm7mkrfb).toEqual({ label: 'Portal' }); // Form of Submission
   });

@@ -5,12 +5,14 @@ const mockGetOrderByEmail = vi.fn();
 const mockGetOrderMessages = vi.fn();
 const mockSetStatusLabel = vi.fn().mockResolvedValue(undefined);
 const mockPostTaggedUpdate = vi.fn().mockResolvedValue(undefined);
+const mockGetUpdateById = vi.fn();
 vi.mock('../../../lib/monday', () => ({
   getOrderById: (...args) => mockGetOrderById(...args),
   getOrderByEmail: (...args) => mockGetOrderByEmail(...args),
   getOrderMessages: (...args) => mockGetOrderMessages(...args),
   setStatusLabel: (...args) => mockSetStatusLabel(...args),
   postTaggedUpdate: (...args) => mockPostTaggedUpdate(...args),
+  getUpdateById: (...args) => mockGetUpdateById(...args),
 }));
 
 const mockSendCustomerReplyNotification = vi.fn().mockResolvedValue(undefined);
@@ -125,5 +127,57 @@ describe('POST /api/monday/update-webhook — PORTAL-064 redelivery guard', () =
 
     expect(mockSendCustomerReplyNotification).toHaveBeenCalledTimes(1);
     expect(res.body).toEqual({ ok: true });
+  });
+});
+
+// Monday's "When a new update posted, send a webhook" integration sends its
+// standard event payload, not the flat { itemId, updateBody, creatorEmail }
+// this endpoint originally expected — every real delivery 400'd until
+// 2026-10-05. The creator's email comes from looking the update up by id.
+describe('POST /api/monday/update-webhook — Monday native event payload', () => {
+  beforeEach(() => {
+    mockGetOrderById.mockReset();
+    mockGetOrderMessages.mockReset().mockResolvedValue([]);
+    mockGetUpdateById.mockReset();
+    mockSetStatusLabel.mockReset().mockResolvedValue(undefined);
+    mockPostTaggedUpdate.mockReset().mockResolvedValue(undefined);
+    mockSendCustomerReplyNotification.mockReset().mockResolvedValue(undefined);
+  });
+
+  const event = (over = {}) => ({ event: { type: 'create_update', pulseId: 456, updateId: 789, userId: 1, body: 'x', textBody: 'x', ...over } });
+
+  it('a staff reply typed in Monday is looked up by updateId and emailed to the customer', async () => {
+    mockGetUpdateById.mockResolvedValue({ id: '789', body: 'We can ship Friday.', creator: { email: 'kyle@summitsensory.com' } });
+    mockGetOrderById.mockResolvedValue({ id: '456', customerEmail: 'customer@example.com', firstName: 'Alyson', name: 'Order 456' });
+
+    const res = makeRes();
+    await handler(makeReq(event()), res);
+
+    expect(mockGetUpdateById).toHaveBeenCalledWith(789);
+    expect(res.statusCode).toBe(200);
+    expect(mockSendCustomerReplyNotification).toHaveBeenCalledWith('customer@example.com', 'Alyson', 'Order 456', 'We can ship Friday.');
+  });
+
+  it("the portal's own tagged audit notes are skipped without emailing anyone", async () => {
+    mockGetUpdateById.mockResolvedValue({ id: '789', body: '[PORTAL: Webhook Test]<br>internal', creator: { email: 'bryan@summitsensory.com' } });
+
+    const res = makeRes();
+    await handler(makeReq(event()), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.skipped).toBeTruthy();
+    expect(mockSendCustomerReplyNotification).not.toHaveBeenCalled();
+  });
+
+  it('a failed update lookup returns 500 so Monday retries', async () => {
+    mockGetUpdateById.mockRejectedValue(new Error('monday down'));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = makeRes();
+    await handler(makeReq(event()), res);
+
+    expect(res.statusCode).toBe(500);
+    expect(mockSendCustomerReplyNotification).not.toHaveBeenCalled();
+    err.mockRestore();
   });
 });

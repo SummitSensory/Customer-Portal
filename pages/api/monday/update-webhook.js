@@ -4,10 +4,17 @@
  * on an order item. If the reply is from a Summit staff member, emails the
  * customer to let them know there's a new message in their portal.
  *
- * Monday.com automation setup:
- *   Trigger: "When an update is created"
- *   Action:  "Send a webhook" → https://your-domain.vercel.app/api/monday/update-webhook?secret=<MONDAY_UPDATE_WEBHOOK_SECRET>
- *   JSON body: { "itemId": "{itemId}", "updateBody": "{updateBody}", "creatorEmail": "{creatorEmail}" }
+ * Monday.com automation setup (Manufacturing Process board):
+ *   Integrations → Webhooks → "When a new update posted, send a webhook"
+ *   URL: https://portal.summitsensory.com/api/monday/update-webhook?secret=<MONDAY_UPDATE_WEBHOOK_SECRET>
+ *
+ * Monday sends its standard event payload — { event: { pulseId, updateId,
+ * userId, body, textBody, ... } } — not a custom JSON body (that integration
+ * can't send one). The creator's email isn't in it, so the update itself is
+ * looked up by updateId. Every request 400'd on "Missing fields" until
+ * 2026-10-05 because this file expected { itemId, updateBody, creatorEmail },
+ * which Monday never sends. That flat shape is still accepted for manual
+ * testing.
  *
  * The automation fires for ALL updates (including customer ones). We only
  * email the customer when the update comes from a staff email domain.
@@ -20,7 +27,7 @@
  * var isn't configured.
  */
 
-import { getOrderById, getOrderByEmail, getOrderMessages, setStatusLabel, postTaggedUpdate } from '../../../lib/monday';
+import { getOrderById, getOrderByEmail, getOrderMessages, getUpdateById, setStatusLabel, postTaggedUpdate } from '../../../lib/monday';
 import { sendCustomerReplyNotification } from '../../../lib/email';
 import { isStaffEmail, secretsMatch } from '../../../lib/auth';
 import { isPortalChatMessage } from '../../../lib/messageOrigin';
@@ -86,8 +93,29 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Invalid secret.' });
   }
 
-  const { itemId, updateBody, creatorEmail } = req.body || {};
-  if (!itemId || !creatorEmail) return res.status(400).json({ error: 'Missing fields.' });
+  let { itemId, updateBody, creatorEmail } = req.body || {};
+  const event = req.body?.event;
+  if (event?.pulseId) {
+    itemId = event.pulseId;
+    updateBody = event.body ?? event.textBody;
+    if (event.updateId) {
+      try {
+        const update = await getUpdateById(event.updateId);
+        if (update) {
+          updateBody = update.body;
+          creatorEmail = update.creator?.email;
+        }
+      } catch (err) {
+        // 500 so Monday retries rather than silently dropping a real reply.
+        console.error(`Update webhook: couldn't look up update ${event.updateId} on item ${itemId}:`, err);
+        return res.status(500).json({ error: 'Update lookup failed.' });
+      }
+    }
+  }
+  if (!itemId || !creatorEmail) {
+    console.error('Update webhook: missing itemId/creatorEmail in payload:', JSON.stringify(req.body).slice(0, 500));
+    return res.status(400).json({ error: 'Missing fields.' });
+  }
 
   // PORTAL-031: Monday's "when an update is created" automation fires for
   // EVERY update on the item, including ones this app itself posted via the

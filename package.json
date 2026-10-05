@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",
+    "@vercel/functions": "^3.9.11",
     "@vercel/speed-insights": "^2.0.0",
     "cookie": "0.7.2",
     "dompurify": "^3.2.4",

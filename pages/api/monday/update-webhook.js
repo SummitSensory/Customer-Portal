@@ -104,6 +104,15 @@ export default async function handler(req, res) {
         if (update) {
           updateBody = update.body;
           creatorEmail = update.creator?.email;
+          // Updates posted by a Monday automation (e.g. the "Outgoing Email"
+          // log from a send-email recipe) have creator: null. They're never a
+          // staff reply, so skip with a 200 — a 400 here makes Monday treat
+          // routine traffic as failed deliveries. Don't fall back to
+          // event.userId: for automations that's the recipe's owner (a staff
+          // account), which would email the customer an internal message.
+          if (!update.creator) {
+            return res.status(200).json({ skipped: 'Automation-created update (no creator).' });
+          }
         }
       } catch (err) {
         // 500 so Monday retries rather than silently dropping a real reply.

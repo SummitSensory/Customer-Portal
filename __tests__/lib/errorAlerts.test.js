@@ -64,3 +64,30 @@ describe('reportError', () => {
     await expect(reportError({ source: 'a', message: 'boom' })).resolves.toBeUndefined();
   });
 });
+
+describe('installConsoleCapture', () => {
+  beforeEach(() => {
+    sendUrgentErrorAlert.mockClear();
+    vi.stubEnv('VERCEL_ENV', 'production');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('emails console.error calls but not Node process warnings', async () => {
+    const realError = console.error;
+    const flag = Symbol.for('summit.errorAlerts.installed');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      delete globalThis[flag];
+      const { installConsoleCapture } = await freshModule();
+      installConsoleCapture();
+      console.error('(node:4) ExperimentalWarning: vm.USE_MAIN_CONTEXT_DEFAULT_LOADER is an experimental feature');
+      console.error('(node:4) [DEP0040] DeprecationWarning: The `punycode` module is deprecated.');
+      expect(sendUrgentErrorAlert).not.toHaveBeenCalled();
+      console.error('Update webhook error:', new Error('real failure'));
+      expect(sendUrgentErrorAlert).toHaveBeenCalledTimes(1);
+    } finally {
+      console.error = realError;
+      delete globalThis[flag];
+    }
+  });
+});

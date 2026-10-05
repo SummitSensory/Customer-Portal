@@ -23,7 +23,7 @@
 import { getOrderById, getOrderByEmail, getOrderMessages, setStatusLabel, postTaggedUpdate } from '../../../lib/monday';
 import { sendCustomerReplyNotification } from '../../../lib/email';
 import { isStaffEmail, secretsMatch } from '../../../lib/auth';
-import { isPortalChatMessage, isStaffMessage } from '../../../lib/messageOrigin';
+import { isPortalChatMessage } from '../../../lib/messageOrigin';
 
 /**
  * PORTAL-064: this endpoint had no redelivery/idempotency guard at all —
@@ -113,10 +113,16 @@ export default async function handler(req, res) {
   //   - Only a genuinely untagged update — staff replying directly inside
   //     Monday, not through this app — falls back to creatorEmail, which is
   //     trustworthy in that one case (see isStaffReply's own reasoning).
-  let isStaff;
+  //
+  // Portal chat posts ([PORTAL] prefix) are skipped outright: messages.js
+  // sends EM-11 itself for staff posts at send time, so notifying here too
+  // would double-send. Only replies typed directly into Monday's Updates
+  // feed are this endpoint's job.
   if (isPortalChatMessage({ body: updateBody })) {
-    isStaff = isStaffMessage({ body: updateBody });
-  } else if (/^\[PORTAL:/.test(updateBody || '')) {
+    return res.status(200).json({ skipped: 'Portal chat message — notified at send time by messages.js.' });
+  }
+  let isStaff;
+  if (/^\[PORTAL:/.test(updateBody || '')) {
     isStaff = false;
   } else {
     isStaff = isStaffEmail(creatorEmail);

@@ -2,12 +2,14 @@
  * GET /api/cron/message-reply-safety-net
  * Vercel Cron Job — runs every 30 minutes.
  *
- * EM-11 ("Team Replied to Your Message") is sent from exactly one place —
- * pages/api/monday/update-webhook.js — and that depends entirely on a
- * Monday automation ("When an update is created -> send a webhook") staying
- * registered on the board. That automation has already been found disabled/
- * missing once before with nothing noticing until Bryan happened to check
- * (see OPEN-3's resolution history in Customer-Portal-Process-Flow.md).
+ * EM-11 ("Team Replied to Your Message") is sent from two places: directly
+ * by pages/api/monday/messages.js for Admin Portal replies, and by
+ * pages/api/monday/update-webhook.js for replies typed straight into
+ * Monday — the latter depends entirely on a Monday automation ("When an
+ * update is created -> send a webhook") staying registered on the board.
+ * That automation has been found disabled/missing twice (OPEN-3 in
+ * Customer-Portal-Process-Flow.md, and again 2026-10-05: deactivated by
+ * Monday as "unauthorized" since 2026-08-18).
  * This is the backstop for that exact single point of failure, built the
  * same way cron/invite-safety-net.js handles its own analogous gap: it does
  * NOT send the missing customer email itself — silently emailing a customer
@@ -123,7 +125,7 @@ export default async function handler(req, res) {
         .join('\n');
       await reportCriticalFailure(
         'cron/message-reply-safety-net',
-        `${flagged.length} order(s) have a staff reply more than ${GRACE_PERIOD_MINUTES} minutes old with no "reply notified" email logged. The Monday "when an update is created" automation (update-webhook.js) may be disabled or misconfigured again — check Monday's automation log, and manually follow up with these customers in the meantime.`,
+        `${flagged.length} order(s) have a staff reply more than ${GRACE_PERIOD_MINUTES} minutes old with no "reply notified" email logged. For an Admin Portal reply, check the messages.js EM-11 error in Vercel logs; for a reply typed in Monday, the "when an update is created" automation (update-webhook.js) may be disabled or misconfigured again — check Monday's automation log. Manually follow up with these customers in the meantime.`,
         { orders: lines }
       );
     }

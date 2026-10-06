@@ -60,7 +60,9 @@ describe('createDeliverySubmissionItem', () => {
     expect(w[DELIVERY_COLS.hasSecondaryPoc]).toBe('Yes');
     expect(w[DELIVERY_COLS.secondaryPocName]).toBe('Sam');
     expect(w[DELIVERY_COLS.secondaryPocPhone]).toBe('555');
-    expect(w[DELIVERY_COLS.secondaryPocCanText]).toEqual({ checked: 'false' });
+    // Unchecked boxes aren't written: the item is brand new (already unchecked), and
+    // Monday's documented way to clear a checkbox is null, not { checked: 'false' }.
+    expect(w[DELIVERY_COLS.secondaryPocCanText]).toBeUndefined();
     expect(w[DELIVERY_COLS.secondaryPocEmail]).toBe('sam@example.com');
     expect(w[DELIVERY_COLS.primaryCommMethods]).toBe('Email, Text Message');
     expect(w[DELIVERY_COLS.primaryMobileForText]).toBe('19207486717');

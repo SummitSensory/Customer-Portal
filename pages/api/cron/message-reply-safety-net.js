@@ -2,70 +2,36 @@
  * GET /api/cron/message-reply-safety-net
  * Vercel Cron Job — runs every 30 minutes.
  *
- * EM-11 ("Team Replied to Your Message") is sent from two places: directly
- * by pages/api/monday/messages.js for Admin Portal replies, and by
- * pages/api/monday/update-webhook.js for replies typed straight into
- * Monday — the latter depends entirely on a Monday automation ("When an
- * update is created -> send a webhook") staying registered on the board.
- * That automation has been found disabled/missing twice (OPEN-3 in
- * Customer-Portal-Process-Flow.md, and again 2026-10-05: deactivated by
- * Monday as "unauthorized" since 2026-08-18).
- * This is the backstop for that exact single point of failure, built the
- * same way cron/invite-safety-net.js handles its own analogous gap: it does
- * NOT send the missing customer email itself — silently emailing a customer
- * from a best-effort sweep, possibly re-sending for a reply that WAS
- * actually notified through a path this cron doesn't know about, is a worse
- * failure mode than a delayed human catching a real gap — it only finds
- * orders that look like a staff reply went un-notified and puts a human on
- * it via the same internal-alert mechanism (lib/monitoring.js) every other
- * "must not fail silently" case in this codebase already uses.
+ * Backstop for EM-11 ("Summit Sensory Gym replied to your message"). The
+ * email normally goes out the moment staff reply — from messages.js for
+ * Admin Portal replies, from update-webhook.js for replies typed in Monday —
+ * but the Monday webhook has been deactivated or misconfigured twice
+ * (2026-08-18 → 10-05), and Monday may not fire "update created" for a
+ * threaded reply at all. So every 30 minutes this re-checks every order with
+ * a conversation and SENDS any visible staff reply the customer wasn't told
+ * about, using the same lib/replyNotify.js logic and id-based markers as the
+ * real-time paths (so nothing is ever emailed twice).
  *
- * A "gap" is an order whose most recent staff reply (Messages-tab chat
- * tagged [PORTAL:STAFF], or an untagged reply from a staff email typed
- * directly into Monday's Updates feed — same classification
- * update-webhook.js itself uses to decide whether to notify) is:
- *   - older than GRACE_PERIOD_MINUTES (gives the real-time webhook a chance
- *     to fire before this flags anything), AND
- *   - newer than the most recent "[PORTAL: Reply Notified]" marker
- *     update-webhook.js posts on every successful send (or there's no such
- *     marker at all yet).
- *
- * Message Status (order.messageStatus) is checked first as a cheap filter —
- * it only ever reaches "Replied" via a staff reply, so an order that's
- * never been replied to (blank, or still "Needs Reply") can skip the full
- * message-history fetch entirely.
+ * It used to only alert the team, every run, forever: one stuck reply
+ * (Dallas Center Grimes CSD, 2026-10-02 → 10-05) produced 153 identical
+ * alerts while the customer waited three days. Now the team is alerted only
+ * when a send itself fails — once on first failure, then once a day.
  */
 
 import { getOrderSummaries, getOrderMessages } from '../../../lib/monday';
-import { isPortalChatMessage, isStaffMessage } from '../../../lib/messageOrigin';
-import { isStaffEmail } from '../../../lib/auth';
+import { findUnnotifiedStaffMessages, notifyPendingStaffReplies } from '../../../lib/replyNotify';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
 
-const GRACE_PERIOD_MINUTES = 30;
 const CHECK_CONCURRENCY = 8;
+const CRON_INTERVAL_MINUTES = 30;
+const DAILY_REMINDER_UTC_HOUR = 14; // 8am Mountain (MDT), same hour reminders.js runs
 
-// PORTAL-058: update-webhook.js only started posting "[PORTAL: Reply
-// Notified]" markers when this cron itself shipped (2026-09-17T21:11Z, PR
-// #6) — before that, EM-11 was still sent correctly by the (working) Monday
-// automation, it just left no marker behind. Without this cutoff, this
-// cron's very first runs flagged every pre-existing staff reply across the
-// whole board as a "gap" — real example: 6 orders spanning 2026-07-28 to
-// 2026-09-16, none of them an actual notification failure, re-alerted every
-// 30 minutes with no way to ever self-resolve (there's no code path that
-// could retroactively write the marker for history that predates it). Only
-// evaluate replies at or after this cutoff, where "no marker" is actually
-// informative.
-const MARKER_LIVE_SINCE = new Date('2026-09-17T21:11:00Z');
-
-// Mirrors update-webhook.js's own trigger classification (see that file's
-// PORTAL-031 comment) so this can't silently drift from what actually
-// counts as a notifiable staff reply there.
-function isNotifiableStaffReply(update) {
-  const body = update.body || '';
-  if (isPortalChatMessage(update)) return isStaffMessage(update);
-  if (/^\[PORTAL:/.test(body)) return false; // this app's own audit-trail tags, never a reply
-  return isStaffEmail(update.creator?.email);
+// Stateless alert cooldown for a send that keeps failing: alert on the first
+// run that sees it, then only on the daily reminder run.
+export function shouldAlertGap(ageMinutes, now) {
+  if (ageMinutes < CRON_INTERVAL_MINUTES * 2) return true;
+  return now.getUTCHours() === DAILY_REMINDER_UTC_HOUR && now.getUTCMinutes() < CRON_INTERVAL_MINUTES;
 }
 
 export default async function handler(req, res) {
@@ -76,68 +42,61 @@ export default async function handler(req, res) {
   }
 
   const now = new Date();
-  const results = { checked: 0, gaps: 0, skipped: 0, errors: 0 };
-  const flagged = [];
+  const results = { checked: 0, sent: 0, failed: 0, errors: 0 };
+  const sent = [];
+  const failed = [];
 
   try {
     // Only email + Message Status are read here — the full order load is
-    // far heavier and was timing out on Monday (2026-09-28).
+    // far heavier and was timing out on Monday (2026-09-28). Any order with a
+    // conversation has a Message Status ("Needs Reply" / "Replied"); checking
+    // only "Replied" missed exactly the case where the webhook never fired.
     const orders = await getOrderSummaries();
-    const withEmail = orders.filter(o => o.customerEmail);
-    results.checked = withEmail.length;
+    const withChat = orders.filter(o => o.customerEmail && o.messageStatus);
+    results.checked = withChat.length;
 
-    await mapWithConcurrency(withEmail, CHECK_CONCURRENCY, async (order) => {
+    await mapWithConcurrency(withChat, CHECK_CONCURRENCY, async (order) => {
+      let pending = [];
       try {
-        if (order.messageStatus !== 'Replied') { results.skipped++; return; }
-
         const updates = await getOrderMessages(order.id);
-        const sorted = [...updates].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-
-        const lastStaffReply = [...sorted].reverse().find(isNotifiableStaffReply);
-        if (!lastStaffReply) { results.skipped++; return; }
-
-        if (new Date(lastStaffReply.created_at) < MARKER_LIVE_SINCE) { results.skipped++; return; }
-
-        const replyAgeMinutes = (now - new Date(lastStaffReply.created_at)) / (1000 * 60);
-        if (replyAgeMinutes < GRACE_PERIOD_MINUTES) { results.skipped++; return; }
-
-        const lastNotified = [...sorted].reverse().find(u => (u.body || '').startsWith('[PORTAL: Reply Notified]'));
-        if (lastNotified && new Date(lastNotified.created_at) > new Date(lastStaffReply.created_at)) {
-          results.skipped++; return;
+        pending = findUnnotifiedStaffMessages(updates, { now });
+        if (!pending.length) return;
+        const result = await notifyPendingStaffReplies(order.id, { now, updates });
+        if (result.sent) {
+          results.sent++;
+          sent.push({ id: order.id, name: order.name, ids: result.ids });
         }
-
-        results.gaps++;
-        flagged.push({
-          id: order.id,
-          name: order.name,
-          customerEmail: order.customerEmail,
-          replyAt: lastStaffReply.created_at,
-        });
-      } catch (orderErr) {
-        console.error(`Message-reply safety-net check error for order ${order.id}:`, orderErr);
-        results.errors++;
+      } catch (err) {
+        if (!pending.length) {
+          console.error(`Message-reply safety-net check error for order ${order.id}:`, err);
+          results.errors++;
+          return;
+        }
+        results.failed++;
+        const ageMinutes = (now - new Date(pending[0].created_at)) / 60000;
+        failed.push({ id: order.id, name: order.name, customerEmail: order.customerEmail, replyAt: pending[0].created_at, error: err.message, alert: shouldAlertGap(ageMinutes, now) });
       }
     });
 
-    if (flagged.length > 0) {
-      const lines = flagged
-        .map(o => `- ${o.name} (id ${o.id}) — staff replied ${new Date(o.replyAt).toLocaleString()}, ${o.customerEmail} was never emailed about it`)
+    const toAlert = failed.filter(o => o.alert);
+    if (toAlert.length > 0) {
+      const lines = toAlert
+        .map(o => `- ${o.name} (id ${o.id}) — staff replied ${new Date(o.replyAt).toLocaleString()}; emailing ${o.customerEmail} failed: ${o.error}`)
         .join('\n');
       await reportCriticalFailure(
         'cron/message-reply-safety-net',
-        `${flagged.length} order(s) have a staff reply more than ${GRACE_PERIOD_MINUTES} minutes old with no "reply notified" email logged. For an Admin Portal reply, check the messages.js EM-11 error in Vercel logs; for a reply typed in Monday, the "when an update is created" automation (update-webhook.js) may be disabled or misconfigured again — check Monday's automation log. Manually follow up with these customers in the meantime.`,
+        `${toAlert.length} order(s) have a staff reply the customer hasn't been emailed about, and sending the notification failed. It is retried every 30 minutes; please follow up with these customers directly. (Each order is re-alerted once a day while it keeps failing.)`,
         { orders: lines }
       );
     }
 
-    console.log(`Cron message-reply-safety-net summary: checked=${results.checked} gaps=${results.gaps} skipped=${results.skipped} errors=${results.errors}`);
-
-    return res.status(200).json({ ok: true, ...results, flagged });
+    console.log(`Cron message-reply-safety-net summary: checked=${results.checked} sent=${results.sent} failed=${results.failed} errors=${results.errors}`);
+    return res.status(200).json({ ok: true, ...results, sent, failed });
   } catch (err) {
-    console.error(`Cron message-reply-safety-net FAILED before completing (checked=${results.checked} gaps=${results.gaps} skipped=${results.skipped} errors=${results.errors}):`, err);
+    console.error(`Cron message-reply-safety-net FAILED before completing (checked=${results.checked} sent=${results.sent} failed=${results.failed} errors=${results.errors}):`, err);
     await reportCriticalFailure(
       'cron/message-reply-safety-net',
-      `Message-reply safety-net cron run failed before completing (checked=${results.checked} gaps=${results.gaps} skipped=${results.skipped} errors=${results.errors}).`,
+      `Message-reply safety-net cron run failed before completing (checked=${results.checked} sent=${results.sent}).`,
       { error: err.message }
     );
     return res.status(500).json({ error: 'Cron job failed.', ...results });

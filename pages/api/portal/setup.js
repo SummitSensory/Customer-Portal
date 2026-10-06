@@ -23,6 +23,7 @@ import {
   STATUS_STAGES,
   TAX_EXEMPT_YES_LABEL,
   TAX_EXEMPT_NO_LABEL,
+  PORTAL_DONE_LABEL,
 } from '../../../lib/monday';
 import { requireCustomerSession, loadSessionOrder, enforceRateLimit } from '../../../lib/apiAuth';
 
@@ -316,7 +317,13 @@ export default async function handler(req, res) {
         await postTaggedUpdate(order.id, 'PORTAL: Billing Information',
           `Billing Address: ${addressText}\nBilling Contact: ${contactText}\nSubmitted: ${new Date().toLocaleDateString()}`
         );
-        await notifyTeamContactChange(order.name, session.email, ['Billing Information']).catch(console.error);
+        // "Contact Info Changed" only when billing was already complete — a
+        // first-time submission is just onboarding (shown by the Portal:
+        // Billing column), and alerting on it sent 3–4 "changed" emails per
+        // new customer (40 in three weeks).
+        if (order.progress?.billing === PORTAL_DONE_LABEL) {
+          await notifyTeamContactChange(order.name, session.email, ['Billing Information']).catch(console.error);
+        }
         const billingSynced = await markSectionCompleteSafe(order.id, 'portalBilling');
         return res.status(200).json({ ok: true, checklistSyncPending: !billingSynced });
       }
@@ -505,7 +512,11 @@ export default async function handler(req, res) {
           const notifyFields = safeChangedRestricted.length > 0
             ? safeChangedRestricted
             : ['Delivery Details'];
-          await notifyTeamContactChange(order.name, session.email, notifyFields).catch(console.error);
+          // Restricted fields always alert (they need Summit's confirmation);
+          // otherwise only a change to an already-completed Delivery tab does.
+          if (safeChangedRestricted.length > 0 || order.progress?.delivery === PORTAL_DONE_LABEL) {
+            await notifyTeamContactChange(order.name, session.email, notifyFields).catch(console.error);
+          }
         }
 
         const deliverySynced = await markSectionCompleteSafe(order.id, 'portalDelivery');

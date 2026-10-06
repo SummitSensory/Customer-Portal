@@ -7,6 +7,7 @@ vi.mock('../../../lib/monday', () => ({
   getAllOrders: (...args) => mockGetAllOrders(...args),
   getOrderMessages: (...args) => mockGetOrderMessages(...args),
   postTaggedUpdate: (...args) => mockPostTaggedUpdate(...args),
+  getCustomerFirstName: async (o) => o?.firstName || o?.pocName?.split(' ')[0] || '',
 }));
 
 const mockSendSetupReminder = vi.fn().mockResolvedValue(undefined);

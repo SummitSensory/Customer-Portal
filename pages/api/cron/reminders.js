@@ -19,10 +19,12 @@
  * Escalation tracking:   logs [PORTAL: Reminders Exhausted] once per cycle
  */
 
-import { getAllOrders, getOrderMessages, postTaggedUpdate } from '../../../lib/monday';
+import { getAllOrders, getOrderMessages, postTaggedUpdate, getCustomerFirstName } from '../../../lib/monday';
 import { sendSetupReminder, sendCombinedSetupReminder, notifyTeamRemindersExhausted } from '../../../lib/email';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
+import { hasBounced } from '../../../lib/bounces';
+import { isStaffEmail } from '../../../lib/auth';
 
 // Orders were previously processed one at a time; this run took as long as
 // (order count) × (message fetch + reminder send latency). 8 concurrent
@@ -166,12 +168,18 @@ export default async function handler(req, res) {
         // call, and fetching history for every order (most of them done)
         // timed out on Monday several times per run (2026-09-28).
         if (STOP_PHASES.has((order.status || '').trim())) { results.skipped++; return; }
+        // Test orders use a staff address ("Maurer Therapy Test" → sales@
+        // got real reminders) — never remind ourselves.
+        if (isStaffEmail(order.customerEmail)) { results.skipped++; return; }
         const incompleteTabs = incompleteSetupTabs(order);
 
         // All done — no reminder needed
         if (incompleteTabs.length === 0) { results.skipped++; return; }
 
         const updates = await getOrderMessages(order.id);
+        // A dead address (see pages/api/resend/webhook.js) — the team was
+        // already alerted; reminders resume once the order's email is fixed.
+        if (hasBounced(updates, order.customerEmail)) { results.skipped++; return; }
         const decision = reminderDecision(updates, now, INTERVAL_DAYS, MAX_REMINDERS);
 
         if (decision.action === 'exhausted') {
@@ -196,7 +204,7 @@ export default async function handler(req, res) {
 
     await mapWithConcurrency([...byCustomer.values()], REMINDER_CONCURRENCY, async (group) => {
       const first = group[0].order;
-      const customerName = first.firstName || first.pocName?.split(' ')[0] || '';
+      const customerName = await getCustomerFirstName(first);
       let sent;
       try {
         sent = group.length === 1

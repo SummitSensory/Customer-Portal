@@ -37,6 +37,7 @@ vi.mock('../../../lib/monday', () => ({
   ],
   TAX_EXEMPT_YES_LABEL: 'Yes',
   TAX_EXEMPT_NO_LABEL: 'No',
+  PORTAL_DONE_LABEL: '✅',
 }));
 
 const mockVerifyCustomerSession = vi.fn();

@@ -31,6 +31,7 @@ import {
   updateAccessoryCarrierStatus,
   findOrderByFreightTracking,
   updateFreightNotifyTag,
+  getCustomerFirstName,
 } from '../../../lib/monday';
 import { labelForTag, publicUrl, SHIPMENT_LABELS } from '../../../lib/aftership';
 import { notifyCustomerFreightUpdate } from '../../../lib/email';
@@ -38,6 +39,18 @@ import { notifyCustomerFreightUpdate } from '../../../lib/email';
 // Only these carrier statuses are worth emailing a customer about — skip the
 // noisy/early ones (Pending, InfoReceived) that don't tell them anything new.
 const NOTIFY_WORTHY_TAGS = new Set(['InTransit', 'OutForDelivery', 'Delivered', 'Exception']);
+
+// Forward progress of a shipment. Carriers sometimes post an older-stage
+// checkpoint after a newer one (Remedy Speech Therapy, 2026-09-18/19: "Out
+// for Delivery", then "On Its Way" again), which emailed the customer a step
+// backwards. Exception isn't ranked, so it — and recovery from it — always
+// sends.
+const PROGRESS_RANK = { 'In Transit': 1, 'Out for Delivery': 2, 'Delivered': 3 };
+export function isBackwardStep(lastLabel, nextLabel) {
+  const last = PROGRESS_RANK[lastLabel];
+  const next = PROGRESS_RANK[nextLabel];
+  return Boolean(last && next && next < last);
+}
 
 // Needed for the HMAC fallback path, which must sign the exact raw bytes.
 export const config = {
@@ -162,6 +175,9 @@ export default async function handler(req, res) {
     if (order.lastNotifiedTag === statusLabel) {
       return res.status(200).json({ ok: true, matched: true, board: 'freight', skipped: 'Already notified for this status.' });
     }
+    if (isBackwardStep(order.lastNotifiedTag, statusLabel)) {
+      return res.status(200).json({ ok: true, matched: true, board: 'freight', skipped: `"${statusLabel}" is behind the last status we emailed ("${order.lastNotifiedTag}").` });
+    }
 
     // Send + dedupe-tag-write are handled as two distinct steps (not both
     // inside one try/catch) so a failure in one can't be silently confused
@@ -175,7 +191,7 @@ export default async function handler(req, res) {
     try {
       await notifyCustomerFreightUpdate(
         order.customerEmail,
-        order.contactName,
+        await getCustomerFirstName({ id: order.itemId, contactName: order.contactName }),
         order.orderName,
         SHIPMENT_LABELS[order.shipmentKey] || 'Shipment',
         statusLabel,

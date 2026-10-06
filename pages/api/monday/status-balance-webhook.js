@@ -1,45 +1,24 @@
 /**
  * POST /api/monday/status-balance-webhook
  *
- * Closes OPEN-1 (Customer-Portal-Process-Flow.md): EM-04 (order status
- * change) and EM-09 (balance update) previously fired ONLY when staff edited
- * an order through the Admin Portal (pages/api/monday/orders.js) — changing
- * Manufacturing Phase (DS-02) or the balance column directly in Monday.com
- * sent no customer email at all. This endpoint is the missing half: a Monday
- * automation ("When column changes -> send a webhook") on those two columns
- * fires this directly, regardless of where the edit was made.
+ * EM-04: emails the customer when "Manufacturing Phase" (status__1) changes
+ * to one of the customer-facing phases (lib/email.js CUSTOMER_STATUS_EMAILS),
+ * whether the change was made in Monday or the Admin Portal. Internal phases
+ * are ignored. (The file name predates 2026-10-06, when balance emails were
+ * dropped — Bryan: no balance email needed.)
  *
- * Dedup: the Admin Portal path and this webhook path can now both react to
- * the SAME Monday write (orders.js's updateOrderStatus()/updateBalance()
- * calls flip the exact columns this automation watches too), so without
- * dedup a staff edit made through the Admin Portal would email the customer
- * twice — once from orders.js, once a few seconds later from this webhook.
- * Both paths go through lib/monday.js's hasNotifiedValue()/markNotifiedValue(),
- * a tagged-update marker ("[PORTAL: Status Notified - X]" / "[PORTAL: Balance
- * Notified - X]") — whichever path sends first wins, the other sees the tag
- * and skips. Chosen over a new Monday column so this needs no board schema
- * change.
+ * Dedup: the Admin Portal path (orders.js) reacts to the same column write,
+ * so both go through lib/monday.js's sendCustomerNotificationOnce() and its
+ * "[PORTAL: Status Notified - X]" marker — whichever sends first wins. A
+ * failed send isn't marked, and this answers 500 so Monday redelivers.
  *
- * One-time setup (Monday + Vercel):
- *   1. In Monday, add an automation on board 6533700776 ("Manufacturing
- *      Process"): "When Manufacturing Phase changes to anything -> send a
- *      webhook" -> this endpoint's URL. Same automation-builder flow already
- *      used for EP-22 (accessory-webhook.js) and EP-14 (update-webhook.js) —
- *      see OPEN-3's resolution notes for the exact steps if the builder
- *      needs a pre-authorized destination.
- *   2. Add a second automation, same board: "When [the balance column]
- *      changes -> send a webhook" -> the same URL. Only possible once
- *      MONDAY_COL_BALANCE is actually set (see DS-23 — unmapped by default).
- *      Skip this one until that column exists.
- *   3. Set MONDAY_STATUS_WEBHOOK_SECRET in Vercel and paste the same value
- *      into both automations' Authentication / query-param field.
- *
- * Until step 1/2 are done, this endpoint simply never receives traffic —
- * the Admin Portal path keeps working exactly as it does today.
+ * Setup: a Monday webhook on board 6533700776 for changes to status__1 →
+ *   https://portal.summitsensory.com/api/monday/status-balance-webhook?secret=<MONDAY_STATUS_WEBHOOK_SECRET>
+ * Fails CLOSED if the secret env var is unset.
  */
 
 import { getOrderById, sendCustomerNotificationOnce, COLS } from '../../../lib/monday';
-import { notifyCustomerStatusChange, notifyCustomerBalanceChange } from '../../../lib/email';
+import { notifyCustomerStatusChange, isCustomerFacingStatus } from '../../../lib/email';
 import { secretsMatch } from '../../../lib/auth';
 
 // Same three-location secret extraction as accessory-webhook.js — Monday's
@@ -98,6 +77,10 @@ export default async function handler(req, res) {
       if (!status || !status.trim()) {
         return res.status(200).json({ ok: true, skipped: 'No status value.' });
       }
+      // Most phases are internal pipeline state — only a few are emailed.
+      if (!isCustomerFacingStatus(status)) {
+        return res.status(200).json({ ok: true, skipped: `"${status}" is not a customer-facing phase.` });
+      }
       const result = await sendCustomerNotificationOnce(itemId, 'Status', status, () =>
         notifyCustomerStatusChange(order.customerEmail, order.contactName, order.name, status)
       );
@@ -107,28 +90,14 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, notified: 'status', value: status });
     }
 
-    if (COLS.balance && columnId === COLS.balance) {
-      const balance = order.balance;
-      if (balance === null || balance === undefined || Number.isNaN(balance)) {
-        return res.status(200).json({ ok: true, skipped: 'No balance value.' });
-      }
-      const balanceKey = balance.toFixed(2);
-      const result = await sendCustomerNotificationOnce(itemId, 'Balance', balanceKey, () =>
-        notifyCustomerBalanceChange(order.customerEmail, order.contactName, order.name, balance)
-      );
-      if (!result.sent) {
-        return res.status(200).json({ ok: true, skipped: 'Already notified for this balance.' });
-      }
-      return res.status(200).json({ ok: true, notified: 'balance', value: balanceKey });
-    }
-
     // Some other column on the board changed — not ours to react to.
     return res.status(200).json({ ok: true, skipped: 'Column not tracked.' });
   } catch (err) {
     console.error('Monday status-balance-webhook processing error:', err.message);
-    // Still 200 — a transient error here shouldn't make Monday retry forever;
-    // the Admin Portal path (if that's how this order gets edited next) will
-    // still send the email correctly.
-    return res.status(200).json({ ok: false, error: 'Processing error.' });
+    // 500 so Monday redelivers (it retries for a bounded window, not
+    // forever). Nothing was marked notified, so a retry sends the email
+    // exactly once. This used to answer 200, which silently dropped any
+    // status email whose send failed.
+    return res.status(500).json({ ok: false, error: 'Processing error.' });
   }
 }

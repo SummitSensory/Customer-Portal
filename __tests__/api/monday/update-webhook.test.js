@@ -180,4 +180,15 @@ describe('POST /api/monday/update-webhook — Monday native event payload', () =
     expect(mockSendCustomerReplyNotification).not.toHaveBeenCalled();
     err.mockRestore();
   });
+
+  it('an update deleted before the lookup (e.g. an invite claim note) is a 200 skip, not a 400', async () => {
+    mockGetUpdateById.mockResolvedValue(null);
+
+    const res = makeRes();
+    await handler(makeReq(event()), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.skipped).toBeTruthy();
+    expect(mockSendCustomerReplyNotification).not.toHaveBeenCalled();
+  });
 });

@@ -30,10 +30,27 @@
 // onboarded at least once — this job only affects how quickly a brand-new
 // item gets its first onboarding.
 
-import { getAllAccessoryItems, updateAccessoryCarrierStatus, getAllOrders, resolveDeliveryContacts } from '../../../lib/monday';
+import { getAllAccessoryItems, updateAccessoryCarrierStatus, getAllOrders, getOrderById, resolveDeliveryContacts } from '../../../lib/monday';
 import { trackShipment, onboardShipment, buildTrackingTitle, buildCustomFields } from '../../../lib/aftership';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
+
+// getAllOrders() skips mirror columns (too slow board-wide), so pocName /
+// pocEmail / phone are always blank on its orders. For an opted-in order with
+// no delivery snapshot those mirrors are the only contact source, and
+// resolving from the bare order handed AfterShip a contact-free customer
+// every hour — overwriting the real POC that aftership/track.js registered
+// and silencing AfterShip's own delivery emails. Load the full order (with
+// mirrors) for just those orders. Opted-out orders still resolve to nothing,
+// which is the intended way to strip contacts from AfterShip.
+async function contactsFor(order) {
+  let source = order;
+  if (order?.freightNotifyEnabled && !order.deliverySnapshot) {
+    source = (await getOrderById(order.id).catch(() => null)) || order;
+  }
+  const { primary, secondary } = resolveDeliveryContacts(source);
+  return [primary, secondary].filter(Boolean);
+}
 
 // Same reasoning as REMINDER_CONCURRENCY in cron/reminders.js — this job's two
 // loops (accessory items, then orders' Frame/Mats shipments) each make an
@@ -102,8 +119,7 @@ export default async function handler(req, res) {
         // Mats — register the item's real parent-order delivery contact
         // (when resolvable) the same way Frame/Mats already do.
         const order = item.orderId ? ordersById.get(String(item.orderId)) : null;
-        const { primary, secondary } = order ? resolveDeliveryContacts(order) : {};
-        const contacts = [primary, secondary].filter(Boolean);
+        const contacts = order ? await contactsFor(order) : [];
         // The item's own specific name (e.g. "Weighted Blanket") is more
         // useful in the title than the generic "Therapy Equipment &
         // Accessories" bucket label — see buildTrackingTitle's `detail` param.
@@ -144,8 +160,7 @@ export default async function handler(req, res) {
         // pages/api/aftership/track.js — otherwise a shipment onboarded by
         // this cron before the customer ever opens the portal would have no
         // recipient at all until they did.
-        const { primary, secondary } = resolveDeliveryContacts(order);
-        const contacts = [primary, secondary].filter(Boolean);
+        const contacts = await contactsFor(order);
         for (const s of shipments) {
           // Disambiguated title (2026-09-03): a customer with both a Frame
           // and a Mats shipment previously got the identical order name on

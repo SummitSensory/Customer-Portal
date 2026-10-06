@@ -43,6 +43,19 @@ import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
 
 const GRACE_PERIOD_MINUTES = 30;
+// Re-alert cooldown, stateless: a gap is alerted on the first run that sees
+// it (reply age in [GRACE, GRACE + CRON_INTERVAL)), then once a day on the
+// run in DAILY_REMINDER_UTC_HOUR's first half hour. Before this, one stuck
+// gap (Dallas Center Grimes CSD, 2026-10-02 → 10-05) re-alerted every 30
+// minutes for 76 hours — 153 identical emails that trained everyone to
+// ignore it while the customer waited three days.
+const CRON_INTERVAL_MINUTES = 30;
+const DAILY_REMINDER_UTC_HOUR = 14; // 8am Mountain (MDT), same hour reminders.js runs
+
+export function shouldAlertGap(replyAgeMinutes, now) {
+  if (replyAgeMinutes < GRACE_PERIOD_MINUTES + CRON_INTERVAL_MINUTES) return true;
+  return now.getUTCHours() === DAILY_REMINDER_UTC_HOUR && now.getUTCMinutes() < CRON_INTERVAL_MINUTES;
+}
 const CHECK_CONCURRENCY = 8;
 
 // PORTAL-058: update-webhook.js only started posting "[PORTAL: Reply
@@ -108,6 +121,7 @@ export default async function handler(req, res) {
 
         results.gaps++;
         flagged.push({
+          alert: shouldAlertGap(replyAgeMinutes, now),
           id: order.id,
           name: order.name,
           customerEmail: order.customerEmail,
@@ -119,13 +133,14 @@ export default async function handler(req, res) {
       }
     });
 
-    if (flagged.length > 0) {
-      const lines = flagged
+    const toAlert = flagged.filter(o => o.alert);
+    if (toAlert.length > 0) {
+      const lines = toAlert
         .map(o => `- ${o.name} (id ${o.id}) — staff replied ${new Date(o.replyAt).toLocaleString()}, ${o.customerEmail} was never emailed about it`)
         .join('\n');
       await reportCriticalFailure(
         'cron/message-reply-safety-net',
-        `${flagged.length} order(s) have a staff reply more than ${GRACE_PERIOD_MINUTES} minutes old with no "reply notified" email logged. For an Admin Portal reply, check the messages.js EM-11 error in Vercel logs; for a reply typed in Monday, the "when an update is created" automation (update-webhook.js) may be disabled or misconfigured again — check Monday's automation log. Manually follow up with these customers in the meantime.`,
+        `${toAlert.length} order(s) have a staff reply more than ${GRACE_PERIOD_MINUTES} minutes old with no "reply notified" email logged. For an Admin Portal reply, check the messages.js EM-11 error in Vercel logs; for a reply typed in Monday, the "when an update is created" automation (update-webhook.js) may be disabled or misconfigured again — check Monday's automation log. Manually follow up with these customers in the meantime. (Each unresolved order is re-alerted once a day, not every run.)`,
         { orders: lines }
       );
     }

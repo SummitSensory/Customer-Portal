@@ -18,13 +18,50 @@ import { notifyTeamFormCompleted, notifyTeamUgcThreshold } from '../../../lib/em
 import { secretsMatch } from '../../../lib/auth';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 
-// Parse the form→checklist map from env
-function getFormMap() {
+// Parse the form→checklist map from env. The Showcase and default Color
+// Selection forms are already identified by their own env vars, so they're
+// mapped automatically — JOTFORM_FORM_MAP was never set in production, which
+// meant every submission was dropped as "No mapping for this form".
+export function getFormMap() {
+  let map = {};
   try {
-    return JSON.parse(process.env.JOTFORM_FORM_MAP || '{}');
+    map = JSON.parse(process.env.JOTFORM_FORM_MAP || '{}');
   } catch {
-    return {};
+    map = {};
   }
+  const showcaseId = (process.env.JOTFORM_SHOWCASE_FORM_ID || '').trim();
+  const colorId = (process.env.JOTFORM_COLOR_FORM_ID || '').trim();
+  if (showcaseId && !map[showcaseId]) map[showcaseId] = { name: 'Photo & Video Showcase', tab: 'showcase' };
+  if (colorId && !map[colorId]) map[colorId] = { name: 'Color Selection', tab: 'color' };
+  return map;
+}
+
+/**
+ * Jotform's native webhook POSTs multipart/form-data (formID, submissionID,
+ * rawRequest, …). Next's body parser only understands JSON/urlencoded and
+ * hands anything else over as a raw string, so formID was always missing and
+ * every real delivery was rejected. Text fields only — Jotform doesn't put
+ * files in the webhook body.
+ */
+export function parseMultipartFields(raw, contentType) {
+  const boundary = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType || '');
+  if (!boundary || typeof raw !== 'string') return {};
+  const fields = {};
+  for (const part of raw.split(`--${boundary[1] || boundary[2]}`)) {
+    const sep = part.indexOf('\r\n\r\n');
+    if (sep < 0) continue;
+    const name = /name="([^"]+)"/i.exec(part.slice(0, sep));
+    if (!name) continue;
+    fields[name[1]] = part.slice(sep + 4).replace(/\r\n$/, '');
+  }
+  return fields;
+}
+
+function requestFields(req) {
+  if (typeof req.body === 'string' && /multipart\/form-data/i.test(req.headers['content-type'] || '')) {
+    return parseMultipartFields(req.body, req.headers['content-type']);
+  }
+  return req.body || {};
 }
 
 /** Resolve a form's configured "tab" string to the actual tabType used below. */
@@ -192,8 +229,11 @@ export default async function handler(req, res) {
   // JOTFORM_WEBHOOK_SECRET was unset, letting anyone who found this URL post
   // fabricated submissions (including attacker-controlled file URLs — see
   // PORTAL-006) as if they came from a real Jotform. Fails CLOSED now.
+  // Jotform's webhook settings can't add custom headers, so the secret
+  // normally rides on the URL: /api/jotform/webhook?secret=…
+  const body = requestFields(req);
   const configuredSecret = process.env.JOTFORM_WEBHOOK_SECRET;
-  const secret = req.headers['x-jotform-secret'] || req.body?.secret;
+  const secret = req.query?.secret || req.headers['x-jotform-secret'] || body.secret;
   if (!secretsMatch(secret, configuredSecret)) {
     console.error('Jotform webhook: authorization failed (missing or mismatched secret).');
     return res.status(401).json({ error: 'Invalid webhook secret.' });
@@ -204,7 +244,7 @@ export default async function handler(req, res) {
   // identifies one Jotform submission — when present, it's used below to
   // recognize and skip a redelivery instead of double-attaching UGC files
   // or double-crediting the reward tally.
-  const { formID, rawRequest, submissionID } = req.body || {};
+  const { formID, rawRequest, submissionID } = body;
   if (!formID) return res.status(400).json({ error: 'formID required.' });
 
   // Parse the submission data

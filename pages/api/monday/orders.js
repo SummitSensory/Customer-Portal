@@ -16,6 +16,7 @@ import {
 import {
   notifyCustomerStatusChange,
   notifyCustomerBalanceChange,
+  isCustomerFacingStatus,
 } from '../../../lib/email';
 
 export default async function handler(req, res) {
@@ -62,14 +63,17 @@ export default async function handler(req, res) {
         // PORTAL-059: sendCustomerNotificationOnce() (lib/monday.js) closes
         // the race the old separate hasNotifiedValue()/markNotifiedValue()
         // calls here left open — see that function's own header comment.
-        // sendFn swallows its own error (matches this endpoint's prior
-        // behavior: still record the "notified" marker even if the email
-        // itself failed, rather than let a transient email failure spam a
-        // resend on every future admin edit).
-        if (order.customerEmail) {
+        // Only customer-facing phases are emailed (lib/email.js). A failed
+        // send is NOT marked notified, so the Monday webhook's delivery of
+        // this same change can still retry it; re-saving the same status here
+        // never resends (status === order.status skips this block).
+        if (order.customerEmail && isCustomerFacingStatus(status)) {
           await sendCustomerNotificationOnce(id, 'Status', status, () =>
-            notifyCustomerStatusChange(order.customerEmail, order.contactName, order.name, status).catch(console.error)
-          ).catch(err => console.error('Status change notification failed:', err.message));
+            notifyCustomerStatusChange(order.customerEmail, order.contactName, order.name, status)
+          ).catch(err => {
+            console.error('Status change notification failed:', err.message);
+            warnings.push(`Status saved, but emailing the customer about "${status}" failed: ${err.message}`);
+          });
         }
       }
 
@@ -102,8 +106,11 @@ export default async function handler(req, res) {
           // Same dedup rationale (and PORTAL-059 fix) as the status branch above.
           const balanceKey = nextBalance.toFixed(2);
           await sendCustomerNotificationOnce(id, 'Balance', balanceKey, () =>
-            notifyCustomerBalanceChange(order.customerEmail, order.contactName, order.name, nextBalance).catch(console.error)
-          ).catch(err => console.error('Balance change notification failed:', err.message));
+            notifyCustomerBalanceChange(order.customerEmail, order.contactName, order.name, nextBalance)
+          ).catch(err => {
+            console.error('Balance change notification failed:', err.message);
+            warnings.push(`Balance saved, but emailing the customer failed: ${err.message}`);
+          });
         }
       }
 

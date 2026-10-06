@@ -39,7 +39,7 @@
  */
 
 import { getOrderById, sendCustomerNotificationOnce, COLS } from '../../../lib/monday';
-import { notifyCustomerStatusChange, notifyCustomerBalanceChange } from '../../../lib/email';
+import { notifyCustomerStatusChange, notifyCustomerBalanceChange, isCustomerFacingStatus } from '../../../lib/email';
 import { secretsMatch } from '../../../lib/auth';
 
 // Same three-location secret extraction as accessory-webhook.js — Monday's
@@ -98,6 +98,10 @@ export default async function handler(req, res) {
       if (!status || !status.trim()) {
         return res.status(200).json({ ok: true, skipped: 'No status value.' });
       }
+      // Most phases are internal pipeline state — only a few are emailed.
+      if (!isCustomerFacingStatus(status)) {
+        return res.status(200).json({ ok: true, skipped: `"${status}" is not a customer-facing phase.` });
+      }
       const result = await sendCustomerNotificationOnce(itemId, 'Status', status, () =>
         notifyCustomerStatusChange(order.customerEmail, order.contactName, order.name, status)
       );
@@ -126,9 +130,10 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, skipped: 'Column not tracked.' });
   } catch (err) {
     console.error('Monday status-balance-webhook processing error:', err.message);
-    // Still 200 — a transient error here shouldn't make Monday retry forever;
-    // the Admin Portal path (if that's how this order gets edited next) will
-    // still send the email correctly.
-    return res.status(200).json({ ok: false, error: 'Processing error.' });
+    // 500 so Monday redelivers (it retries for a bounded window, not
+    // forever). Nothing was marked notified, so a retry sends the email
+    // exactly once. This used to answer 200, which silently dropped any
+    // status email whose send failed.
+    return res.status(500).json({ ok: false, error: 'Processing error.' });
   }
 }

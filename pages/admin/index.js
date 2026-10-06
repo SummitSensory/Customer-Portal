@@ -339,9 +339,15 @@ function OrdersTab({ orders, onRefresh, showToast }) {
     showToast('Column preferences saved.');
   }
 
+  // The real "Manufacturing Phase" (status__1) labels, in board order. The
+  // old list ("Order Placed", "In Manufacturing", "Delivered"…) mostly didn't
+  // exist on the board, so picking one failed to save.
   const STATUS_OPTIONS = [
-    'Order Placed', 'Deposit Received', 'In Manufacturing',
-    'Ready to Ship', 'Shipped', 'Delivered',
+    'Incoming Order', 'Order In Review', 'Ready for Manufacturing', 'GB Fab Details Sent',
+    'Install Doc Sent', 'Shipped', 'Order Complete', 'ORDER CANCELLED',
+    'Wait to Push Order', 'Color Details Needed', 'Details Obtained', 'No Action Needed',
+    'Delivery Details Needed', 'Great Mats Order Submitted', 'RES Order Submitted',
+    'Sports Play Order Submitted', 'Needs Install Drawing', 'Bryan Fullfilling', 'Waiting on Customer Info',
   ];
 
   function startEdit(order) {
@@ -1331,12 +1337,14 @@ function ProgressDots({ progress }) {
 function StatusPill({ status }) {
   if (!status) return <span style={{ color: 'var(--mut)' }}>—</span>;
   const colors = {
-    'Order Placed':       { bg: 'var(--sky-lt)',  color: 'var(--sky)' },
-    'Deposit Received':   { bg: 'var(--sun-lt)',  color: 'var(--sun)' },
-    'In Manufacturing':   { bg: 'var(--moss-lt)', color: 'var(--moss-dk)' },
-    'Ready to Ship':      { bg: '#fff3d4',         color: '#8a6200' },
-    'Shipped':            { bg: 'var(--ok-lt)',   color: 'var(--ok)' },
-    'Delivered':          { bg: 'var(--ok-lt)',   color: 'var(--ok)' },
+    'Incoming Order':          { bg: 'var(--sky-lt)',  color: 'var(--sky)' },
+    'Order In Review':         { bg: 'var(--sky-lt)',  color: 'var(--sky)' },
+    'Ready for Manufacturing': { bg: 'var(--moss-lt)', color: 'var(--moss-dk)' },
+    'GB Fab Details Sent':     { bg: 'var(--moss-lt)', color: 'var(--moss-dk)' },
+    'Install Doc Sent':        { bg: '#fff3d4',         color: '#8a6200' },
+    'Shipped':                 { bg: 'var(--ok-lt)',   color: 'var(--ok)' },
+    'Order Complete':          { bg: 'var(--ok-lt)',   color: 'var(--ok)' },
+    'ORDER CANCELLED':         { bg: 'var(--rose-lt)', color: 'var(--rose)' },
   };
   const c = colors[status] || { bg: 'var(--paper)', color: 'var(--mut)' };
   return (

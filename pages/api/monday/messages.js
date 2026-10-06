@@ -7,8 +7,9 @@ import { parse } from 'cookie';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { getOrderMessages, postOrderMessage, getOrderById, setStatusLabel, postTaggedUpdate } from '../../../lib/monday';
-import { notifyTeamNewMessage, sendCustomerReplyNotification } from '../../../lib/email';
+import { getOrderMessages, postOrderMessage, getOrderById, setStatusLabel } from '../../../lib/monday';
+import { notifyTeamNewMessage } from '../../../lib/email';
+import { notifyPendingStaffReplies } from '../../../lib/replyNotify';
 import { allowRequest } from '../../../lib/rateLimit';
 
 async function getIdentity(req, res) {
@@ -25,36 +26,20 @@ async function getIdentity(req, res) {
 }
 
 /**
- * EM-11 for a staff reply sent from the Admin Portal Messages tab. This used
- * to be left entirely to update-webhook.js via Monday's "when an update is
- * created" automation — which Monday deactivated on 2026-08-18
- * ("store.webhooks.error.unauthorized") once PORTAL-003 started requiring
- * ?secret= on that endpoint and the automation's saved URL didn't carry it.
- * No portal reply was emailed after that until cron/message-reply-safety-net
- * caught one (Dallas Center Grimes CSD, 2026-10-02). This path knows for
- * certain it's a staff reply, so it sends directly; update-webhook.js now
- * skips [PORTAL] chat posts so the two can't double-send. Posts the same
- * "[PORTAL: Reply Notified]" marker the safety-net cron looks for. Never
- * fails the request — the message is already posted, and a missed email is
- * still caught by that cron.
+ * EM-11 for a staff reply sent from the Admin Portal Messages tab — sent
+ * right away rather than waiting on Monday's "update created" webhook. See
+ * lib/replyNotify.js for which messages count and the id-based dedupe that
+ * keeps this, update-webhook.js and the safety-net cron from double-sending.
+ * Never fails the request: the message is already posted, and a missed email
+ * is retried by cron/message-reply-safety-net.
  */
-async function notifyCustomerOfStaffReply(orderId, text) {
+async function notifyCustomerOfStaffReply(orderId, message) {
   try {
-    const order = await getOrderById(orderId);
-    if (!order?.customerEmail) return;
-    const preview = text.replace(/<[^>]+>/g, '').trim().slice(0, 280);
-    if (!preview) return;
-    await sendCustomerReplyNotification(
-      order.customerEmail,
-      order.firstName || order.pocName?.split(' ')[0] || '',
-      order.name,
-      preview
-    );
-    await postTaggedUpdate(
-      orderId,
-      'PORTAL: Reply Notified',
-      `Staff reply notification emailed to ${order.customerEmail} on ${new Date().toLocaleDateString()}.`
-    ).catch(err => console.error(`Reply notification sent to ${order.customerEmail}, but the "[PORTAL: Reply Notified]" log write FAILED for order ${orderId} — cron/message-reply-safety-net may falsely flag this as a gap:`, err.message));
+    // The just-posted message may not be readable yet (Monday read-after-write
+    // lag), so make sure it's in the history we evaluate.
+    const updates = await getOrderMessages(orderId);
+    if (message?.id && !updates.some(u => String(u.id) === String(message.id))) updates.push({ ...message, replies: [] });
+    await notifyPendingStaffReplies(orderId, { updates, includeFreshAdminPosts: true });
   } catch (err) {
     console.error(`Staff reply posted on order ${orderId}, but the customer reply notification (EM-11) FAILED:`, err);
   }
@@ -123,7 +108,7 @@ export default async function handler(req, res) {
       // directly rather than relying on that automation firing.
       if (identity.role === 'staff') {
         await setStatusLabel(orderId, 'messageStatus', 'Replied').catch(console.error);
-        await notifyCustomerOfStaffReply(orderId, body.trim());
+        await notifyCustomerOfStaffReply(orderId, message);
       }
 
       return res.status(201).json({ message });

@@ -49,6 +49,7 @@ import {
 } from '../../../lib/monday';
 import { sendPortalInvitation } from '../../../lib/email';
 import { secretsMatch } from '../../../lib/auth';
+import { reportCriticalFailure } from '../../../lib/monitoring';
 
 const SENT_TAG = 'PORTAL: Invitation Sent';
 const CLAIM_TAG = 'PORTAL: Invitation Claim';
@@ -157,11 +158,17 @@ export default async function handler(req, res) {
       order.name
     );
 
+    // The email has gone out: from here on nothing may fail the request, or
+    // Monday's retry would send the invitation a second time.
     await postTaggedUpdate(
       itemId,
       SENT_TAG,
       `Portal invitation ${isResend ? 're-sent' : 'sent'} to ${order.customerEmail} on ${new Date().toLocaleDateString()} (triggered by Monday "${trigger}").${sent?.id ? ` Email ID: ${sent.id}` : ''}`
-    );
+    ).catch(err => reportCriticalFailure(
+      'invite-webhook',
+      `The portal invitation WAS emailed to ${order.customerEmail} for "${order.name}" (order ${itemId}), but the "[${SENT_TAG}]" note failed to save. Reminders key off that note, so add it manually: post an update on the order starting with "[${SENT_TAG}]".`,
+      { itemId, error: err.message }
+    ));
 
     // Flip the triggering column so it reflects the latest send.
     if (manual) {

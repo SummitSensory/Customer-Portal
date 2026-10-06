@@ -103,3 +103,11 @@ describe('previewText', () => {
     expect(previewText('[PORTAL][PORTAL:STAFF]\n<p>Ships&nbsp;Friday</p>')).toBe('Ships Friday');
   });
 });
+
+describe('old-style markers', () => {
+  it('treat everything posted before them as already notified', () => {
+    const legacy = { id: 'old', body: '[PORTAL: Reply Notified]\nStaff reply notification emailed to a@b.com on 10/6/2026.', created_at: t(3), creator: staff, replies: [] };
+    const updates = [customerMsg('10', [staffReply('11', 'before', 5), staffReply('15', 'after', 1)]), legacy];
+    expect(findUnnotifiedStaffMessages(updates, { now: NOW }).map(m => m.id)).toEqual(['15']);
+  });
+});

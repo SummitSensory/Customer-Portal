@@ -15,7 +15,6 @@ import {
 } from '../../../lib/monday';
 import {
   notifyCustomerStatusChange,
-  notifyCustomerBalanceChange,
   isCustomerFacingStatus,
 } from '../../../lib/email';
 
@@ -102,16 +101,8 @@ export default async function handler(req, res) {
         const balanceResult = await updateBalance(id, nextBalance);
         if (balanceResult === null) {
           warnings.push('Balance was NOT saved to Monday.com — MONDAY_COL_BALANCE is not configured. Set it in Vercel env vars to enable this field.');
-        } else if (order.customerEmail) {
-          // Same dedup rationale (and PORTAL-059 fix) as the status branch above.
-          const balanceKey = nextBalance.toFixed(2);
-          await sendCustomerNotificationOnce(id, 'Balance', balanceKey, () =>
-            notifyCustomerBalanceChange(order.customerEmail, order.contactName, order.name, nextBalance)
-          ).catch(err => {
-            console.error('Balance change notification failed:', err.message);
-            warnings.push(`Balance saved, but emailing the customer failed: ${err.message}`);
-          });
         }
+        // No customer email for balance changes (Bryan, 2026-10-06).
       }
 
       return res.status(200).json({ ok: true, warnings });

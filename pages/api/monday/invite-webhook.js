@@ -69,7 +69,10 @@ export default async function handler(req, res) {
   const secret = process.env.MONDAY_INVITE_SECRET;
   const provided = req.query.secret || req.headers['x-webhook-secret'];
   if (!secretsMatch(provided, secret)) {
-    console.error('Monday invite-webhook: authorization failed (missing or mismatched secret).');
+    // A wrong secret is just a stray/probing request: log it, don't email
+    // (lib/errorAlerts.js emails every console.error). A MISSING secret
+    // means every real delivery is failing, so that still alerts.
+    (process.env.MONDAY_INVITE_SECRET ? console.warn : console.error)('Monday invite-webhook: authorization failed (missing or mismatched secret).');
     return res.status(401).json({ error: 'Invalid webhook secret.' });
   }
 

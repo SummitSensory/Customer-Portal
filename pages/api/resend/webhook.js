@@ -57,7 +57,10 @@ export default async function handler(req, res) {
 
   const rawBody = await readRawBody(req);
   if (!verifySvixSignature(process.env.RESEND_WEBHOOK_SECRET, req.headers, rawBody)) {
-    console.error('Resend webhook: signature verification failed (or RESEND_WEBHOOK_SECRET unset).');
+    // A wrong secret is just a stray/probing request: log it, don't email
+    // (lib/errorAlerts.js emails every console.error). A MISSING secret
+    // means every real delivery is failing, so that still alerts.
+    (process.env.RESEND_WEBHOOK_SECRET ? console.warn : console.error)('Resend webhook: signature verification failed (or RESEND_WEBHOOK_SECRET unset).');
     return res.status(401).json({ error: 'Invalid signature.' });
   }
 

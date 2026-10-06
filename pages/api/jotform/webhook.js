@@ -235,7 +235,10 @@ export default async function handler(req, res) {
   const configuredSecret = process.env.JOTFORM_WEBHOOK_SECRET;
   const secret = req.query?.secret || req.headers['x-jotform-secret'] || body.secret;
   if (!secretsMatch(secret, configuredSecret)) {
-    console.error('Jotform webhook: authorization failed (missing or mismatched secret).');
+    // A wrong secret is just a stray/probing request: log it, don't email
+    // (lib/errorAlerts.js emails every console.error). A MISSING secret
+    // means every real delivery is failing, so that still alerts.
+    (process.env.JOTFORM_WEBHOOK_SECRET ? console.warn : console.error)('Jotform webhook: authorization failed (missing or mismatched secret).');
     return res.status(401).json({ error: 'Invalid webhook secret.' });
   }
 

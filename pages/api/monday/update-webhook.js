@@ -42,7 +42,10 @@ export default async function handler(req, res) {
   // unauthenticated requests. Mirrors accessory-webhook.js.
   const secret = process.env.MONDAY_UPDATE_WEBHOOK_SECRET;
   if (!secretsMatch(req.query.secret, secret)) {
-    console.error('Monday update-webhook: authorization failed (missing or mismatched secret).');
+    // A wrong secret is just a stray/probing request: log it, don't email
+    // (lib/errorAlerts.js emails every console.error). A MISSING secret
+    // means every real delivery is failing, so that still alerts.
+    (process.env.MONDAY_UPDATE_WEBHOOK_SECRET ? console.warn : console.error)('Monday update-webhook: authorization failed (missing or mismatched secret).');
     return res.status(401).json({ error: 'Invalid secret.' });
   }
 

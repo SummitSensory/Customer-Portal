@@ -110,7 +110,10 @@ export default async function handler(req, res) {
   const rawBody = await readRawBody(req);
 
   if (!isAuthorized(req, rawBody)) {
-    console.error('AfterShip webhook: authorization failed.');
+    // A wrong secret is just a stray/probing request: log it, don't email
+    // (lib/errorAlerts.js emails every console.error). A MISSING secret
+    // means every real delivery is failing, so that still alerts.
+    (process.env.AFTERSHIP_WEBHOOK_SECRET ? console.warn : console.error)('AfterShip webhook: authorization failed.');
     return res.status(401).json({ error: 'Unauthorized.' });
   }
 

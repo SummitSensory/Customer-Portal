@@ -14,6 +14,8 @@ import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
 import { isStaffMessage, isStaffReply, isPortalChatMessage, stripPortalTags, STAFF_DISPLAY_NAME } from '../../lib/messageOrigin';
 import { isValidJotformId } from '../../lib/jotform';
 import { isColorSelectionSupported } from '../../lib/colorRequirements';
+import { safeUrl } from '../../components/safeUrl';
+import { installOrderOwnershipGuard } from '../../components/portal/sessionGuard';
 
 // Lazy-loaded — most customers never open Referral/Showcase in a given
 // session (see components/portal/), so their code shouldn't ship as part
@@ -132,6 +134,43 @@ export function mergeProgress(resolvedOrder, localCompletions) {
   return { ...localCompletions, ...fromMonday };
 }
 
+// AUDIT-2026-10-06: markComplete()'s stale-save guard — a completion only
+// applies if the save was for the order that is active RIGHT NOW. Exported
+// for unit tests.
+export function completionAppliesTo(forOrderId, currentOrderId) {
+  return Boolean(forOrderId) && forOrderId === currentOrderId;
+}
+
+// AUDIT-2026-10-06: Messages badge helpers (see the unreadMessages comment
+// inside CustomerPortal). Exported for unit tests.
+function messageTime(v) {
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : 0;
+}
+
+/** Newest created_at (ms) across every message and threaded reply. */
+export function latestMessageTimestamp(messages) {
+  let latest = 0;
+  for (const m of messages || []) {
+    latest = Math.max(latest, messageTime(m.created_at));
+    for (const r of m.replies || []) latest = Math.max(latest, messageTime(r.created_at));
+  }
+  return latest;
+}
+
+/** Staff portal-chat messages + staff threaded replies newer than `seenAt` (ms). */
+export function countUnreadStaffMessages(messages, seenAt = 0) {
+  let count = 0;
+  for (const m of messages || []) {
+    if (!isPortalChatMessage(m)) continue;
+    if (isStaffMessage(m) && messageTime(m.created_at) > seenAt) count++;
+    for (const r of m.replies || []) {
+      if (isStaffReply(r) && messageTime(r.created_at) > seenAt) count++;
+    }
+  }
+  return count;
+}
+
 // ── Main portal ───────────────────────────────────────────────────────────────
 
 export default function CustomerPortal() {
@@ -165,23 +204,45 @@ export default function CustomerPortal() {
     setTimeout(() => setToast(''), 4000);
   }
 
-  function markComplete(tabId, synced = true) {
+  // currentOrderIdRef always holds the order actually selected RIGHT NOW,
+  // independent of whichever order a given loadFiles()/loadMessages() call
+  // started fetching for — kept in sync by the ref-update effect below.
+  // AUDIT-2026-10-06: also set synchronously by activateOrder() (below), so
+  // a save resolving in the same tick as an order switch is already judged
+  // against the NEW order, not the one-render-behind effect value.
+  const currentOrderIdRef = useRef(null);
+  useEffect(() => { currentOrderIdRef.current = order?.id ?? null; }, [order?.id]);
+  // AUDIT-2026-10-06 (follow-up): any API answering 401 ORDER_NOT_OWNED means
+  // this session's order now belongs to someone else — sign out (clearing the
+  // cookie) rather than showing a generic error. See components/portal/sessionGuard.js.
+  // Declared before the loadOrder effect so it's installed before the first fetch.
+  useEffect(() => installOrderOwnershipGuard(), []);
+
+  function markComplete(tabId, synced = true, forOrderId) {
     // `synced=false` means /api/portal/setup told us the Monday write didn't
     // confirm (checklistSyncPending) — don't cache a false "complete" locally.
     // Monday's real status column is still the source of truth on next load
     // (see mergeProgress below); this just avoids masking an unconfirmed
     // sync with an optimistic local write in the meantime.
     if (!synced) return;
+    // AUDIT-2026-10-06: a save started for order A that resolves after the
+    // customer switched to order B used to mark B's tab complete (and cache
+    // it under B's localStorage key). Callers now pass the order id the save
+    // was FOR; a completion for any order other than the one on screen is
+    // dropped — order A's own Monday status column still records it.
+    const targetOrderId = forOrderId ?? currentOrderIdRef.current;
+    if (!completionAppliesTo(targetOrderId, currentOrderIdRef.current)) return;
     setCompletions(prev => {
       const next = { ...prev, [tabId]: true };
       if (typeof window !== 'undefined') {
-        try { localStorage.setItem(`summit_setup_${order?.id}`, JSON.stringify(next)); } catch {}
+        try { localStorage.setItem(`summit_setup_${targetOrderId}`, JSON.stringify(next)); } catch {}
       }
       return next;
     });
   }
 
   function loadLocalCompletions(orderId) {
+    if (!orderId) return {};
     try {
       const saved = localStorage.getItem(`summit_setup_${orderId}`);
       return saved ? JSON.parse(saved) : {};
@@ -191,14 +252,67 @@ export default function CustomerPortal() {
   function applyCompletions(resolvedOrder) {
     const merged = mergeProgress(resolvedOrder, loadLocalCompletions(resolvedOrder?.id));
     setCompletions(merged);
-    try { localStorage.setItem(`summit_setup_${resolvedOrder?.id}`, JSON.stringify(merged)); } catch {}
+    // AUDIT-2026-10-06: never write a `summit_setup_undefined` key.
+    if (!resolvedOrder?.id) return;
+    try { localStorage.setItem(`summit_setup_${resolvedOrder.id}`, JSON.stringify(merged)); } catch {}
   }
+
+  // AUDIT-2026-10-06: one place that makes an order the active one, with
+  // the same per-order resets whether it came from the initial load, the
+  // OrderPicker, or the top-bar switcher. Before this, the picker/switcher
+  // paths only called setOrder(o) with the LIST row (which lacks every
+  // Monday mirror column — contact, POC, billing-on-file, colorGates...), so
+  // a multi-order customer saw blank Contact/Delivery/Billing/Showcase
+  // prefills and wrong color requirements until they reloaded.
+  function activateOrder(fullOrder) {
+    const switching = (currentOrderIdRef.current ?? null) !== (fullOrder?.id ?? null);
+    currentOrderIdRef.current = fullOrder?.id ?? null;
+    if (switching) {
+      // PORTAL-061: clear the previous order's files/messages synchronously,
+      // before the new order's own fetches (triggered by the `order` effect
+      // below) resolve — otherwise the old order's data stayed on screen for
+      // a beat after switching. loadFiles/loadMessages also discard a
+      // response that lands for an order the customer has since switched
+      // away from, so between the two nothing from the old order survives.
+      setFiles([]);
+      setMessages([]);
+    }
+    setOrder(fullOrder);
+    applyCompletions(fullOrder);
+  }
+
+  // AUDIT-2026-10-06: set when GET /api/monday/order fails for a reason
+  // other than "this account genuinely has no order" (a 500, a timeout, a
+  // network drop) — shown as a retryable error instead of "No order found".
+  const [loadError, setLoadError] = useState('');
 
   const loadOrder = useCallback(async () => {
     try {
       const res = await fetch('/api/monday/order');
       if (res.status === 401) { router.replace('/'); return; }
-      const data = await res.json();
+      const data = await readJsonSafely(res);
+
+      // AUDIT-2026-10-06: this never checked res.ok — a 500 parsed as
+      // `{ error }`, resolved to `order = null`, replaced a working portal
+      // with "No order found" and wrote `summit_setup_undefined`. Now:
+      //  - 404 is the server's genuine "no order for this account" answer;
+      //  - any other failure keeps whatever order is already on screen
+      //    (e.g. a refresh after a save) and only shows a retryable error
+      //    screen when there was nothing loaded yet.
+      if (res.status === 404) {
+        if (currentOrderIdRef.current) showToast('Could not refresh your order details. Please reload the page.');
+        else setLoadError('');
+        return;
+      }
+      if (!res.ok || !data) {
+        if (currentOrderIdRef.current) {
+          showToast('Could not refresh your order details. Please reload the page if anything looks out of date.');
+        } else {
+          setLoadError('We couldn’t load your order right now.');
+        }
+        return;
+      }
+      setLoadError('');
 
       setImpersonatedBy(data.impersonatedBy || null);
 
@@ -207,8 +321,8 @@ export default function CustomerPortal() {
         setOrders(data.orders);
       } else {
         const resolvedOrder = data.order || data.orders?.[0] || null;
-        setOrder(resolvedOrder);
-        applyCompletions(resolvedOrder);
+        if (resolvedOrder) activateOrder(resolvedOrder);
+        else if (!currentOrderIdRef.current) setOrder(null);
       }
 
       // Load form map
@@ -216,16 +330,49 @@ export default function CustomerPortal() {
       if (fmRes.ok) setFormMap(await fmRes.json());
     } catch (err) {
       console.error(err);
+      if (currentOrderIdRef.current) showToast('Could not refresh your order details. Please check your connection.');
+      else setLoadError('We couldn’t reach the server. Please check your connection.');
     } finally {
       setLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
-  // currentOrderIdRef always holds the order actually selected RIGHT NOW,
-  // independent of whichever order a given loadFiles()/loadMessages() call
-  // started fetching for — kept in sync by the ref-update effect below.
-  const currentOrderIdRef = useRef(null);
-  useEffect(() => { currentOrderIdRef.current = order?.id ?? null; }, [order?.id]);
+  function retryLoadOrder() {
+    setLoadError('');
+    setLoading(true);
+    loadOrder();
+  }
+
+  /**
+   * AUDIT-2026-10-06: bind the session to `o` (POST /api/auth/select-order)
+   * and make the FULL order it returns active. Falls back to re-fetching the
+   * now-bound order via loadOrder() if the response has no order object.
+   * Returns false if the bind itself failed.
+   */
+  async function selectAndActivateOrder(o) {
+    let data;
+    try {
+      const res = await fetch('/api/auth/select-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: o.id }),
+      });
+      if (!res.ok) return false;
+      data = await readJsonSafely(res);
+    } catch {
+      return false;
+    }
+    if (data?.order && data.order.id === o.id) {
+      activateOrder(data.order);
+    } else {
+      // Bound, but no full order in the response — the session now points
+      // at `o`, so GET /api/monday/order returns its full record (and
+      // loadOrder hands it to activateOrder, which does the resets).
+      await loadOrder();
+    }
+    return true;
+  }
 
   // PORTAL-061: neither of these guarded against the order changing while a
   // request was in flight. A customer clicking through the order switcher
@@ -291,30 +438,15 @@ export default function CustomerPortal() {
   // bleeds into the newly selected one.
   async function switchOrder(o) {
     if (!o || o.id === order?.id) { setSwitcherOpen(false); return; }
-    try {
-      const res = await fetch('/api/auth/select-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: o.id }),
-      });
-      if (!res.ok) throw new Error();
-    } catch {
+    // AUDIT-2026-10-06: activates the FULL order select-order returns (not
+    // the mirror-less list row `o`); see activateOrder() for the per-order
+    // resets (files/messages cleared synchronously — PORTAL-061 — plus that
+    // order's own completions).
+    const ok = await selectAndActivateOrder(o);
+    if (!ok) {
       showToast('Could not switch orders. Please try again.');
       return;
     }
-    // PORTAL-061: clear the previous order's files/messages synchronously,
-    // before the new order's own fetches (triggered by the `order` effect
-    // below) resolve — otherwise the old order's data stayed on screen for
-    // a beat after switching, which reads as "these are the new order's
-    // files/messages" even though nothing about the new order has loaded
-    // yet. loadFiles/loadMessages also now discard a response that lands
-    // for an order the customer has since switched away from (see their
-    // own comment above), so between the two, nothing from the old order
-    // can survive onto the new one.
-    setFiles([]);
-    setMessages([]);
-    setOrder(o);
-    applyCompletions(o);
     setActiveTab('dashboard'); // land somewhere orienting, not a stale tab from the old order
     setSwitcherOpen(false);
   }
@@ -364,9 +496,31 @@ export default function CustomerPortal() {
   // of them non-chat system tags, badge showed "15" for 1 actual message).
   // isPortalChatMessage() isolates genuine chat posts (tagged `[PORTAL]` at
   // send time — see /api/monday/messages.js) before counting staff ones.
+  //
+  // AUDIT-2026-10-06: the badge still counted every staff message EVER (it
+  // never cleared after the customer read them) and ignored threaded staff
+  // replies entirely. It now counts staff messages + staff replies newer
+  // than a per-order "last seen" timestamp, which is advanced (and kept in
+  // localStorage) whenever the Messages tab is open. The timestamp is the
+  // newest Monday created_at the customer has seen — not the browser clock —
+  // so a skewed local clock can't hide or resurrect messages.
+  const [messagesSeenAt, setMessagesSeenAt] = useState(0);
+  useEffect(() => {
+    if (!order?.id) return;
+    let stored = 0;
+    try { stored = Number(localStorage.getItem(`summit_messages_seen_${order.id}`)) || 0; } catch {}
+    setMessagesSeenAt(stored);
+  }, [order?.id]);
+  useEffect(() => {
+    if (activeTab !== 'messages' || !order?.id) return;
+    const latest = latestMessageTimestamp(messages);
+    if (latest <= messagesSeenAt) return;
+    setMessagesSeenAt(latest);
+    try { localStorage.setItem(`summit_messages_seen_${order.id}`, String(latest)); } catch {}
+  }, [activeTab, messages, messagesSeenAt, order?.id]);
   const unreadMessages = useMemo(
-    () => messages.filter(m => isPortalChatMessage(m) && isStaffMessage(m)).length,
-    [messages]
+    () => countUnreadStaffMessages(messages, messagesSeenAt),
+    [messages, messagesSeenAt]
   );
 
   // Forms for this customer's product type
@@ -388,30 +542,36 @@ export default function CustomerPortal() {
   // orderId — if the cookie were left unbound, every one of those calls
   // would be rejected (or worse, silently fall back to the wrong order)
   // once the customer starts interacting with the picked order.
+  // AUDIT-2026-10-06: activates the FULL order from select-order, not the
+  // list row (see activateOrder()).
   if (orders && !order) return <OrderPicker orders={orders} onSelect={async (o) => {
-    try {
-      const res = await fetch('/api/auth/select-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: o.id }),
-      });
-      if (!res.ok) throw new Error();
-    } catch {
+    const ok = await selectAndActivateOrder(o);
+    if (!ok) {
       showToast('Could not select that order. Please try again.');
       return;
     }
-    setOrder(o);
     setOrders(null);
     setAllOrders(orders); // already have the full list in memory — no need for the switcher's background fetch to re-fetch it
-    applyCompletions(o);
   }} />;
+
+  // AUDIT-2026-10-06: a failed load (500 / network) is not "no order".
+  if (!order && loadError) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', padding: 24 }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
+        <h2>Something went wrong</h2>
+        <p style={{ color: 'var(--mut)', marginTop: 6 }}>{loadError} This isn&apos;t a problem with your order — please try again.</p>
+        <button className="btn btn-moss btn-sm" style={{ marginTop: 16 }} onClick={retryLoadOrder}>Try Again</button>
+      </div>
+    </div>
+  );
 
   if (!order) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', padding: 24 }}>
       <div style={{ textAlign: 'center' }}>
         <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
         <h2>No order found</h2>
-        <p style={{ color: 'var(--mut)', marginTop: 6 }}>We couldn't find an order linked to your email. Contact Summit Sensory Gym for help.</p>
+        <p style={{ color: 'var(--mut)', marginTop: 6 }}>We couldn&apos;t find an order linked to your email. Contact Summit Sensory Gym for help.</p>
         <button className="btn btn-ghost btn-sm" style={{ marginTop: 16 }} onClick={() => router.replace('/')}>Back to Login</button>
       </div>
     </div>
@@ -471,6 +631,10 @@ export default function CustomerPortal() {
             ) : (
               <span style={{ fontSize: 12.5, color: 'var(--mut)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{order.name}</span>
             )}
+            {/* A plain <a> is intentional: this is an API route that clears the
+                session cookie and redirects, not a Next.js page, so <Link>'s
+                client-side navigation would be wrong here. */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a href="/api/auth/signout-customer" className="btn btn-ghost btn-sm">Sign out</a>
           </div>
         </div>
@@ -553,10 +717,13 @@ export default function CustomerPortal() {
           </nav>
 
           {/* Main content */}
-          <main className="main">
+          {/* AUDIT-2026-10-06: keyed by order id so every tab's local form
+              state is rebuilt from the newly active order after a switch,
+              never carried over from the previous one. */}
+          <main className="main" key={order.id}>
             {activeTab === 'contact'      && <ContactTab      order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('billing')} />}
             {activeTab === 'billing'      && <BillingTab      order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('delivery')} onBack={() => setActiveTab('contact')} onOrderRefresh={loadOrder} />}
-            {activeTab === 'delivery'     && <DeliveryTab     order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('color')} onBack={() => setActiveTab('billing')} />}
+            {activeTab === 'delivery'     && <DeliveryTab     order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('color')} onBack={() => setActiveTab('billing')} onOrderRefresh={loadOrder} />}
             {activeTab === 'color' && (
               // colorSelectionWritable guards against routing a customer into a
               // picker that can never save — see lib/monday.js's parseOrderItem
@@ -567,13 +734,13 @@ export default function CustomerPortal() {
                 : <ColorTab order={order} completions={completions} markComplete={markComplete} showToast={showToast} colorForms={colorForms} onNext={() => setActiveTab('dashboard')} onBack={() => setActiveTab('delivery')} />
             )}
             {activeTab === 'dashboard'    && <DashboardTab    order={order} completions={completions} setupComplete={setupComplete} setupCount={setupCount} setupTotal={setupTotal} onNav={setActiveTab} />}
-            {activeTab === 'status'       && <StatusTab       order={order} />}
+            {activeTab === 'status'       && <StatusTab       order={order} showToast={showToast} />}
             {activeTab === 'installation' && <InstallationTab order={order} onNav={setActiveTab} />}
             {activeTab === 'files'        && <FilesTab        files={files} />}
             {activeTab === 'invoice'      && <InvoiceTab      order={order} showToast={showToast} onRefresh={loadOrder} />}
             {activeTab === 'messages'     && <MessagesTab     order={order} messages={messages} onRefresh={loadMessages} showToast={showToast} />}
             {activeTab === 'referral'     && <ReferralTab     order={order} showToast={showToast} />}
-            {activeTab === 'showcase'     && <ShowcaseTab     order={order} />}
+            {activeTab === 'showcase'     && <ShowcaseTab     order={order} showToast={showToast} />}
             {activeTab === 'contact_us'   && <ContactUsTab    onNav={setActiveTab} />}
           </main>
         </div>
@@ -647,17 +814,63 @@ export default function CustomerPortal() {
 
 // ── Shared save helper ────────────────────────────────────────────────────────
 
-async function saveSetup(tab, data) {
+// AUDIT-2026-10-06: shown whenever the server rejects a write with
+// 409 ORDER_MISMATCH — the session cookie was re-bound to a different order
+// (another tab, a switch on another device) after this page loaded, so the
+// write was refused rather than landing on the wrong order. Nothing is
+// marked complete; a reload re-syncs the page with the session.
+export const ORDER_MISMATCH_MESSAGE = 'This page is out of date — your account switched to a different order in another tab or window. Please reload the page and try again.';
+
+/**
+ * AUDIT-2026-10-06: parse a fetch Response body as JSON without throwing.
+ * Vercel's own 413 (body too large) and 504 (function timeout) responses are
+ * plain text/HTML — calling res.json() on them threw "Unexpected token…",
+ * and that raw parser message is what customers saw in the toast.
+ */
+export async function readJsonSafely(res) {
+  try {
+    // (Test doubles often only implement json(); real Responses have both.)
+    if (typeof res.text !== 'function') return await res.json();
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return null;
+  }
+}
+
+/** Friendly message for a failed POST, from its status code + parsed body (null = non-JSON). */
+export function friendlySaveError(status, body) {
+  if (status === 409 && body?.code === 'ORDER_MISMATCH') return ORDER_MISMATCH_MESSAGE;
+  if (status === 413) return 'That upload is too large to send. Please use a smaller file (under 3 MB) and try again.';
+  if (body && typeof body.error === 'string' && body.error) return body.error;
+  if (status === 504 || status === 502 || status === 503) return 'Our server took too long to respond. Please try again in a moment.';
+  return 'Error saving. Please try again.';
+}
+
+// AUDIT-2026-10-06: `orderId` (the order this form was rendered for) is now
+// sent with every setup write so the server can refuse it with 409
+// ORDER_MISMATCH if the session has since been re-bound to another order,
+// instead of silently writing this form's data onto the wrong order. Thrown
+// errors carry `.status`/`.code` and a customer-safe `.message`.
+export async function saveSetup(tab, data, orderId) {
   const res = await fetch('/api/portal/setup', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tab, data }),
+    body: JSON.stringify(orderId ? { tab, data, orderId } : { tab, data }),
   });
+  const body = await readJsonSafely(res);
   if (!res.ok) {
-    const d = await res.json();
-    throw new Error(d.error || 'Save failed.');
+    const err = new Error(friendlySaveError(res.status, body));
+    err.status = res.status;
+    err.code = body?.code;
+    throw err;
   }
-  return res.json();
+  return body || {};
+}
+
+/** Toast text for a caught saveSetup error: the mismatch / size / server message if it has one, else the caller's generic fallback. */
+function saveErrorToast(err, fallback = 'Error saving. Please try again.') {
+  return err?.status ? err.message : fallback;
 }
 
 /** Read a File object into a base64 string (stripped of the data: URL prefix) for
@@ -717,6 +930,23 @@ export function ContactTab({ order, completions, markComplete, showToast, onNext
     return e;
   }
 
+  // AUDIT-2026-10-06: shared by "Submit Changes" and by "Confirm & Continue"
+  // while editing with changed values. The server's contact_update case
+  // also flips Portal: Contact to ✅ (markSectionCompleteSafe) — the client
+  // never called markComplete for it, so the tab kept showing "Action
+  // needed" until a reload despite Monday already saying it was done.
+  // Returns true on success.
+  async function sendContactUpdate() {
+    const orderId = order.id;
+    const result = await saveSetup('contact_update', { name, phone, email }, orderId);
+    const pending = { name, phone, email };
+    setPendingUpdate(pending);
+    try { localStorage.setItem(pendingKey, JSON.stringify(pending)); } catch {}
+    setEditing(false);
+    markComplete('contact', !result.checklistSyncPending, orderId);
+    return result;
+  }
+
   async function submitUpdate(e) {
     e.preventDefault();
     const errs = validate();
@@ -728,15 +958,16 @@ export function ContactTab({ order, completions, markComplete, showToast, onNext
     setErrors({});
     setSaving(true);
     try {
-      await saveSetup('contact_update', { name, phone, email });
-      const pending = { name, phone, email };
-      setPendingUpdate(pending);
-      try { localStorage.setItem(pendingKey, JSON.stringify(pending)); } catch {}
-      setEditing(false);
+      await sendContactUpdate();
       showToast('Contact update submitted — our team will confirm within 1 business day.');
-    } catch { showToast('Error saving. Please try again.'); }
+    } catch (err) { showToast(saveErrorToast(err)); }
     finally { setSaving(false); }
   }
+
+  // What the read-only view shows (and what a plain confirm would confirm).
+  const shownName = pendingUpdate?.name || order.contactName || '';
+  const shownPhone = pendingUpdate?.phone || order.contactPhone || '';
+  const shownEmail = pendingUpdate?.email || order.contactEmail || '';
 
   async function confirm() {
     // PORTAL-062: this used to gate ONLY on the raw, read-only Monday-mirror
@@ -760,15 +991,43 @@ export function ContactTab({ order, completions, markComplete, showToast, onNext
       showToast('Please complete all required contact fields before continuing.');
       return;
     }
+    // AUDIT-2026-10-06: "Confirm & Continue" clicked while still in edit
+    // mode used to post saveSetup('contact', {}) and silently discard
+    // whatever the customer had just typed. If the form differs from what's
+    // on file, submit it as a contact update (which the server also counts
+    // as completing this step) instead of confirming the old values.
+    const editedValuesDiffer = editing && (
+      name.trim() !== shownName.trim() || phone.trim() !== shownPhone.trim() || email.trim() !== shownEmail.trim()
+    );
+    if (editedValuesDiffer) {
+      const errs = validate();
+      if (Object.keys(errs).length > 0) {
+        setErrors(errs);
+        showToast('Please complete all required fields.');
+        return;
+      }
+      setErrors({});
+      setSaving(true);
+      try {
+        const result = await sendContactUpdate();
+        showToast(result.checklistSyncPending
+          ? 'Contact update submitted — confirming with our system now. This may take a moment to show as complete.'
+          : 'Contact update submitted — our team will confirm within 1 business day.');
+        onNext();
+      } catch (err) { showToast(saveErrorToast(err)); }
+      finally { setSaving(false); }
+      return;
+    }
     setSaving(true);
     try {
-      const result = await saveSetup('contact', {});
-      markComplete('contact', !result.checklistSyncPending);
+      const orderId = order.id;
+      const result = await saveSetup('contact', {}, orderId);
+      markComplete('contact', !result.checklistSyncPending, orderId);
       showToast(result.checklistSyncPending
         ? "Saved — confirming with our system now. This may take a moment to show as complete."
         : 'Contact information confirmed.');
       onNext();
-    } catch { showToast('Error saving. Please try again.'); }
+    } catch (err) { showToast(saveErrorToast(err)); }
     finally { setSaving(false); }
   }
 
@@ -938,12 +1197,13 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
     }
     setSaving(true);
     try {
+      const orderId = order.id; // AUDIT-2026-10-06: see saveSetup / markComplete
       const billingResult = await saveSetup('billing', {
         billingAddress, billingAddressSuite, billingCity, billingState, billingZip, billingCountry,
         billingContactSameAsPrimary: sameContact,
         billingName, billingPhone, billingEmail,
-      });
-      markComplete('billing', !billingResult.checklistSyncPending);
+      }, orderId);
+      markComplete('billing', !billingResult.checklistSyncPending, orderId);
       showToast(billingResult.checklistSyncPending
         ? "Saved — confirming with our system now. This may take a moment to show as complete."
         : 'Billing information saved.');
@@ -951,7 +1211,7 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
       // immediately as the Delivery Logistics tab's default ship-to address.
       await onOrderRefresh?.();
       onNext();
-    } catch { showToast('Error saving. Please try again.'); }
+    } catch (err) { showToast(saveErrorToast(err)); }
     finally { setSaving(false); }
   }
 
@@ -1174,7 +1434,7 @@ export function addressOnFileParts(order) {
   return { line1: '', line2: '', city: '', state: '', zip: '', country: '' };
 }
 
-export function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBack }) {
+export function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBack, onOrderRefresh }) {
   // Lock logistics editing once order has shipped
   const shippedIdx = order.stages?.findIndex(s => s.key === 'shipped') ?? 3;
   const isShipped = order.stageIndex >= shippedIdx;
@@ -1448,9 +1708,19 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
         // used to be stamped with tomorrow's date).
         freightAckDate: (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })(),
       };
-      const deliveryResult = await saveSetup('delivery', deliveryPayload);
-      markComplete('delivery', !deliveryResult.checklistSyncPending);
-      if (changedRestricted.length > 0) setShowRestrictionNote(true);
+      const orderId = order.id; // AUDIT-2026-10-06: see saveSetup / markComplete
+      const deliveryResult = await saveSetup('delivery', deliveryPayload, orderId);
+      markComplete('delivery', !deliveryResult.checklistSyncPending, orderId);
+      // AUDIT-2026-10-06: re-read the order so order.deliverySnapshot (what
+      // this tab restores its fields from on its next mount) reflects what
+      // was just saved — BillingTab already did this; Delivery never did,
+      // so revisiting the tab showed the stale (often null) snapshot. A
+      // failed refresh doesn't undo the save (loadOrder toasts on its own).
+      await onOrderRefresh?.();
+      // The list is captured here, not recomputed at render: after the
+      // refresh above, `saved` IS this submission, so getChangedRestricted()
+      // would now report nothing changed.
+      if (changedRestricted.length > 0) setShowRestrictionNote(changedRestricted);
       else {
         showToast(deliveryResult.checklistSyncPending
           ? "Saved — confirming with our system now. This may take a moment to show as complete."
@@ -1477,9 +1747,9 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
           <div style={{ fontSize: 40, marginBottom: 12 }}>📬</div>
           <h3 style={{ marginBottom: 8 }}>Changes Submitted for Confirmation</h3>
           <p style={{ color: 'var(--mut)', maxWidth: 420, margin: '0 auto 20px', fontSize: 14 }}>
-            Some of your delivery changes require confirmation from our team before taking effect. We'll review and reach out within 1 business day.
+            Some of your delivery changes require confirmation from our team before taking effect. We&apos;ll review and reach out within 1 business day.
           </p>
-          <p style={{ color: 'var(--mut)', fontSize: 13 }}>Changes pending confirmation: {getChangedRestricted().join(', ')}</p>
+          <p style={{ color: 'var(--mut)', fontSize: 13 }}>Changes pending confirmation: {(Array.isArray(showRestrictionNote) ? showRestrictionNote : getChangedRestricted()).join(', ')}</p>
           <button className="btn btn-moss" style={{ marginTop: 20 }} onClick={onNext}>Continue to Color Selections →</button>
         </div>
       </div>
@@ -1662,7 +1932,7 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
             <>
               <div className="alert warn" style={{ marginBottom: 16 }}>
                 <span>⚠️</span>
-                <span>Changes to delivery logistics may increase your overall freight costs and could delay your delivery depending on various factors. Changes also require confirmation from the Summit team before taking effect — we'll follow up within 1 business day.</span>
+                <span>Changes to delivery logistics may increase your overall freight costs and could delay your delivery depending on various factors. Changes also require confirmation from the Summit team before taking effect — we&apos;ll follow up within 1 business day.</span>
               </div>
 
               {/* Ship-to address — confirm what's on file, or expand to enter a new one */}
@@ -1670,8 +1940,8 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
                 <label>Ship-To Address <span style={{ fontWeight: 400, color: 'var(--mut)' }}>(on file)</span></label>
                 <div style={{ padding: '10px 14px', background: 'var(--paper)', borderRadius: 8, fontSize: 13.5, color: 'var(--mut)', border: '1px solid var(--line)', marginBottom: 12 }}>
                   {hasUsableAddressOnFile ? onFileFormatted : (onFileFormatted
-                    ? <><span>{onFileFormatted}</span><br /><em>This address is incomplete — please choose "No, I need to update it" and enter the full ship-to address.</em></>
-                    : <em>No ship-to address on file — please choose "No, I need to update it" and enter it.</em>)}
+                    ? <><span>{onFileFormatted}</span><br /><em>This address is incomplete — please choose &quot;No, I need to update it&quot; and enter the full ship-to address.</em></>
+                    : <em>No ship-to address on file — please choose &quot;No, I need to update it&quot; and enter it.</em>)}
                 </div>
                 <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8 }}>
                   <span style={{ color: 'var(--rose)' }}>*</span> Is this the correct ship-to address?
@@ -1837,7 +2107,7 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
             <p style={{ fontWeight: 700, marginBottom: 6 }}>Upon arrival</p>
             <p style={{ marginBottom: 12 }}>All equipment must be brought indoors immediately after delivery. Do not leave pallets or boxes outside or in an unprotected area.</p>
             <p style={{ fontWeight: 700, marginBottom: 6 }}>Inspecting your delivery — important</p>
-            <p style={{ marginBottom: 12 }}>Before signing the driver's bill of lading, carefully inspect all items for visible damage. If damage is found, you must note it on the bill of lading at the time of delivery — this is required to file a freight damage claim. Summit Sensory Gym cannot process damage claims for items signed as received in good condition.</p>
+            <p style={{ marginBottom: 12 }}>Before signing the driver&apos;s bill of lading, carefully inspect all items for visible damage. If damage is found, you must note it on the bill of lading at the time of delivery — this is required to file a freight damage claim. Summit Sensory Gym cannot process damage claims for items signed as received in good condition.</p>
             <p style={{ fontWeight: 700, marginBottom: 6 }}>Scheduling and missed appointments</p>
             <p style={{ marginBottom: 12 }}>The freight carrier will contact you to schedule a delivery window. If no one is available during the agreed-upon window, a redelivery fee will apply.</p>
             <p style={{ fontWeight: 700, marginBottom: 6 }}>Storage fees</p>
@@ -1878,14 +2148,15 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
   async function complete() {
     setSaving(true);
     try {
-      const colorResult = await saveSetup('color', {});
-      markComplete('color', !colorResult.checklistSyncPending);
+      const orderId = order.id; // AUDIT-2026-10-06: see saveSetup / markComplete
+      const colorResult = await saveSetup('color', {}, orderId);
+      markComplete('color', !colorResult.checklistSyncPending, orderId);
       showToast(colorResult.checklistSyncPending
         ? "Saved — confirming with our system now. This may take a moment to show as complete."
         : 'Color selections marked complete.');
       onNext();
-    } catch {
-      showToast('Error saving. Please try again.');
+    } catch (err) {
+      showToast(saveErrorToast(err));
     } finally {
       setSaving(false);
     }
@@ -1967,7 +2238,7 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
           <div className="empty">
             <div className="ei">🎨</div>
             <h3>Color form not yet assigned</h3>
-            <p>Your color selection form hasn't been assigned yet. Our team will update this as your order progresses — you'll receive a notification when it's ready.</p>
+            <p>Your color selection form hasn&apos;t been assigned yet. Our team will update this as your order progresses — you&apos;ll receive a notification when it&apos;s ready.</p>
           </div>
         </div>
       ) : (
@@ -1989,7 +2260,7 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
             </a>
             <div className="alert info">
               <span>ℹ️</span>
-              <span>After submitting the form, click "Mark as Complete" below. Our team will confirm your selections and follow up if any clarification is needed.</span>
+              <span>After submitting the form, click &quot;Mark as Complete&quot; below. Our team will confirm your selections and follow up if any clarification is needed.</span>
             </div>
           </div>
         ))
@@ -2059,7 +2330,7 @@ export function DashboardTab({ order, completions, setupComplete, setupCount, se
           Welcome{firstName ? `, ${firstName}` : ' back'}! 👋
         </h2>
         <p style={{ color: 'var(--mut)', margin: 0, fontSize: 14.5 }}>
-          Here's an overview of your order and what's needed to move it into manufacturing.
+          Here&apos;s an overview of your order and what&apos;s needed to move it into manufacturing.
         </p>
       </div>
 
@@ -2336,7 +2607,7 @@ function AccessoryItem({ item, expandedTracking, trackingData, loadingTracking, 
         </>
       ) : item.orderStatus === 'Out of Stock' ? (
         <div style={{ fontSize: 13.5, color: 'var(--mut)', fontStyle: 'italic' }}>
-          This item is currently out of stock with our supplier. We'll update this section as soon as it's back in stock and ordered.
+          This item is currently out of stock with our supplier. We&apos;ll update this section as soon as it&apos;s back in stock and ordered.
         </div>
       ) : item.orderStatus === 'Ordered' ? (
         <div style={{ fontSize: 13.5, color: 'var(--mut)', fontStyle: 'italic' }}>
@@ -2344,14 +2615,14 @@ function AccessoryItem({ item, expandedTracking, trackingData, loadingTracking, 
         </div>
       ) : (
         <div style={{ fontSize: 13.5, color: 'var(--mut)', fontStyle: 'italic' }}>
-          Product order pending. We'll update this section once it's been purchased on your behalf.
+          Product order pending. We&apos;ll update this section once it&apos;s been purchased on your behalf.
         </div>
       )}
     </div>
   );
 }
 
-function StatusTab({ order }) {
+function StatusTab({ order, showToast }) {
   const [expandedTracking, setExpandedTracking] = useState({});
   const [trackingData, setTrackingData] = useState({});
   const [loadingTracking, setLoadingTracking] = useState({});
@@ -2372,6 +2643,9 @@ function StatusTab({ order }) {
       if (!res.ok) throw new Error();
     } catch {
       setNotifyEnabled(!next); // revert on failure
+      // AUDIT-2026-10-06: the revert alone was silent — the toggle just
+      // flicked back with nothing saying the preference hadn't saved.
+      showToast?.('Could not update your shipment email preference. Please try again.');
     } finally {
       setNotifySaving(false);
     }
@@ -2473,7 +2747,7 @@ function StatusTab({ order }) {
           <span>
             <strong>Email me when my shipment status changes</strong>
             <div style={{ fontSize: 12.5, color: 'var(--mut)', marginTop: 2 }}>
-              We'll email you when your Frame or Mats shipment ships, goes out for delivery, is delivered, or hits an exception.
+              We&apos;ll email you when your Frame or Mats shipment ships, goes out for delivery, is delivered, or hits an exception.
             </div>
           </span>
         </label>
@@ -2529,7 +2803,7 @@ function StatusTab({ order }) {
           </div>
           <div className="alert info" style={{ marginTop: 12 }}>
             <span>📞</span>
-            <span>Your freight carrier will contact you to schedule a delivery window. If you haven't heard from them within a week of your ship date, call FedEx Freight at <strong>1-866-393-4585</strong> with your tracking number.</span>
+            <span>Your freight carrier will contact you to schedule a delivery window. If you haven&apos;t heard from them within a week of your ship date, call FedEx Freight at <strong>1-866-393-4585</strong> with your tracking number.</span>
           </div>
         </div>
       )}
@@ -2580,14 +2854,18 @@ function InstallationTab({ order, onNav }) {
     if (drive) return { type: 'iframe', src: `https://drive.google.com/file/d/${drive[1]}/preview` };
 
     // Dropbox share link — force a direct/raw stream instead of the preview page
+    // AUDIT-2026-10-06: these two branches pass the staff-entered URL
+    // itself through as <video src>, so they're scheme-checked (safeUrl);
+    // the embed branches above build their own https:// URLs from an id.
     if (url.includes('dropbox.com') && /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url)) {
-      const direct = url.replace('www.dropbox.com', 'dl.dropboxusercontent.com').replace(/[?&]dl=0/, '');
-      return { type: 'video', src: direct };
+      const direct = safeUrl(url.replace('www.dropbox.com', 'dl.dropboxusercontent.com').replace(/[?&]dl=0/, ''));
+      return direct ? { type: 'video', src: direct } : null;
     }
 
     // A direct video file — Monday-hosted assets, S3, etc.
     if (/\.(mp4|mov|webm|m4v|ogg)(\?|$)/i.test(url)) {
-      return { type: 'video', src: url };
+      const direct = safeUrl(url);
+      return direct ? { type: 'video', src: direct } : null;
     }
 
     return null;
@@ -2597,12 +2875,14 @@ function InstallationTab({ order, onNav }) {
     ? order.installationVideos.split(',').map(u => u.trim()).filter(Boolean)
     : [];
 
+  // AUDIT-2026-10-06: every staff-entered doc/link URL goes through safeUrl
+  // (http/https only) before it can reach an href; anything else is dropped.
   const docs = order.installationDocs
     ? order.installationDocs.split(',').map(entry => {
         const parts = entry.trim().split('|');
         return parts.length >= 2
-          ? { label: parts[0].trim(), url: parts[1].trim() }
-          : { label: 'Installation Document', url: parts[0].trim() };
+          ? { label: parts[0].trim(), url: safeUrl(parts[1]) }
+          : { label: 'Installation Document', url: safeUrl(parts[0]) };
       }).filter(d => d.url)
     : [];
 
@@ -2610,8 +2890,8 @@ function InstallationTab({ order, onNav }) {
     ? order.installationLinks.split('\n').map(line => {
         const parts = line.trim().split('|');
         return parts.length >= 2
-          ? { label: parts[0].trim(), url: parts[1].trim() }
-          : { label: 'Installation Resource', url: parts[0].trim() };
+          ? { label: parts[0].trim(), url: safeUrl(parts[1]) }
+          : { label: 'Installation Resource', url: safeUrl(parts[0]) };
       }).filter(l => l.url)
     : [];
 
@@ -2636,7 +2916,7 @@ function InstallationTab({ order, onNav }) {
         <span style={{ fontSize: 20, flex: 'none' }}>🖨️</span>
         <div>
           <div style={{ fontWeight: 700, color: '#713F12', marginBottom: 4 }}>We recommend printing your installation documents before your delivery date.</div>
-          <div style={{ fontSize: 13, color: '#92400E' }}>Having printed instructions on hand makes the installation process significantly smoother — you won't need to reference a screen while assembling your equipment.</div>
+          <div style={{ fontSize: 13, color: '#92400E' }}>Having printed instructions on hand makes the installation process significantly smoother — you won&apos;t need to reference a screen while assembling your equipment.</div>
         </div>
       </div>
 
@@ -2645,7 +2925,7 @@ function InstallationTab({ order, onNav }) {
           <div className="empty">
             <div className="ei">🔧</div>
             <h3>Installation materials coming soon</h3>
-            <p>Your installation videos and documents are being prepared and will appear here before your delivery date. You'll receive an email notification as soon as they're available.</p>
+            <p>Your installation videos and documents are being prepared and will appear here before your delivery date. You&apos;ll receive an email notification as soon as they&apos;re available.</p>
           </div>
         </div>
       ) : (
@@ -2688,9 +2968,11 @@ function InstallationTab({ order, onNav }) {
               {videos.map((url, i) => {
                 const embed = getEmbed(url);
                 if (!embed) {
+                  const href = safeUrl(url); // AUDIT-2026-10-06
+                  if (!href) return null;
                   return (
                     <div key={i} style={{ marginBottom: 10 }}>
-                      <a href={url} target="_blank" rel="noreferrer" className="btn btn-ghost">▶ View Video →</a>
+                      <a href={href} target="_blank" rel="noreferrer" className="btn btn-ghost">▶ View Video →</a>
                     </div>
                   );
                 }
@@ -2805,7 +3087,7 @@ function FilesTab({ files }) {
       <div className="ph"><h2>Files & Documents</h2><p>Your signed proposal, design rendering images, and any other documents shared by the Summit Sensory Gym team.</p></div>
       <div className="card">
         {files.length === 0 ? (
-          <div className="empty"><div className="ei">📁</div><h3>No files yet</h3><p>Your signed proposal, design renderings, and other shared documents will appear here once they're available.</p></div>
+          <div className="empty"><div className="ei">📁</div><h3>No files yet</h3><p>Your signed proposal, design renderings, and other shared documents will appear here once they&apos;re available.</p></div>
         ) : files.map(file => (
           <div key={file.id} className="file">
             <div className="f-ic" style={{ background: 'var(--sky-lt)', color: 'var(--sky)' }}>{fileIcon(file.file_extension)}</div>
@@ -2813,7 +3095,10 @@ function FilesTab({ files }) {
               <div className="t">{file.name}</div>
               <div className="d">{file.file_extension?.toUpperCase()}{file.file_size && ` · ${fileSize(file.file_size)}`}{file.created_at && ` · ${new Date(file.created_at).toLocaleDateString()}`}</div>
             </div>
-            <a href={file.public_url} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">Download</a>
+            {/* AUDIT-2026-10-06: scheme-checked like every other Monday-sourced URL. */}
+            {safeUrl(file.public_url) && (
+              <a href={safeUrl(file.public_url)} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">Download</a>
+            )}
           </div>
         ))}
       </div>
@@ -2824,6 +3109,10 @@ function FilesTab({ files }) {
 // ── Tab: Invoice & Payment ────────────────────────────────────────────────────
 
 function InvoiceTab({ order, showToast, onRefresh }) {
+  // AUDIT-2026-10-06: staff-entered on Monday and rendered as an iframe src
+  // and hrefs — only http(s) values are ever used (see components/safeUrl.js).
+  const invoiceLink = safeUrl(order.invoiceLink);
+  const paymentLink = safeUrl(order.paymentLink);
   return (
     <>
       <div className="ph"><h2>Invoice & Payment</h2><p>View your current invoice and submit payment securely.</p></div>
@@ -2845,18 +3134,18 @@ function InvoiceTab({ order, showToast, onRefresh }) {
       {/* Tax exemption */}
       <TaxExemptionCard order={order} showToast={showToast} onRefresh={onRefresh} />
 
-      {order.invoiceLink ? (
+      {invoiceLink ? (
         <>
           {/* Embedded invoice */}
           <div className="card pad0" style={{ marginBottom: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid var(--line)' }}>
               <h3 style={{ fontSize: 16, margin: 0 }}>Your Invoice</h3>
-              <a href={order.invoiceLink} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">
+              <a href={invoiceLink} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">
                 Open in New Tab →
               </a>
             </div>
             <iframe
-              src={order.invoiceLink}
+              src={invoiceLink}
               title="Invoice"
               className="jf-embed"
               style={{ width: '100%', height: 700, border: 'none', display: 'block' }}
@@ -2865,14 +3154,14 @@ function InvoiceTab({ order, showToast, onRefresh }) {
           </div>
 
           {/* Payment button */}
-          {order.paymentLink && (
+          {paymentLink && (
             <div className="card" style={{ textAlign: 'center', padding: '28px 24px' }}>
               <div style={{ fontSize: 24, marginBottom: 10 }}>💳</div>
               <h3 style={{ margin: '0 0 8px', fontSize: 17 }}>Ready to Pay?</h3>
               <p style={{ color: 'var(--mut)', fontSize: 14, marginBottom: 20 }}>
                 Click below to securely submit your payment. Your order will be released to ship once payment is confirmed.
               </p>
-              <a href={order.paymentLink} target="_blank" rel="noreferrer" className="btn btn-moss" style={{ display: 'inline-flex', fontSize: 15, padding: '12px 28px' }}>
+              <a href={paymentLink} target="_blank" rel="noreferrer" className="btn btn-moss" style={{ display: 'inline-flex', fontSize: 15, padding: '12px 28px' }}>
                 Submit Payment →
               </a>
             </div>
@@ -2898,6 +3187,28 @@ function InvoiceTab({ order, showToast, onRefresh }) {
 // update tags ([PORTAL: Tax Exempt - No], [PORTAL: Tax Exemption Certificate
 // Uploaded]), confirming it worked before it disappeared.
 
+// AUDIT-2026-10-06: the certificate is sent base64-encoded inside a JSON body
+// (see fileToBase64), which inflates it by ~4/3 — and Vercel rejects any
+// function request body over 4.5 MB with a plain-text 413 before our code
+// runs. 3 MB raw ≈ 4 MB encoded, leaving headroom for the JSON wrapper.
+// Anything larger, or not a PDF/JPEG/PNG/HEIC, is refused up front with a
+// clear message instead of failing with a cryptic server error.
+export const TAX_CERT_MAX_BYTES = 3 * 1024 * 1024;
+const TAX_CERT_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/heif'];
+const TAX_CERT_EXT_RE = /\.(pdf|jpe?g|png|heic|heif)$/i;
+
+export function validateTaxCertificateFile(file) {
+  if (!file) return 'Please select your tax exemption certificate to upload.';
+  // Some browsers report HEIC (and occasionally PDFs) with an empty type —
+  // fall back to the extension only in that case.
+  const typeOk = file.type ? TAX_CERT_TYPES.includes(file.type.toLowerCase()) : TAX_CERT_EXT_RE.test(file.name || '');
+  if (!typeOk) return 'Please upload your certificate as a PDF, JPEG, PNG, or HEIC file.';
+  if (file.size > TAX_CERT_MAX_BYTES) {
+    return `That file is ${(file.size / (1024 * 1024)).toFixed(1)} MB — the maximum is 3 MB. Please upload a smaller scan or photo (a PDF or a JPEG usually works).`;
+  }
+  return null;
+}
+
 export function TaxExemptionCard({ order, showToast, onRefresh }) {
   // 'yes' | 'no' | null — tracks the selector's current on-screen state, seeded
   // from whatever's already saved on the order (color_mm55tjn2).
@@ -2921,12 +3232,12 @@ export function TaxExemptionCard({ order, showToast, onRefresh }) {
     setChoice('no');
     setSaving(true);
     try {
-      await saveSetup('tax_exemption', { taxExempt: false });
+      await saveSetup('tax_exemption', { taxExempt: false }, order.id);
       showToast('Got it — sales tax will apply to your invoice.');
       onRefresh?.();
-    } catch {
+    } catch (err) {
       setChoice(previousChoice); // revert on failure
-      showToast('Error saving. Please try again.');
+      showToast(saveErrorToast(err));
     } finally {
       setSaving(false);
     }
@@ -2942,6 +3253,13 @@ export function TaxExemptionCard({ order, showToast, onRefresh }) {
       showToast('Please select your tax exemption certificate to upload.');
       return;
     }
+    // AUDIT-2026-10-06: checked before reading/sending anything — see
+    // validateTaxCertificateFile() for why the limit is ~3 MB.
+    const fileProblem = validateTaxCertificateFile(file);
+    if (fileProblem) {
+      showToast(fileProblem);
+      return;
+    }
     setSaving(true);
     try {
       const fileBase64 = await fileToBase64(file);
@@ -2950,12 +3268,12 @@ export function TaxExemptionCard({ order, showToast, onRefresh }) {
         fileBase64,
         fileName: file.name,
         mimeType: file.type,
-      });
+      }, order.id);
       showToast("Certificate uploaded — we'll review it and remove sales tax once approved.");
       setFile(null);
       onRefresh?.();
-    } catch {
-      showToast('Error uploading your certificate. Please try again.');
+    } catch (err) {
+      showToast(saveErrorToast(err, 'Error uploading your certificate. Please try again.'));
     } finally {
       setSaving(false);
     }
@@ -2973,7 +3291,7 @@ export function TaxExemptionCard({ order, showToast, onRefresh }) {
       )}
       {alreadyNo && choice === 'no' && (
         <div style={{ padding: '10px 14px', background: 'var(--paper)', borderRadius: 8, fontSize: 13.5, color: 'var(--mut)', border: '1px solid var(--line)', marginBottom: 16 }}>
-          You've indicated your organization is not tax-exempt. Sales tax will apply to your invoice.
+          You&apos;ve indicated your organization is not tax-exempt. Sales tax will apply to your invoice.
         </div>
       )}
 
@@ -2997,7 +3315,7 @@ export function TaxExemptionCard({ order, showToast, onRefresh }) {
             <label><span style={{ color: 'var(--rose)' }}>*</span> Upload Tax Exemption Certificate</label>
             <input
               type="file"
-              accept=".pdf,.jpg,.jpeg,.png"
+              accept=".pdf,.jpg,.jpeg,.png,.heic,.heif"
               onChange={e => setFile(e.target.files?.[0] || null)}
               required
             />
@@ -3045,11 +3363,18 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId: order.id, body }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        // AUDIT-2026-10-06: a 409 ORDER_MISMATCH (session re-bound to another
+        // order since this page loaded) gets the reload message instead of
+        // a generic retry prompt that could never succeed.
+        const data = await readJsonSafely(res);
+        const err = new Error(res.status === 409 && data?.code === 'ORDER_MISMATCH' ? ORDER_MISMATCH_MESSAGE : 'Failed to send. Please try again.');
+        throw err;
+      }
       setBody('');
       await onRefresh();
       showToast('Message sent.');
-    } catch { showToast('Failed to send. Please try again.'); }
+    } catch (err) { showToast(err?.message === ORDER_MISMATCH_MESSAGE ? ORDER_MISMATCH_MESSAGE : 'Failed to send. Please try again.'); }
     finally { setSending(false); }
   }
 
@@ -3125,7 +3450,7 @@ function ContactUsTab({ onNav }) {
     <>
       <div className="ph">
         <h2>Contact Us</h2>
-        <p>We're here to help with any questions about your order, delivery, or installation.</p>
+        <p>We&apos;re here to help with any questions about your order, delivery, or installation.</p>
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

@@ -148,7 +148,7 @@ export default function Landing() {
                   Welcome Back
                 </h2>
                 <p style={{ fontSize: 14, color: '#777', marginBottom: 32 }}>
-                  Select how you'd like to sign in.
+                  Select how you&apos;d like to sign in.
                 </p>
 
                 {/* Customer option */}
@@ -267,7 +267,7 @@ export default function Landing() {
                       Customer Sign In
                     </h2>
                     <p style={{ fontSize: 13.5, color: '#777', marginBottom: 28, lineHeight: 1.55 }}>
-                      Enter the email address on your Summit Sensory Gym order and we'll send a secure login code.
+                      Enter the email address on your Summit Sensory Gym order and we&apos;ll send a secure login code.
                     </p>
                     <form onSubmit={handleSendCode}>
                       <div style={{ marginBottom: 16 }}>
@@ -379,7 +379,7 @@ export default function Landing() {
                       </button>
                     </form>
                     <p style={{ marginTop: 18, textAlign: 'center', fontSize: 13, color: '#aaa' }}>
-                      Didn't receive it?{' '}
+                      Didn&apos;t receive it?{' '}
                       <button
                         onClick={() => { setStep('email'); setCode(''); setError(''); }}
                         style={{ color: '#1B2D6B', fontWeight: 600, fontSize: 13 }}

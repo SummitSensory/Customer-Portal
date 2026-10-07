@@ -49,6 +49,14 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Code expired. Please request a new one.' });
   }
 
+  // AUDIT-2026-10-06: the cookie-embedded attempts counter can be bypassed by
+  // replaying the original attempts:0 cookie, and the per-IP limiter above by
+  // spreading guesses across IPs. Also cap guesses per target email — same
+  // in-memory/per-instance caveats as every lib/rateLimit.js limiter.
+  if (!allowRequest(`verify-code-email:${String(payload.email).toLowerCase()}`, { maxRequests: 15, windowMs: 10 * 60_000 })) {
+    return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes and request a new code.' });
+  }
+
   // PORTAL-008: cap wrong-code guesses against this issued code. Without
   // this, a 6-digit code is guessable in a bounded number of requests since
   // nothing else throttled attempts. Once the limit is hit, the code cookie

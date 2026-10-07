@@ -31,9 +31,15 @@
 // item gets its first onboarding.
 
 import { getAllAccessoryItems, updateAccessoryCarrierStatus, getAllOrders, getOrderById, resolveDeliveryContacts } from '../../../lib/monday';
-import { trackShipment, onboardShipment, buildTrackingTitle, buildCustomFields } from '../../../lib/aftership';
+import { trackShipment, onboardShipment, buildTrackingTitle, buildCustomFields, isPermanentAftershipError } from '../../../lib/aftership';
 import { reportCriticalFailure } from '../../../lib/monitoring';
+import { secretsMatch } from '../../../lib/auth';
 import { mapWithConcurrency } from '../../../lib/concurrency';
+
+// AUDIT-2026-10-06: without this, Vercel's default function limit can cut a
+// run off mid-loop. 300s is within the Pro plan limit (the 30-minute/hourly
+// cron schedules in vercel.json already require Pro; Hobby is daily-only).
+export const config = { maxDuration: 300 };
 
 // getAllOrders() skips mirror columns (too slow board-wide), so pocName /
 // pocEmail / phone are always blank on its orders. For an opted-in order with
@@ -43,13 +49,34 @@ import { mapWithConcurrency } from '../../../lib/concurrency';
 // and silencing AfterShip's own delivery emails. Load the full order (with
 // mirrors) for just those orders. Opted-out orders still resolve to nothing,
 // which is the intended way to strip contacts from AfterShip.
-async function contactsFor(order) {
+//
+// AUDIT-2026-10-06: returns null — "unknown", not "none" — when the full order
+// can't be loaded. Falling back to the bare order resolved to no contacts,
+// and AfterShip's PUT then replaced the real recipients with a name-only
+// entry (the same symptom cea681a fixed, via a different path). Callers pass
+// `contactsUnknown` so lib/aftership.js leaves the existing recipients alone.
+export async function contactsFor(order) {
   let source = order;
   if (order?.freightNotifyEnabled && !order.deliverySnapshot) {
-    source = (await getOrderById(order.id).catch(() => null)) || order;
+    try {
+      source = await getOrderById(order.id);
+    } catch (err) {
+      console.warn(`accessory-tracking-sync: could not load order ${order.id} for its delivery contacts (leaving AfterShip recipients unchanged):`, err.message);
+      return null;
+    }
+    if (!source) return null;
   }
   const { primary, secondary } = resolveDeliveryContacts(source);
   return [primary, secondary].filter(Boolean);
+}
+
+// AfterShip meta for a shipment whose contacts may be unknown (see contactsFor).
+function contactMeta(shipmentKey, contacts) {
+  return {
+    contacts: contacts || [],
+    contactsUnknown: contacts === null,
+    customFields: buildCustomFields(shipmentKey, contacts || []),
+  };
 }
 
 // Same reasoning as REMINDER_CONCURRENCY in cron/reminders.js — this job's two
@@ -72,8 +99,27 @@ export default async function handler(req, res) {
   // comparison against "Bearer undefined" — trivially satisfiable by
   // anyone. Fail closed when the secret itself isn't configured, matching
   // the discipline lib/auth.js already applies to NEXTAUTH_SECRET.
-  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // AUDIT-2026-10-06: constant-time compare (secretsMatch) instead of `!==`.
+  if (!process.env.CRON_SECRET || !secretsMatch(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return res.status(401).json({ error: 'Unauthorized.' });
+  }
+
+  // AUDIT-2026-10-06: a missing key used to surface only as a once-per-cold-
+  // start console.warn from lib/aftership.js while every run "succeeded" with
+  // nothing tracked. In production that's an outage of every AfterShip sync
+  // and customer tracking lookup — page someone. Elsewhere (Preview, local)
+  // a missing key is normal.
+  if (!process.env.AFTERSHIP_API_KEY) {
+    if (process.env.VERCEL_ENV === 'production') {
+      await reportCriticalFailure(
+        'cron/accessory-tracking-sync',
+        'AFTERSHIP_API_KEY is not set in production — no shipment is being tracked or synced, and customer tracking lookups fail. Set it in Vercel project settings.',
+        {}
+      );
+      return res.status(500).json({ error: 'AFTERSHIP_API_KEY not configured.' });
+    }
+    console.warn('accessory-tracking-sync: AFTERSHIP_API_KEY not configured — skipping run.');
+    return res.status(200).json({ ok: true, skipped: 'AFTERSHIP_API_KEY not configured.' });
   }
 
   try {
@@ -88,8 +134,10 @@ export default async function handler(req, res) {
     // contact enrichment / a real title for that run, and the Frame/Mats
     // loop simply has nothing to do.
     let orders = [];
+    let ordersLoaded = false;
     try {
       orders = await getAllOrders();
+      ordersLoaded = true;
     } catch (err) {
       console.error('accessory-tracking-sync: failed to load orders (accessory contact enrichment + Frame/Mats onboarding both skipped this run):', err.message);
       // PORTAL-057: this used to be console.error only, which is why a real
@@ -112,6 +160,14 @@ export default async function handler(req, res) {
 
     let updated = 0;
     let errors = 0;
+    // AUDIT-2026-10-06: AfterShip failures (trackShipment → null) are counted
+    // too. `errors` only counted failed Monday writes, so the "every item
+    // failed" alert below could never fire for the AfterShip outage it names.
+    // A permanent per-item rejection (bad tracking number/slug — AfterShip
+    // 4xx) is counted apart and left out of that alert: it's a data-entry
+    // problem on one row, and it would otherwise re-alert every hour.
+    let trackingFailed = 0;
+    let badTrackingData = 0;
     await mapWithConcurrency(candidates, SYNC_CONCURRENCY, async (item) => {
       try {
         // Direct requirement (2026-09-03): Therapy Equipment & Accessories
@@ -119,20 +175,33 @@ export default async function handler(req, res) {
         // Mats — register the item's real parent-order delivery contact
         // (when resolvable) the same way Frame/Mats already do.
         const order = item.orderId ? ordersById.get(String(item.orderId)) : null;
-        const contacts = order ? await contactsFor(order) : [];
+        // AUDIT-2026-10-06: an item whose parent order should exist but
+        // couldn't be found (orders board failed to load, or not in it) has
+        // UNKNOWN contacts (null), not none — see contactsFor.
+        let contacts = [];
+        if (order) contacts = await contactsFor(order);
+        else if (item.orderId) contacts = null;
         // The item's own specific name (e.g. "Weighted Blanket") is more
         // useful in the title than the generic "Therapy Equipment &
         // Accessories" bucket label — see buildTrackingTitle's `detail` param.
         const title = buildTrackingTitle(order?.name, 'accessory', item.name);
-        const customFields = buildCustomFields('accessory', contacts);
+        let permanent = false;
         const tracking = await trackShipment(item.carrierSlug, item.trackingNumber, {
           title,
           orderId: item.id,
           customerName: item.name,
-          contacts,
-          customFields,
+          ...contactMeta('accessory', contacts),
+          onError: (err) => { permanent = isPermanentAftershipError(err); },
         });
-        if (tracking?.status && tracking.status !== item.carrierStatus) {
+        // AUDIT-2026-10-06: null means the AfterShip request failed — the
+        // status is unknown, so Monday is left as it is (it used to get a
+        // made-up "Pending" over the real status; see lib/aftership.js getById).
+        if (!tracking) {
+          if (permanent) badTrackingData++;
+          else trackingFailed++;
+          return;
+        }
+        if (tracking.status && tracking.status !== item.carrierStatus) {
           await updateAccessoryCarrierStatus(item.id, tracking.status);
           updated++;
         }
@@ -171,8 +240,7 @@ export default async function handler(req, res) {
           // combined title, so an AfterShip email template can read
           // naturally (e.g. "Your Therapy Mats & Padding shipment is on
           // its way!") instead of quoting the whole order-name+type title.
-          const customFields = buildCustomFields(s.key, contacts);
-          const id = await onboardShipment(s.slug, s.number, { title, orderId: order.id, customerName: order.name, contacts, customFields });
+          const id = await onboardShipment(s.slug, s.number, { title, orderId: order.id, customerName: order.name, ...contactMeta(s.key, contacts) });
           if (id) framesMatsOnboarded++;
         }
       });
@@ -184,7 +252,7 @@ export default async function handler(req, res) {
     // outbound call mid-loop, see PORTAL-021) is visible in Vercel's function
     // logs — previously this only went out in the HTTP response body, which
     // nothing reads for a scheduled Cron invocation.
-    console.log(`Accessory tracking sync summary: checked=${candidates.length} updated=${updated} errors=${errors} framesMatsOnboarded=${framesMatsOnboarded}`);
+    console.log(`Accessory tracking sync summary: checked=${candidates.length} updated=${updated} errors=${errors} trackingFailed=${trackingFailed} badTrackingData=${badTrackingData} framesMatsOnboarded=${framesMatsOnboarded}`);
 
     // Same reasoning as cron/reminders.js: every per-item failure above is
     // caught inline, so a systemic cause (revoked AFTERSHIP_API_KEY, a
@@ -192,15 +260,16 @@ export default async function handler(req, res) {
     // with updated=0 and no alert. Only fires when there was something to do
     // and literally none of it worked — a normal run with nothing changed
     // (errors=0) stays silent.
-    if (candidates.length > 0 && updated === 0 && errors === candidates.length) {
+    const trackable = candidates.length - badTrackingData;
+    if (trackable > 0 && updated === 0 && errors + trackingFailed === trackable) {
       await reportCriticalFailure(
         'cron/accessory-tracking-sync',
-        `Accessory tracking sync completed but every tracked item failed (checked=${candidates.length}, errors=${errors}). Likely a systemic issue (revoked/missing AFTERSHIP_API_KEY, a renamed Monday column) rather than isolated per-item failures — check Vercel function logs.`,
-        { checked: candidates.length, updated, errors, framesMatsOnboarded }
+        `Accessory tracking sync completed but every tracked item failed (checked=${candidates.length}, AfterShip failures=${trackingFailed}, Monday write errors=${errors}). Likely a systemic issue (revoked AFTERSHIP_API_KEY, AfterShip outage, a renamed Monday column) rather than isolated per-item failures — check Vercel function logs.`,
+        { checked: candidates.length, updated, errors, trackingFailed, badTrackingData, framesMatsOnboarded }
       );
     }
 
-    return res.status(200).json({ ok: true, checked: candidates.length, updated, errors, framesMatsOnboarded });
+    return res.status(200).json({ ok: true, checked: candidates.length, updated, errors, trackingFailed, badTrackingData, framesMatsOnboarded });
   } catch (err) {
     console.error('Accessory tracking sync error (run did not complete):', err.message);
     // PORTAL-023: same reasoning as cron/reminders — a run that never completes

@@ -45,7 +45,11 @@ export default async function handler(req, res) {
   if (!message || IGNORED.some(re => re.test(message))) return res.status(204).end();
 
   console.warn('Browser error reported:', message);
+  // AUDIT-2026-10-06: its own (smaller) hourly email budget — anyone can POST
+  // here, and sharing the server budget let junk reports use it up and
+  // silence real server-error alerts. See lib/errorAlerts.js.
   await reportError({
+    budget: 'client',
     source: `browser ${cap(body.kind, 40) || 'error'}`,
     message,
     stack: cap(body.stack, 8000),

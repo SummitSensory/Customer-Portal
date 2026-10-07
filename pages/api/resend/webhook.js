@@ -25,6 +25,21 @@ export const config = { api: { bodyParser: false } };
 
 const TOLERANCE_SECONDS = 5 * 60;
 
+// AUDIT-2026-10-06: our own addresses (the team/alert inboxes, anything
+// @summitsensory.com). An alert about one of these bouncing is itself sent
+// to one of these, which can bounce again: bounce → alert → bounce → … So
+// they're still tagged on any order that uses them, but never alerted on.
+export function isInternalAddress(address) {
+  const addr = String(address || '').trim().toLowerCase();
+  if (!addr) return false;
+  const configured = [process.env.ALERT_EMAIL, process.env.NOTIFY_TEAM_EMAIL, process.env.ERROR_ALERT_EMAIL, process.env.EMAIL_REPLY_TO]
+    .filter(Boolean)
+    .map((a) => a.trim().toLowerCase());
+  if (configured.includes(addr)) return true;
+  const domain = addr.split('@')[1] || '';
+  return domain === 'summitsensory.com' || domain.endsWith('.summitsensory.com');
+}
+
 function readRawBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -74,18 +89,28 @@ export default async function handler(req, res) {
   const subject = event.data?.subject || '';
   const reason = event.data?.bounce?.message || event.data?.bounce?.subType || '';
 
+  // AUDIT-2026-10-06: Monday failures are no longer swallowed here.
+  // `.catch(() => [])` on the order lookup made an outage look like "no order
+  // uses this address" — a misleading alert, and the bounce note was never
+  // written, so reminders kept going to the dead address. On the history read
+  // it re-posted a duplicate note. Both now throw → 500 → Resend redelivers;
+  // the redelivery is safe because hasBounced() skips orders already tagged.
   try {
     for (const address of recipients) {
-      const orderIds = await getOrderIdsByEmail(address).catch(() => []);
+      const orderIds = await getOrderIdsByEmail(address);
       const newlyTagged = [];
       for (const id of orderIds) {
-        const updates = await getOrderMessages(id).catch(() => []);
+        const updates = await getOrderMessages(id);
         if (hasBounced(updates, address)) continue; // already recorded — Resend redelivery or a later email
         await postTaggedUpdate(id, BOUNCE_TAG,
           `Email to ${address} ${kind} on ${new Date().toLocaleDateString()} ("${subject}")${reason ? ` — ${reason}` : ''}. Portal reminders to this address are paused. Fix the customer email on this order to resume them.`);
         newlyTagged.push(id);
       }
       // One team email per address, not one per later bounce.
+      if (isInternalAddress(address)) {
+        console.warn(`Resend webhook: internal address ${address} ${kind} ("${subject}") — not alerting (the alert would go to an internal inbox too).`);
+        continue;
+      }
       if (newlyTagged.length || !orderIds.length) {
         await sendInternalAlert(
           'resend/webhook',

@@ -26,9 +26,14 @@
  */
 
 import { getOrderSummaries, getOrderMessages } from '../../../lib/monday';
-import { isStaffEmail } from '../../../lib/auth';
+import { isStaffEmail, secretsMatch } from '../../../lib/auth';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
+
+// AUDIT-2026-10-06: without this, Vercel's default function limit can cut a
+// run off mid-loop. 300s is within the Pro plan limit (the 30-minute/hourly
+// cron schedules in vercel.json already require Pro; Hobby is daily-only).
+export const config = { maxDuration: 300 };
 
 // Midnight Mountain on the day this was re-enabled.
 export const ORDERS_CREATED_SINCE = new Date('2026-10-06T06:00:00Z');
@@ -63,7 +68,8 @@ export default async function handler(req, res) {
   const authHeader = req.headers['authorization'];
   // Same fail-closed discipline as every other cron in this app (PORTAL-033)
   // — an unset CRON_SECRET rejects rather than accepting "Bearer undefined".
-  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // AUDIT-2026-10-06: constant-time compare (secretsMatch) instead of `!==`.
+  if (!process.env.CRON_SECRET || !secretsMatch(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 

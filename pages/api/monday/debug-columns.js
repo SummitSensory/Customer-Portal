@@ -11,8 +11,10 @@ import { authOptions } from '../auth/[...nextauth]';
 const MONDAY_API = 'https://api.monday.com/v2';
 
 export default async function handler(req, res) {
-  // Only available in development or when explicitly enabled
-  if (process.env.NODE_ENV === 'production' && !process.env.ENABLE_DEBUG_ENDPOINTS) {
+  // Only available in development or when explicitly enabled.
+  // AUDIT-2026-10-06: must be exactly "true" — any non-empty value, including
+  // ENABLE_DEBUG_ENDPOINTS=false, used to enable it.
+  if (process.env.NODE_ENV === 'production' && process.env.ENABLE_DEBUG_ENDPOINTS !== 'true') {
     return res.status(404).end();
   }
 

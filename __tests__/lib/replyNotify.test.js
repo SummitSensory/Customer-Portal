@@ -12,8 +12,22 @@ vi.mock('../../lib/monday', () => ({
 }));
 const mockSend = vi.fn().mockResolvedValue({ id: 'e1' });
 vi.mock('../../lib/email', () => ({ sendCustomerReplyNotification: (...a) => mockSend(...a) }));
+const mockReportCriticalFailure = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../lib/monitoring', () => ({ reportCriticalFailure: (...a) => mockReportCriticalFailure(...a) }));
 
-const { findUnnotifiedStaffMessages, notifyPendingStaffReplies, previewText } = await import('../../lib/replyNotify.js');
+// AUDIT-2026-10-06 (follow-up): an in-memory stand-in for the atomic claim
+// store, so concurrent-sender behaviour is tested without Redis.
+const claimed = new Set();
+const mockRelease = vi.fn();
+vi.mock('../../lib/atomicClaim', () => ({
+  claimOnce: async (key) => {
+    if (claimed.has(key)) return { claimed: false };
+    claimed.add(key);
+    return { claimed: true, release: async () => { mockRelease(key); claimed.delete(key); } };
+  },
+}));
+
+const { findUnnotifiedStaffMessages, notifyPendingStaffReplies, previewText, hasNewerCustomerMessage } = await import('../../lib/replyNotify.js');
 
 const NOW = new Date('2026-10-07T15:00:00Z');
 const t = (min) => new Date(NOW.getTime() - min * 60000).toISOString();
@@ -67,6 +81,8 @@ describe('notifyPendingStaffReplies', () => {
     mockSend.mockReset().mockResolvedValue({ id: 'e1' });
     mockPostTaggedUpdate.mockReset().mockResolvedValue({ id: 'm1' });
     mockGetOrderById.mockReset().mockResolvedValue({ id: '9', name: 'Acme', customerEmail: 'a@school.org', firstName: 'Ann' });
+    claimed.clear();
+    mockRelease.mockReset();
   });
 
   it('sends one email covering every pending reply and marks them all by id', async () => {
@@ -76,6 +92,31 @@ describe('notifyPendingStaffReplies', () => {
     expect(mockSend).toHaveBeenCalledTimes(1);
     expect(mockSend).toHaveBeenCalledWith('a@school.org', 'Ann', 'Acme', 'two');
     expect(mockPostTaggedUpdate.mock.calls[0][2]).toContain('reply 11, reply 14');
+  });
+
+  it('two concurrent senders over the same history email the customer once', async () => {
+    const updates = [customerMsg('10', [staffReply('11', 'one', 6)])];
+    const [a, b] = await Promise.all([
+      notifyPendingStaffReplies('9', { now: NOW, updates }),
+      notifyPendingStaffReplies('9', { now: NOW, updates }),
+    ]);
+    expect([a.sent, b.sent].sort()).toEqual([false, true]);
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockPostTaggedUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('a newer staff message gets its own email even while an older one is claimed', async () => {
+    await notifyPendingStaffReplies('9', { now: NOW, updates: [customerMsg('10', [staffReply('11', 'one', 6)])] });
+    await notifyPendingStaffReplies('9', { now: NOW, updates: [customerMsg('10', [staffReply('11', 'one', 6), staffReply('14', 'two', 2)])] });
+    expect(mockSend).toHaveBeenCalledTimes(2);
+  });
+
+  it('releases the claim when the send fails, so the next run can retry', async () => {
+    mockSend.mockRejectedValueOnce(new Error('resend down'));
+    const updates = [customerMsg('10', [staffReply('11', 'one', 6)])];
+    await expect(notifyPendingStaffReplies('9', { now: NOW, updates })).rejects.toThrow('resend down');
+    expect(mockRelease).toHaveBeenCalledWith('reply-notify:9:reply:11');
+    expect((await notifyPendingStaffReplies('9', { now: NOW, updates })).sent).toBe(true);
   });
 
   it('does not mark anything when the send fails, so the next run retries', async () => {
@@ -109,5 +150,58 @@ describe('old-style markers', () => {
     const legacy = { id: 'old', body: '[PORTAL: Reply Notified]\nStaff reply notification emailed to a@b.com on 10/6/2026.', created_at: t(3), creator: staff, replies: [] };
     const updates = [customerMsg('10', [staffReply('11', 'before', 5), staffReply('15', 'after', 1)]), legacy];
     expect(findUnnotifiedStaffMessages(updates, { now: NOW }).map(m => m.id)).toEqual(['15']);
+  });
+});
+
+// AUDIT-2026-10-06
+describe('notifyPendingStaffReplies — message status and marker failures', () => {
+  beforeEach(() => {
+    mockSend.mockReset().mockResolvedValue({ id: 'e1' });
+    mockPostTaggedUpdate.mockReset().mockResolvedValue({ id: 'm1' });
+    mockSetStatusLabel.mockReset().mockResolvedValue(undefined);
+    mockReportCriticalFailure.mockReset().mockResolvedValue(undefined);
+    mockGetOrderById.mockReset().mockResolvedValue({ id: '9', name: 'Acme', customerEmail: 'a@school.org', firstName: 'Ann' });
+    claimed.clear();
+    mockRelease.mockReset();
+  });
+
+  it('sets "Replied" when the customer has not written since the staff reply', async () => {
+    const updates = [customerMsg('10', [staffReply('11', 'Friday!', 6)])];
+    await notifyPendingStaffReplies('9', { now: NOW, updates });
+    expect(mockSetStatusLabel).toHaveBeenCalledWith('9', 'messageStatus', 'Replied');
+  });
+
+  it('leaves a fresh "Needs Reply" alone when the customer posted after the staff reply', async () => {
+    const newer = { id: '30', body: '[PORTAL][PORTAL:CUSTOMER]\nOne more question', created_at: t(2), creator: staff, replies: [] };
+    const updates = [newer, customerMsg('10', [staffReply('11', 'Friday!', 6)])];
+    const result = await notifyPendingStaffReplies('9', { now: NOW, updates });
+    expect(result.sent).toBe(true);
+    expect(mockSetStatusLabel).not.toHaveBeenCalled();
+  });
+
+  it('treats a non-staff threaded reply after the staff reply as newer customer activity', async () => {
+    const updates = [customerMsg('10', [staffReply('11', 'Friday!', 6), { id: '12', body: 'and the mats?', created_at: t(3), creator: { email: 'a@school.org' } }])];
+    await notifyPendingStaffReplies('9', { now: NOW, updates });
+    expect(mockSetStatusLabel).not.toHaveBeenCalled();
+  });
+
+  it('alerts (not just logs) when the marker write fails after the email went out', async () => {
+    mockPostTaggedUpdate.mockRejectedValue(new Error('Monday down'));
+    const updates = [customerMsg('10', [staffReply('11', 'Friday!', 6)])];
+    const result = await notifyPendingStaffReplies('9', { now: NOW, updates });
+    expect(result.sent).toBe(true);
+    expect(mockReportCriticalFailure).toHaveBeenCalledWith('replyNotify-marker', expect.stringContaining('a@school.org'), expect.objectContaining({ itemId: '9', ids: 'reply 11' }));
+  });
+});
+
+describe('hasNewerCustomerMessage', () => {
+  it('ignores staff posts and anything older than the cutoff', () => {
+    const updates = [
+      customerMsg('10', [], 30),
+      { id: '20', body: '[PORTAL][PORTAL:STAFF]\nHi', created_at: t(1), creator: staff, replies: [] },
+      { id: '21', body: '[PORTAL: Reminder #2]', created_at: t(1), creator: staff, replies: [] },
+    ];
+    expect(hasNewerCustomerMessage(updates, t(10))).toBe(false);
+    expect(hasNewerCustomerMessage(updates, t(40))).toBe(true);
   });
 });

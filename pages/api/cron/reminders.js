@@ -24,7 +24,12 @@ import { sendSetupReminder, sendCombinedSetupReminder, notifyTeamRemindersExhaus
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
 import { hasBounced } from '../../../lib/bounces';
-import { isStaffEmail } from '../../../lib/auth';
+import { isStaffEmail, secretsMatch } from '../../../lib/auth';
+
+// AUDIT-2026-10-06: without this, Vercel's default function limit can cut a
+// run off mid-loop. 300s is within the Pro plan limit (the 30-minute/hourly
+// cron schedules in vercel.json already require Pro; Hobby is daily-only).
+export const config = { maxDuration: 300 };
 
 // Orders were previously processed one at a time; this run took as long as
 // (order count) × (message fetch + reminder send latency). 8 concurrent
@@ -137,7 +142,8 @@ export default async function handler(req, res) {
   // comparison against "Bearer undefined" — trivially satisfiable by
   // anyone. Fail closed when the secret itself isn't configured, matching
   // the discipline lib/auth.js already applies to NEXTAUTH_SECRET.
-  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // AUDIT-2026-10-06: constant-time compare (secretsMatch) instead of `!==`.
+  if (!process.env.CRON_SECRET || !secretsMatch(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 

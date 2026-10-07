@@ -19,25 +19,49 @@
  */
 
 import { getOrderSummaries, getOrderMessages } from '../../../lib/monday';
-import { findUnnotifiedStaffMessages, notifyPendingStaffReplies } from '../../../lib/replyNotify';
+import { findUnnotifiedStaffMessages, notifyPendingStaffReplies, ADMIN_POST_GRACE_MS } from '../../../lib/replyNotify';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
+import { secretsMatch } from '../../../lib/auth';
+
+// AUDIT-2026-10-06: Vercel's default function limit can cut a run off
+// mid-loop. 300s is within the Pro plan limit (this project's 30-minute and
+// hourly cron schedules already require Pro; Hobby only allows daily crons).
+export const config = { maxDuration: 300 };
 
 const CHECK_CONCURRENCY = 8;
 const CRON_INTERVAL_MINUTES = 30;
 const DAILY_REMINDER_UTC_HOUR = 14; // 8am Mountain (MDT), same hour reminders.js runs
 
+const CRON_INTERVAL_MS = CRON_INTERVAL_MINUTES * 60 * 1000;
+
 // Stateless alert cooldown for a send that keeps failing: alert on the first
 // run that sees it, then only on the daily reminder run.
-export function shouldAlertGap(ageMinutes, now) {
-  if (ageMinutes < CRON_INTERVAL_MINUTES * 2) return true;
+// AUDIT-2026-10-06: "first run" used to mean "reply under 60 minutes old",
+// which on a 30-minute schedule is TWO runs, so every gap alerted twice. Now
+// it's the one scheduled :00/:30 slot that could first act on the message:
+// the first slot after `eligibleAt` (the message's time, plus
+// ADMIN_POST_GRACE_MS for an Admin Portal post, which this cron deliberately
+// leaves alone until the grace period is over). Compared by slot, not age, so
+// a run that starts a few seconds late still counts as its own slot.
+export function shouldAlertGap(eligibleAt, now) {
+  const firstRunSlot = Math.ceil(new Date(eligibleAt).getTime() / CRON_INTERVAL_MS);
+  const thisRunSlot = Math.floor(now.getTime() / CRON_INTERVAL_MS);
+  if (thisRunSlot === firstRunSlot) return true;
   return now.getUTCHours() === DAILY_REMINDER_UTC_HOUR && now.getUTCMinutes() < CRON_INTERVAL_MINUTES;
+}
+
+// When this cron could first act on a pending message (see shouldAlertGap).
+export function firstEligibleAt(msg) {
+  const created = new Date(msg.created_at).getTime();
+  return new Date(msg.kind === 'message' ? created + ADMIN_POST_GRACE_MS : created);
 }
 
 export default async function handler(req, res) {
   const authHeader = req.headers['authorization'];
   // Same fail-closed discipline as every other cron in this app (PORTAL-033).
-  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // AUDIT-2026-10-06: constant-time compare (secretsMatch) instead of `!==`.
+  if (!process.env.CRON_SECRET || !secretsMatch(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
@@ -73,8 +97,7 @@ export default async function handler(req, res) {
           return;
         }
         results.failed++;
-        const ageMinutes = (now - new Date(pending[0].created_at)) / 60000;
-        failed.push({ id: order.id, name: order.name, customerEmail: order.customerEmail, replyAt: pending[0].created_at, error: err.message, alert: shouldAlertGap(ageMinutes, now) });
+        failed.push({ id: order.id, name: order.name, customerEmail: order.customerEmail, replyAt: pending[0].created_at, error: err.message, alert: shouldAlertGap(firstEligibleAt(pending[0]), now) });
       }
     });
 

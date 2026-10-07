@@ -58,7 +58,7 @@ describe('POST /api/monday/invite-webhook', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toMatchObject({ ok: true, resend: true, manual: true });
-    expect(mockSendPortalInvitation).toHaveBeenCalledWith('pat@acme.test', 'Pat', 'Acme Soar');
+    expect(mockSendPortalInvitation).toHaveBeenCalledWith('pat@acme.test', 'Pat', 'Acme Soar', {});
     const sent = mockPostTaggedUpdate.mock.calls.find((c) => c[1] === 'PORTAL: Invitation Sent');
     expect(sent[2]).toContain('re-sent');
     expect(sent[2]).toContain('"Manually Send Invite"');
@@ -83,6 +83,14 @@ describe('POST /api/monday/invite-webhook', () => {
     expect(res.body).toMatchObject({ ok: true, manual: false });
     expect(mockSendPortalInvitation).toHaveBeenCalledTimes(1);
     expect(mockSetStatusLabel).toHaveBeenCalledWith(123, 'inviteStatus', 'Invite Sent');
+  });
+
+  it('keys the send on Monday\'s event id, so a retry of the same event is deduped by Resend', async () => {
+    const event = { pulseId: 123, columnId: 'color_mm5427cr', value: { label: { text: 'Send Invite' } }, triggerUuid: 'abc-123' };
+    await handler(makeReq(event), makeRes());
+    expect(mockSendPortalInvitation).toHaveBeenCalledWith(
+      'pat@acme.test', 'Pat', 'Acme Soar', { idempotencyKey: 'portal-invite/123/abc-123' }
+    );
   });
 });
 

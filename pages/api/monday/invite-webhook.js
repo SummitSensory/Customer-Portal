@@ -155,10 +155,16 @@ export default async function handler(req, res) {
     // so Monday's history stays clear about which this was.
     const isResend = updates.some(u => (u.body || '').includes(`[${SENT_TAG}]`));
 
+    // A send that times out may still have gone out; the 500 below makes
+    // Monday retry the same event. Keying the send on that event's id lets
+    // Resend drop the repeat, while a deliberate resend (a new status flip,
+    // so a new event) still sends.
+    const eventId = req.body?.event?.triggerUuid;
     const sent = await sendPortalInvitation(
       order.customerEmail,
       order.firstName || order.pocName?.split(' ')[0] || '',
-      order.name
+      order.name,
+      eventId ? { idempotencyKey: `portal-invite/${itemId}/${eventId}` } : {}
     );
 
     // The email has gone out: from here on nothing may fail the request, or

@@ -29,9 +29,17 @@ vi.mock('../../../lib/auth', () => ({
 }));
 
 const mockGetOrdersByEmail = vi.fn();
-vi.mock('../../../lib/monday', () => ({
-  getOrdersByEmail: (...args) => mockGetOrdersByEmail(...args),
-}));
+const mockGetOrderById = vi.fn();
+vi.mock('../../../lib/monday', async () => {
+  const actual = await vi.importActual('../../../lib/monday');
+  return {
+    getOrdersByEmail: (...args) => mockGetOrdersByEmail(...args),
+    getOrderById: (...args) => mockGetOrderById(...args),
+    // AUDIT-2026-10-06: the real serializer, so the tests below can pin
+    // that admin-only fields never reach the customer.
+    toCustomerOrder: actual.toCustomerOrder,
+  };
+});
 
 const { default: handler } = await import('../../../pages/api/auth/select-order.js');
 
@@ -61,6 +69,12 @@ describe('select-order.js — session re-sign preserves session kind (PORTAL-059
     mockSignCustomerSession.mockReset().mockResolvedValue('signed.customer.token');
     mockSignImpersonationSession.mockReset().mockResolvedValue('signed.impersonation.token');
     mockGetOrdersByEmail.mockReset().mockResolvedValue(ORDERS);
+    mockGetOrderById.mockReset().mockImplementation(async (id) => ({
+      ...ORDERS.find((o) => o.id === id),
+      contactName: 'Mirror Contact',
+      rawColumns: { secret: { text: 'internal' } },
+      files: [{ id: 'f1' }],
+    }));
   });
 
   it('rejects a non-POST method', async () => {
@@ -107,6 +121,32 @@ describe('select-order.js — session re-sign preserves session kind (PORTAL-059
     );
     expect(mockSignCustomerSession).not.toHaveBeenCalled();
     expect(res.headers['Set-Cookie']).toContain('Max-Age=7200'); // 60*60*2
+  });
+
+  // AUDIT-2026-10-06 — response contract the portal relies on.
+  it('returns the FULL order (getOrderById, mirror columns) serialized for the customer — no rawColumns/files', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', role: 'customer' });
+    const res = makeRes();
+    await handler(makeReq({ body: { orderId: 'order-1' } }), res);
+    expect(res.statusCode).toBe(200);
+    expect(mockGetOrderById).toHaveBeenCalledWith('order-1');
+    expect(res.body.ok).toBe(true);
+    expect(res.body.order).toEqual({ id: 'order-1', name: 'Order One', contactName: 'Mirror Contact' });
+  });
+
+  it('falls back to the serialized list row when the full read throws or returns null', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', role: 'customer' });
+    mockGetOrdersByEmail.mockResolvedValue([{ id: 'order-1', name: 'Order One', rawColumns: {}, files: [] }]);
+    mockGetOrderById.mockRejectedValueOnce(new Error('Monday down'));
+    const res = makeRes();
+    await handler(makeReq({ body: { orderId: 'order-1' } }), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.order).toEqual({ id: 'order-1', name: 'Order One' });
+
+    mockGetOrderById.mockResolvedValueOnce(null);
+    const res2 = makeRes();
+    await handler(makeReq({ body: { orderId: 'order-1' } }), res2);
+    expect(res2.body.order).toEqual({ id: 'order-1', name: 'Order One' });
   });
 
   it('rejects an order that does not belong to the customer, for both session kinds', async () => {

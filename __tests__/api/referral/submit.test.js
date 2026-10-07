@@ -7,6 +7,11 @@ vi.mock('../../../lib/monday', () => ({
   getOrderById: (...args) => mockGetOrderById(...args),
   createReferralItem: (...args) => mockCreateReferralItem(...args),
   findRecentReferral: (...args) => mockFindRecentReferral(...args),
+  postTaggedUpdate: vi.fn().mockResolvedValue(undefined),
+  // AUDIT-2026-10-06: lib/apiAuth.js re-checks order ownership via this;
+  // the fixture orders here carry no customerEmail, so it's stubbed to
+  // "owned" (lib/apiAuth.test.js covers the real check directly).
+  orderMatchesEmail: () => true,
 }));
 
 const mockVerifyCustomerSession = vi.fn();

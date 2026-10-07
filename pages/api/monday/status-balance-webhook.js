@@ -10,7 +10,9 @@
  * Dedup: the Admin Portal path (orders.js) reacts to the same column write,
  * so both go through lib/monday.js's sendCustomerNotificationOnce() and its
  * "[PORTAL: Status Notified - X]" marker — whichever sends first wins. A
- * failed send isn't marked, and this answers 500 so Monday redelivers.
+ * failed send isn't marked, and this answers 500 so Monday redelivers. A
+ * send that succeeded is always answered 200, even if recording the marker
+ * afterwards failed (AUDIT-2026-10-06 — see sendCustomerNotificationOnce).
  *
  * Setup: a Monday webhook on board 6533700776 for changes to status__1 →
  *   https://portal.summitsensory.com/api/monday/status-balance-webhook?secret=<MONDAY_STATUS_WEBHOOK_SECRET>
@@ -98,9 +100,20 @@ export default async function handler(req, res) {
   } catch (err) {
     console.error('Monday status-balance-webhook processing error:', err.message);
     // 500 so Monday redelivers (it retries for a bounded window, not
-    // forever). Nothing was marked notified, so a retry sends the email
-    // exactly once. This used to answer 200, which silently dropped any
-    // status email whose send failed.
+    // forever). This used to answer 200, which silently dropped any status
+    // email whose send failed.
+    //
+    // AUDIT-2026-10-06: the old comment here claimed "nothing was marked
+    // notified, so a retry sends the email exactly once" — but this catch
+    // also used to fire when the email HAD gone out and only the marker
+    // write after it failed, so every redelivery re-sent it.
+    // sendCustomerNotificationOnce() now reports that case as sent (and
+    // alerts staff about the missing marker) instead of throwing, so this
+    // path is only reached when no email went out: the order read or a
+    // dedupe-check read failed, or the send itself threw. A retry then sends
+    // at most once more — unless an earlier delivery is still in flight,
+    // which the marker re-check narrows but cannot fully close (no
+    // compare-and-swap in Monday; see that function's header).
     return res.status(500).json({ ok: false, error: 'Processing error.' });
   }
 }

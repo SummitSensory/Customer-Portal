@@ -31,6 +31,10 @@ vi.mock('../../../lib/monday', () => ({
   findRecentDeliverySubmission: (...args) => mockFindRecentDeliverySubmission(...args),
   setStatusLabel: (...args) => mockSetStatusLabel(...args),
   uploadFileToColumn: (...args) => mockUploadFileToColumn(...args),
+  // AUDIT-2026-10-06: lib/apiAuth.js re-checks order ownership via this;
+  // the fixture orders here carry no customerEmail, so it's stubbed to
+  // "owned" (lib/apiAuth.test.js covers the real check directly).
+  orderMatchesEmail: () => true,
   COLS: { address: 'col_address', tax_exempt_status: 'col_tax', tax_exempt_cert_file: 'col_cert' },
   STATUS_STAGES: [
     { key: 'placed' }, { key: 'in_production' }, { key: 'ready_to_ship' }, { key: 'shipped' }, { key: 'delivered' },
@@ -412,5 +416,120 @@ describe('setup.js — delivery tab: idempotency guard against retry-duplicated 
     mockFindRecentDeliverySubmission.mockClear();
     await handler({ method: 'POST', headers: {}, body: { tab: 'delivery', data: VALID_DELIVERY_DATA } }, makeRes());
     expect(mockFindRecentDeliverySubmission).not.toHaveBeenCalled();
+  });
+});
+
+describe('setup.js — AUDIT-2026-10-06 fixes', () => {
+  const { validateTaxCertUpload } = handlerModule;
+  const b64 = (n) => Buffer.alloc(n, 1).toString('base64');
+
+  beforeEach(() => {
+    mockGetOrderById.mockReset().mockResolvedValue({ id: 'real-order-123', name: 'Tax Order', stageIndex: 0, taxExemptStatus: '' });
+    mockVerifyCustomerSession.mockReset().mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockPostTaggedUpdate.mockReset().mockResolvedValue(undefined);
+    mockMarkSectionCompleteSafe.mockReset().mockResolvedValue(true);
+    mockSetStatusLabel.mockReset().mockResolvedValue(undefined);
+    mockUploadFileToColumn.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('409 ORDER_MISMATCH when the body names a different order — before the order is even loaded', async () => {
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { orderId: 'other-order', tab: 'contact', data: { confirmed: true } } }, res);
+    expect(res.statusCode).toBe(409);
+    expect(res.body.code).toBe('ORDER_MISMATCH');
+    expect(mockGetOrderById).not.toHaveBeenCalled();
+  });
+
+  it('a matching body orderId is accepted', async () => {
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { orderId: 'real-order-123', tab: 'contact', data: { confirmed: true } } }, res);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('the removed legacy freight_ack tab is an unknown tab and never marks Delivery complete', async () => {
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { tab: 'freight_ack', data: { acknowledgedBy: 'Jane', acknowledgedAt: '2026-10-06' } } }, res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toMatch(/Unknown tab/);
+    expect(mockMarkSectionCompleteSafe).not.toHaveBeenCalled();
+  });
+
+  it('impersonated writes are attributed to the staff member in the Monday audit update', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123', impersonatedBy: 'staff@summitsensory.com' });
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { tab: 'contact', data: { confirmed: true } } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockPostTaggedUpdate).toHaveBeenCalledWith('real-order-123', 'PORTAL: Contact Confirmed',
+      expect.stringContaining('(done by staff staff@summitsensory.com while viewing as customer)'));
+  });
+
+  describe('validateTaxCertUpload', () => {
+    it('accepts PDF/JPEG/PNG/HEIC by extension + type', () => {
+      expect(validateTaxCertUpload({ fileBase64: b64(10), fileName: 'cert.pdf', mimeType: 'application/pdf' }).mimeType).toBe('application/pdf');
+      expect(validateTaxCertUpload({ fileBase64: b64(10), fileName: 'cert.JPG', mimeType: 'image/jpeg' }).buffer.length).toBe(10);
+      expect(validateTaxCertUpload({ fileBase64: b64(10), fileName: 'scan.png', mimeType: 'image/png' }).error).toBeUndefined();
+    });
+
+    it('derives the type from the extension when the browser reports none (HEIC on Windows)', () => {
+      expect(validateTaxCertUpload({ fileBase64: b64(10), fileName: 'IMG_1.HEIC', mimeType: '' }).mimeType).toBe('image/heic');
+      expect(validateTaxCertUpload({ fileBase64: b64(10), fileName: 'x.pdf', mimeType: 'application/octet-stream' }).mimeType).toBe('application/pdf');
+    });
+
+    it('rejects other extensions or mismatching types', () => {
+      expect(validateTaxCertUpload({ fileBase64: b64(10), fileName: 'cert.html', mimeType: 'text/html' }).status).toBe(400);
+      expect(validateTaxCertUpload({ fileBase64: b64(10), fileName: 'cert.pdf', mimeType: 'text/html' }).status).toBe(400);
+      expect(validateTaxCertUpload({ fileBase64: b64(10), fileName: 'noextension', mimeType: 'application/pdf' }).status).toBe(400);
+    });
+
+    it('requires the file data and name', () => {
+      expect(validateTaxCertUpload({ fileName: 'cert.pdf' }).status).toBe(400);
+      expect(validateTaxCertUpload({ fileBase64: b64(10) }).status).toBe(400);
+    });
+
+    it('413 over 3MB decoded', () => {
+      expect(validateTaxCertUpload({ fileBase64: b64(3 * 1024 * 1024 + 1), fileName: 'big.pdf', mimeType: 'application/pdf' }).status).toBe(413);
+      expect(validateTaxCertUpload({ fileBase64: b64(3 * 1024 * 1024), fileName: 'ok.pdf', mimeType: 'application/pdf' }).error).toBeUndefined();
+    });
+  });
+
+  it('tax_exemption "Yes" with an invalid file never uploads or flips the status', async () => {
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { tab: 'tax_exemption', data: { taxExempt: true, fileBase64: b64(10), fileName: 'evil.exe', mimeType: 'application/x-msdownload' } } }, res);
+    expect(res.statusCode).toBe(400);
+    expect(mockUploadFileToColumn).not.toHaveBeenCalled();
+    expect(mockSetStatusLabel).not.toHaveBeenCalled();
+  });
+
+  it('tax_exemption "No" never overwrites a staff-set "Yes"', async () => {
+    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', name: 'Tax Order', taxExemptStatus: 'Yes' });
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { tab: 'tax_exemption', data: { taxExempt: false } } }, res);
+    expect(res.statusCode).toBe(409);
+    expect(res.body.code).toBe('TAX_STATUS_LOCKED');
+    expect(mockSetStatusLabel).not.toHaveBeenCalled();
+  });
+
+  it('tax_exemption "No" is recorded while the status is blank', async () => {
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { tab: 'tax_exemption', data: { taxExempt: false } } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockSetStatusLabel).toHaveBeenCalledWith('real-order-123', 'taxExemptStatus', 'No');
+  });
+
+  it('tax_exemption "Yes" uploads but leaves any other staff-set label alone', async () => {
+    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', name: 'Tax Order', taxExemptStatus: 'Verified' });
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { tab: 'tax_exemption', data: { taxExempt: true, fileBase64: b64(10), fileName: 'cert.pdf', mimeType: 'application/pdf' } } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockUploadFileToColumn).toHaveBeenCalledTimes(1);
+    expect(mockSetStatusLabel).not.toHaveBeenCalled();
+  });
+
+  it('tax_exemption "Yes" over blank/"No" uploads and sets "Yes"', async () => {
+    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', name: 'Tax Order', taxExemptStatus: 'No' });
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { tab: 'tax_exemption', data: { taxExempt: true, fileBase64: b64(10), fileName: 'cert.pdf', mimeType: 'application/pdf' } } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockSetStatusLabel).toHaveBeenCalledWith('real-order-123', 'taxExemptStatus', 'Yes');
   });
 });

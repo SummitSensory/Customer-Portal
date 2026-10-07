@@ -1,5 +1,6 @@
 /**
  * GET  /api/monday/orders          — admin: list all orders
+ * GET  /api/monday/orders?id=...   — admin: one full order (mirror columns included)
  * PATCH /api/monday/orders?id=...  — admin: update status or tracking number
  */
 
@@ -23,8 +24,24 @@ export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
   if (!session) return res.status(401).json({ error: 'Not authenticated.' });
 
-  // ── GET: list all orders ──────────────────────────────────────────────────
+  // ── GET: list all orders (or one full order with ?id=) ───────────────────
   if (req.method === 'GET') {
+    // AUDIT-2026-10-06: getAllOrders() deliberately omits mirror columns
+    // (see ORDER_ITEM_FIELDS in lib/monday.js — resolving ~20 mirrors for the
+    // whole board timed out), so the admin list rows have blank contact/POC/
+    // tracking mirrors. ?id= returns the single FULL order (getOrderById,
+    // mirrors included) for the admin detail view. Staff-only like the list,
+    // so the full object (rawColumns/files included) is returned as-is.
+    if (req.query.id) {
+      try {
+        const order = await getOrderById(String(req.query.id));
+        if (!order) return res.status(404).json({ error: 'Order not found.' });
+        return res.status(200).json({ order });
+      } catch (err) {
+        console.error('getOrderById (admin) error:', err);
+        return res.status(500).json({ error: 'Failed to load order.' });
+      }
+    }
     try {
       const orders = await getAllOrders();
       return res.status(200).json({ orders });
@@ -69,7 +86,11 @@ export default async function handler(req, res) {
         if (order.customerEmail && isCustomerFacingStatus(status)) {
           await sendCustomerNotificationOnce(id, 'Status', status, () =>
             notifyCustomerStatusChange(order.customerEmail, order.contactName, order.name, status)
-          ).catch(err => {
+          ).then(result => {
+            // AUDIT-2026-10-06: emailed, but the dedupe marker didn't land
+            // (staff were alerted by sendCustomerNotificationOnce).
+            if (result?.markerPending) warnings.push(`Customer was emailed about "${status}", but recording that in Monday failed — a later change back to this status could email them again.`);
+          }).catch(err => {
             console.error('Status change notification failed:', err.message);
             warnings.push(`Status saved, but emailing the customer about "${status}" failed: ${err.message}`);
           });

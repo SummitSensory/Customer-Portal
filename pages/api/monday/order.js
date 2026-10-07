@@ -16,7 +16,11 @@
 
 import { parse } from 'cookie';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { getOrderById, getOrdersByEmail } from '../../../lib/monday';
+import { getOrderById, getOrdersByEmail, orderMatchesEmail, toCustomerOrder } from '../../../lib/monday';
+
+// AUDIT-2026-10-06: every order object in every response below goes through
+// toCustomerOrder() (lib/monday.js), which drops the admin-only rawColumns
+// (every raw Monday column on the item) and files (every asset on the item).
 
 export default async function handler(req, res) {
   // Auth: customer session cookie
@@ -45,7 +49,7 @@ export default async function handler(req, res) {
         const orders = await getOrdersByEmail(session.email);
         if (!orders.length) return res.status(404).json({ error: 'No orders found.' });
         return res.status(200).json({
-          orders,
+          orders: orders.map(toCustomerOrder),
           currentOrderId: session.orderId || orders[0].id,
           impersonatedBy: session.impersonatedBy || null,
         });
@@ -55,16 +59,22 @@ export default async function handler(req, res) {
       if (session.orderId) {
         const order = await getOrderById(session.orderId);
         if (!order) return res.status(404).json({ error: 'Order not found.' });
+        // AUDIT-2026-10-06: same ownership re-check as lib/apiAuth.js's
+        // loadSessionOrder — an order re-pointed at a different customer
+        // email in Monday stops being readable by the old session.
+        if (!orderMatchesEmail(order, session.email)) {
+          return res.status(401).json({ error: 'This order is no longer linked to your account. Please sign in again.', code: 'ORDER_NOT_OWNED' });
+        }
         // impersonatedBy is only set on sessions minted by /api/admin/impersonate —
         // surfaced here so the portal UI can show its "viewing as staff" banner.
-        return res.status(200).json({ order, impersonatedBy: session.impersonatedBy || null });
+        return res.status(200).json({ order: toCustomerOrder(order), impersonatedBy: session.impersonatedBy || null });
       }
 
       // Otherwise look up all orders for this email (repeat customer support)
       const orders = await getOrdersByEmail(session.email);
       if (!orders.length) return res.status(404).json({ error: 'No orders found.' });
-      if (orders.length === 1) return res.status(200).json({ order: orders[0], impersonatedBy: session.impersonatedBy || null });
-      return res.status(200).json({ orders, impersonatedBy: session.impersonatedBy || null }); // portal shows order picker
+      if (orders.length === 1) return res.status(200).json({ order: toCustomerOrder(orders[0]), impersonatedBy: session.impersonatedBy || null });
+      return res.status(200).json({ orders: orders.map(toCustomerOrder), impersonatedBy: session.impersonatedBy || null }); // portal shows order picker
     } catch (err) {
       console.error('Order GET error:', err);
       return res.status(500).json({ error: 'Failed to load order. Please try again.' });

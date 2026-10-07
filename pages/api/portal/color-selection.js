@@ -15,7 +15,7 @@ import { getOrderById, postTaggedUpdate, markSectionCompleteSafe, writeColorSele
 import { requiredColorInputs } from '../../../lib/colorRequirements';
 import { validatePresentSelections, validateColorSelectionData, computeTotalUpcharge, sanitizeSelections } from '../../../lib/colorSelectionValidation';
 import { reportCriticalFailure } from '../../../lib/monitoring';
-import { requireCustomerSession, loadSessionOrder, enforceRateLimit } from '../../../lib/apiAuth';
+import { requireCustomerSession, loadSessionOrder, enforceRateLimit, rejectOrderMismatch, staffAttribution, sessionActorLabel } from '../../../lib/apiAuth';
 import { notifyTeamColorsConfirmed } from '../../../lib/email';
 import { syncConfirmedColorsToBoards } from '../../../lib/colorBoardSync';
 
@@ -107,9 +107,26 @@ function withOrderLock(orderId, fn) {
 // the real bug this fixes).
 export { validateColorSelectionData, computeTotalUpcharge };
 
+// AUDIT-2026-10-06: every "already confirmed" rejection carries a machine-
+// readable code + the stored confirmedAt, so the picker can switch to its
+// confirmed view instead of just showing an error toast.
+function rejectAlreadyConfirmed(res, confirmedAt) {
+  return res.status(409).json({
+    error: 'Color selections were already confirmed and cannot be changed. Contact us if you need to make a correction.',
+    code: 'ALREADY_CONFIRMED',
+    confirmedAt,
+  });
+}
+
 export default async function handler(req, res) {
   const session = await requireCustomerSession(req, res);
   if (!session) return;
+
+  // AUDIT-2026-10-06: a POST from a tab still showing a different order than
+  // this browser's session is now bound to (customer switched orders in
+  // another tab) → 409 ORDER_MISMATCH before anything is read or written.
+  // Absent orderId → allowed, for tabs opened before the frontend sent it.
+  if (req.method === 'POST' && !rejectOrderMismatch(req, session, res)) return;
 
   const order = await loadSessionOrder(session, res, { logPrefix: 'color-selection' });
   if (!order) return;
@@ -148,10 +165,7 @@ export default async function handler(req, res) {
   // customer who needs a change after confirming contacts staff, same as
   // any other locked portal field.
   if (order.colorSelectionSnapshot?.confirmedAt) {
-    return res.status(409).json({
-      error: 'Color selections were already confirmed and cannot be changed. Contact us if you need to make a correction.',
-      confirmedAt: order.colorSelectionSnapshot.confirmedAt,
-    });
+    return rejectAlreadyConfirmed(res, order.colorSelectionSnapshot.confirmedAt);
   }
 
   const { selections, confirm } = req.body || {};
@@ -225,10 +239,7 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Error saving. Please try again.' });
     }
     if (freshOrder?.colorSelectionSnapshot?.confirmedAt) {
-      return res.status(409).json({
-        error: 'Color selections were already confirmed and cannot be changed. Contact us if you need to make a correction.',
-        confirmedAt: freshOrder.colorSelectionSnapshot.confirmedAt,
-      });
+      return rejectAlreadyConfirmed(res, freshOrder.colorSelectionSnapshot.confirmedAt);
     }
 
     try {
@@ -288,7 +299,9 @@ export default async function handler(req, res) {
         await postTaggedUpdate(
           order.id,
           'PORTAL: Color Selections',
-          `Customer confirmed color/finish selections on ${new Date().toLocaleDateString()}. Total upcharge: $${totalUpcharge}.`
+          // AUDIT-2026-10-06: attributed to staff when confirmed from a
+          // "view as customer" session (lib/apiAuth.js staffAttribution).
+          `Customer confirmed color/finish selections on ${new Date().toLocaleDateString()}. Total upcharge: $${totalUpcharge}.${staffAttribution(session)}`
         );
       } catch (err) {
         auditUpdatePending = true;
@@ -303,7 +316,7 @@ export default async function handler(req, res) {
       // FIRST — they are the billing signal and the customer-visible state, so
       // nothing slower (the board fill below) can ever keep them from landing.
       // Never fails the confirm; a failed email with money attached is escalated.
-      await notifyTeamColorsConfirmed(order.name, session.email, totalUpcharge).catch(async (err) => {
+      await notifyTeamColorsConfirmed(order.name, sessionActorLabel(session), totalUpcharge).catch(async (err) => {
         console.error('color-selection: confirm email failed:', err.message);
         if (totalUpcharge > 0) {
           await reportCriticalFailure('color-selection-confirm-email',

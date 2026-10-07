@@ -8,8 +8,8 @@
 
 import { parse } from 'cookie';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { setFreightNotifyPreference } from '../../../lib/monday';
-import { enforceRateLimit } from '../../../lib/apiAuth';
+import { setFreightNotifyPreference, orderIdBelongsToEmail } from '../../../lib/monday';
+import { enforceRateLimit, ORDER_NOT_OWNED_ERROR } from '../../../lib/apiAuth';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -28,12 +28,25 @@ export default async function handler(req, res) {
   // email-upload-link.js's stricter one.
   if (!enforceRateLimit(res, `freight-notify-preference:${session.email}`, { maxRequests: 20, windowMs: 60_000 })) return;
 
+  // AUDIT-2026-10-06: a multi-order customer's session has NO orderId until
+  // they pick one (verify-code.js / select-order.js) — this used to
+  // call setFreightNotifyPreference(undefined, …) and surface a raw Monday
+  // error as a 500 (and an alert email).
+  if (!session.orderId) return res.status(400).json({ error: 'Please select an order first.' });
+
   const { enabled } = req.body || {};
   if (typeof enabled !== 'boolean') {
     return res.status(400).json({ error: 'enabled (boolean) required.' });
   }
 
   try {
+    // AUDIT-2026-10-06 (follow-up): same ownership re-check as
+    // loadSessionOrder, via a one-column read (this route never loaded the
+    // order, so a session whose order was re-pointed at another customer
+    // could still toggle that customer's shipment emails).
+    if (!(await orderIdBelongsToEmail(session.orderId, session.email))) {
+      return res.status(401).json({ error: ORDER_NOT_OWNED_ERROR, code: 'ORDER_NOT_OWNED' });
+    }
     await setFreightNotifyPreference(session.orderId, enabled);
     return res.status(200).json({ ok: true, enabled });
   } catch (err) {

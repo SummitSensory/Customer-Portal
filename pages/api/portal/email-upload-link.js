@@ -7,9 +7,9 @@
 
 import { parse } from 'cookie';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { getOrderById } from '../../../lib/monday';
+import { getOrderById, orderMatchesEmail } from '../../../lib/monday';
 import { sendUploadLinkEmail } from '../../../lib/email';
-import { enforceRateLimit } from '../../../lib/apiAuth';
+import { enforceRateLimit, ORDER_NOT_OWNED_ERROR } from '../../../lib/apiAuth';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -24,10 +24,20 @@ export default async function handler(req, res) {
   // session could loop this to trigger unlimited outbound Resend sends.
   if (!enforceRateLimit(res, `email-upload-link:${session.email}`, { maxRequests: 5, windowMs: 60_000 })) return;
 
+  // AUDIT-2026-10-06: a multi-order customer's session has NO orderId until
+  // they pick one (verify-code.js / select-order.js) — getOrderById(undefined)
+  // just produced a Monday error/500.
+  if (!session.orderId) return res.status(400).json({ error: 'Please select an order first.' });
+
   let order;
   try {
     order = await getOrderById(session.orderId);
     if (!order) return res.status(404).json({ error: 'Order not found.' });
+    // AUDIT-2026-10-06: same ownership re-check as lib/apiAuth.js's
+    // loadSessionOrder (shared orderMatchesEmail rule).
+    if (!orderMatchesEmail(order, session.email)) {
+      return res.status(401).json({ error: ORDER_NOT_OWNED_ERROR, code: 'ORDER_NOT_OWNED' });
+    }
   } catch (err) {
     console.error('email-upload-link: failed to load order:', err);
     return res.status(500).json({ error: 'Failed to load order.' });

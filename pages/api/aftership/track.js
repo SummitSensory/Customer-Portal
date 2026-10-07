@@ -11,8 +11,9 @@ import { parse } from 'cookie';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { getOrderById, resolveDeliveryContacts } from '../../../lib/monday';
+import { getOrderById, resolveDeliveryContacts, orderMatchesEmail } from '../../../lib/monday';
 import { trackShipment, buildTrackingTitle, buildCustomFields } from '../../../lib/aftership';
+import { ORDER_NOT_OWNED_ERROR } from '../../../lib/apiAuth';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end();
@@ -31,7 +32,21 @@ export default async function handler(req, res) {
     const customerSession = await verifyCustomerSession(cookies[SESSION_COOKIE]);
     if (!customerSession) return res.status(401).json({ error: 'Not authenticated.' });
 
-    order = await getOrderById(customerSession.orderId);
+    // AUDIT-2026-10-06: no order picked yet (multi-order session) → clear
+    // 400 instead of getOrderById(undefined); and the order read is now
+    // inside a try — it used to sit outside every try/catch, so a Monday
+    // blip crashed the route (unhandled 500 + urgent alert email).
+    if (!customerSession.orderId) return res.status(400).json({ error: 'Please select an order first.' });
+    try {
+      order = await getOrderById(customerSession.orderId);
+    } catch (err) {
+      console.warn('AfterShip track: failed to load order:', err.message);
+      return res.status(503).json({ error: 'Tracking is temporarily unavailable. Please try again shortly.' });
+    }
+    // Same ownership rule as lib/apiAuth.js's loadSessionOrder.
+    if (order && !orderMatchesEmail(order, customerSession.email)) {
+      return res.status(401).json({ error: ORDER_NOT_OWNED_ERROR, code: 'ORDER_NOT_OWNED' });
+    }
 
     const matsNumbers = order?.matTracking && order.matTracking !== 'N/A'
       ? order.matTracking.split(',').map(t => t.trim())

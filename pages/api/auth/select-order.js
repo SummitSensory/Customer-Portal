@@ -16,7 +16,7 @@
 
 import { parse, serialize } from 'cookie';
 import { verifyCustomerSession, signCustomerSession, signImpersonationSession, SESSION_COOKIE, cookieOptions } from '../../../lib/auth';
-import { getOrdersByEmail } from '../../../lib/monday';
+import { getOrdersByEmail, getOrderById, toCustomerOrder } from '../../../lib/monday';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -61,5 +61,20 @@ export default async function handler(req, res) {
   const maxAge = session.impersonatedBy ? 60 * 60 * 2 : 60 * 60 * 24 * 7;
   res.setHeader('Set-Cookie', serialize(SESSION_COOKIE, sessionToken, cookieOptions(maxAge)));
 
-  return res.status(200).json({ ok: true, order: match });
+  // AUDIT-2026-10-06: `match` is a getAllOrders() list row, which has NO
+  // mirror columns (contact/POC/tracking — see ORDER_ITEM_FIELDS in
+  // lib/monday.js), so the portal rendered the freshly-picked order with
+  // those fields blank until its next full reload. Return the full
+  // getOrderById() object instead; fall back to the list row only if that
+  // read fails, since the session is already re-bound and the selection
+  // itself succeeded. Both go through toCustomerOrder() (drops admin-only
+  // rawColumns/files).
+  let fullOrder = null;
+  try {
+    fullOrder = await getOrderById(match.id);
+  } catch (err) {
+    console.warn('select-order: full order read failed, returning list row instead:', err.message);
+  }
+
+  return res.status(200).json({ ok: true, order: toCustomerOrder(fullOrder || match) });
 }

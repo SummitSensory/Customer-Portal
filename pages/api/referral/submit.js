@@ -10,9 +10,10 @@
 
 import { parse } from 'cookie';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { getOrderById, createReferralItem, findRecentReferral } from '../../../lib/monday';
+import { getOrderById, createReferralItem, findRecentReferral, orderMatchesEmail, postTaggedUpdate } from '../../../lib/monday';
 import { notifyTeamNewReferral } from '../../../lib/email';
 import { allowRequest } from '../../../lib/rateLimit';
+import { ORDER_NOT_OWNED_ERROR, sessionActorLabel } from '../../../lib/apiAuth';
 
 // PORTAL-063: findRecentReferral()'s own dedupe (lib/monday.js, PORTAL-013)
 // is a read-then-create check against Monday — not atomic. A true
@@ -53,6 +54,11 @@ export default async function handler(req, res) {
     return res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' });
   }
 
+  // AUDIT-2026-10-06: a multi-order customer's session has NO orderId until
+  // they pick one (verify-code.js / select-order.js) — without this, the
+  // lock key, dedupe lookup and getOrderById all ran against "undefined".
+  if (!session.orderId) return res.status(400).json({ error: 'Please select an order first.' });
+
   const { friendName, friendEmail, friendPhone, message } = req.body || {};
 
   if (!friendName || !friendEmail) {
@@ -78,6 +84,11 @@ export default async function handler(req, res) {
     try {
       order = await getOrderById(session.orderId);
       if (!order) return res.status(404).json({ error: 'Order not found.' });
+      // AUDIT-2026-10-06: same ownership re-check as lib/apiAuth.js's
+      // loadSessionOrder (shared orderMatchesEmail rule).
+      if (!orderMatchesEmail(order, session.email)) {
+        return res.status(401).json({ error: ORDER_NOT_OWNED_ERROR, code: 'ORDER_NOT_OWNED' });
+      }
     } catch (err) {
       console.error('Referral: failed to load order:', err);
       return res.status(500).json({ error: 'Failed to load order.' });
@@ -112,7 +123,16 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Failed to submit referral. Please try again or contact us directly.' });
     }
 
-    notifyTeamNewReferral(order.name, session.email, friendName, friendEmail, referralItemId).catch(console.error);
+    // AUDIT-2026-10-06: a referral submitted from a staff "view as
+    // customer" session is attributed to that staff member in the team
+    // email and in an audit update on the order. The Referrals board row
+    // keeps the customer as the referrer (the reward is still theirs).
+    if (session.impersonatedBy) {
+      postTaggedUpdate(order.id, 'PORTAL: Staff Action While Viewing As Customer',
+        `${session.impersonatedBy} submitted a referral (${friendName}, ${friendEmail}) on behalf of the customer (${session.email}) on ${new Date().toLocaleString()}.`
+      ).catch(console.error);
+    }
+    notifyTeamNewReferral(order.name, sessionActorLabel(session), friendName, friendEmail, referralItemId).catch(console.error);
 
     return res.status(200).json({ ok: true });
   } finally {

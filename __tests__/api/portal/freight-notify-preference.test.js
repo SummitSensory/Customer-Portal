@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockSetFreightNotifyPreference = vi.fn().mockResolvedValue(undefined);
+const mockOrderIdBelongsToEmail = vi.fn().mockResolvedValue(true);
 vi.mock('../../../lib/monday', () => ({
   setFreightNotifyPreference: (...args) => mockSetFreightNotifyPreference(...args),
+  orderIdBelongsToEmail: (...args) => mockOrderIdBelongsToEmail(...args),
 }));
 
 const mockVerifyCustomerSession = vi.fn();
@@ -32,6 +34,7 @@ describe('POST /api/portal/freight-notify-preference', () => {
     mockSetFreightNotifyPreference.mockReset().mockResolvedValue(undefined);
     mockVerifyCustomerSession.mockReset();
     mockAllowRequest.mockReset().mockReturnValue(true);
+    mockOrderIdBelongsToEmail.mockReset().mockResolvedValue(true);
   });
 
   it('rejects a non-POST method', async () => {
@@ -99,6 +102,21 @@ describe('POST /api/portal/freight-notify-preference', () => {
     expect(mockSetFreightNotifyPreference).not.toHaveBeenCalledWith('someone-elses-order-999', expect.anything());
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({ ok: true, enabled: true });
+  });
+
+  // AUDIT-2026-10-06 (follow-up): same ownership re-check as loadSessionOrder.
+  it('refuses with 401 ORDER_NOT_OWNED when the order now belongs to another email', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockOrderIdBelongsToEmail.mockResolvedValue(false);
+
+    const req = { method: 'POST', headers: {}, body: { enabled: true } };
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(mockOrderIdBelongsToEmail).toHaveBeenCalledWith('real-order-123', 'a@b.com');
+    expect(res.statusCode).toBe(401);
+    expect(res.body.code).toBe('ORDER_NOT_OWNED');
+    expect(mockSetFreightNotifyPreference).not.toHaveBeenCalled();
   });
 
   it('returns 500 without crashing when the Monday write fails', async () => {

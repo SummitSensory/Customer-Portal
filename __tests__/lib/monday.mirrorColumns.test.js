@@ -48,6 +48,7 @@ describe('mirror columns', () => {
       [COLS.colorFrameType]: 'Adventure',
       [COLS.colorFoundationMat]: 'Included',
       [COLS.colorSoarMat]: 'NOT Included',
+      [COLS.colorSoftSteps3]: 'Included',
     }));
 
     const order = await getOrderById('12964423844');
@@ -59,6 +60,8 @@ describe('mirror columns', () => {
     expect(order.colorFrameType).toBe('Adventure');
     expect(order.colorGates.foundationMat).toBe('Included');
     expect(order.colorGates.soarMat).toBe('NOT Included');
+    expect(bodies[0].query).toContain(COLS.colorSoftSteps3);
+    expect(order.colorGates.softSteps3).toBe('Included');
   });
 
   it('an order linked to two deals: any "Included" wins, agreeing values collapse', async () => {

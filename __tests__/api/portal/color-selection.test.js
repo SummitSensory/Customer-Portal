@@ -9,6 +9,10 @@ vi.mock('../../../lib/monday', () => ({
   postTaggedUpdate: (...args) => mockPostTaggedUpdate(...args),
   markSectionCompleteSafe: (...args) => mockMarkSectionCompleteSafe(...args),
   writeColorSelectionSnapshot: (...args) => mockWriteColorSelectionSnapshot(...args),
+  // AUDIT-2026-10-06: lib/apiAuth.js re-checks order ownership via this;
+  // the fixture orders here carry no customerEmail, so it's stubbed to
+  // "owned" (lib/apiAuth.test.js covers the real check directly).
+  orderMatchesEmail: () => true,
 }));
 
 const mockVerifyCustomerSession = vi.fn();
@@ -216,25 +220,54 @@ describe('handler — auth and customer isolation', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('ONLY ever loads the order bound to the session — a client-supplied orderId in the body is ignored entirely', async () => {
+  // AUDIT-2026-10-06: a body orderId used to be silently ignored. It is
+  // still never USED to pick the order (isolation comes only from
+  // session.orderId) — but a mismatch now means a stale tab for a different
+  // order, so it's rejected with 409 ORDER_MISMATCH before anything is read
+  // or written, instead of saving onto whatever order the session is bound to.
+  it('rejects a body orderId that differs from the session\'s order with 409 ORDER_MISMATCH — nothing read or written', async () => {
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
     mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
 
     const req = {
       method: 'POST',
       headers: {},
-      // An attacker-style attempt to target a different order via the body.
-      // The handler must never read this field — isolation comes entirely
-      // from the server-derived session.orderId, never from client input.
       body: { orderId: 'someone-elses-order-999', selections: fullValidSelections(), confirm: false },
     };
     const res = makeRes();
     await handler(req, res);
 
+    expect(res.statusCode).toBe(409);
+    expect(res.body.code).toBe('ORDER_MISMATCH');
+    expect(mockGetOrderById).not.toHaveBeenCalled();
+    expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('accepts a matching body orderId and still only ever loads the session\'s order', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const req = { method: 'POST', headers: {}, body: { orderId: 'real-order-123', selections: fullValidSelections(), confirm: false } };
+    const res = makeRes();
+    await handler(req, res);
+
     expect(mockGetOrderById).toHaveBeenCalledWith('real-order-123');
-    expect(mockGetOrderById).not.toHaveBeenCalledWith('someone-elses-order-999');
     expect(mockWriteColorSelectionSnapshot).toHaveBeenCalledWith('real-order-123', expect.anything());
     expect(res.statusCode).toBe(200);
+  });
+
+  it('the already-confirmed 409 carries code ALREADY_CONFIRMED and confirmedAt (AUDIT-2026-10-06)', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById.mockResolvedValue({
+      id: 'real-order-123',
+      productType: ADVENTURE_SERIES,
+      colorSelectionSnapshot: { selections: fullValidSelections(), confirmedAt: '2026-08-30T00:00:00.000Z' },
+    });
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: false } }, res);
+    expect(res.statusCode).toBe(409);
+    expect(res.body.code).toBe('ALREADY_CONFIRMED');
+    expect(res.body.confirmedAt).toBe('2026-08-30T00:00:00.000Z');
   });
 
   it('rejects a fabricated catalog code on an ordinary AUTOSAVE (confirm:false) — never prices or persists it (regression, found in code review 2026-09-01)', async () => {

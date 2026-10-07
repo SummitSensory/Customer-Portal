@@ -244,7 +244,7 @@ function BrandingSettings() {
           <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--moss)', border: '2px solid var(--ink)' }} />
           <code style={{ fontSize: 12 }}>--moss: {mossColor || '…'}</code>
         </div>
-        <div className="hint">Update the <code>--moss</code> variable in globals.css to change the primary brand color — this swatch always reflects the live value, it can't go stale.</div>
+        <div className="hint">Update the <code>--moss</code> variable in globals.css to change the primary brand color — this swatch always reflects the live value, it can&apos;t go stale.</div>
       </div>
       <div className="alert info" style={{ marginTop: 16 }}>
         <span>ℹ️</span>

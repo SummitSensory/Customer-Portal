@@ -12,6 +12,7 @@ const order = {
     adventureMat: 'Included', climbingWallColor: 'Included', climbingWallMat: 'Included',
     wallPaddingMat: 'Included', slideColor: 'Included', ballPitMat: 'Included',
     palisadesMat: 'Included', climbSlideMat: 'Included', foundationMat: 'Included',
+    softSteps2: 'Included', softSteps3: 'Included',
   },
 };
 const selections = {
@@ -34,6 +35,14 @@ const selections = {
     climb_slide_piece_3: { brand: 'vinyl', code: 'Kelly Green' },
   },
   foundation_mat: { foundation_mat: { brand: 'foundation', code: 'Red/Blue' } },
+  soft_steps_2_mat: {
+    soft_steps_2: { brand: 'vinyl', code: 'Purple' },
+    soft_steps_2_piece_2: { brand: 'vinyl', code: 'Lime' },
+  },
+  soft_steps_3_mat: {
+    soft_steps_3: { brand: 'vinyl', code: 'Tan' },
+    soft_steps_3_piece_2: { brand: 'vinyl', code: 'Navy' },
+  },
 };
 
 describe('planBoardWrites', () => {
@@ -49,6 +58,7 @@ describe('planBoardWrites', () => {
     expect(plan.gb.text_mkkdxjxv).toBe('P000-BK247'); // climbing wall
     expect(plan.gb.status_mkkdc95c).toEqual({ label: 'Green' });
     expect(plan.gb.project_status).toEqual({ label: 'Received' });
+    expect(plan.gb.color_mm7mywjv).toEqual({ label: 'Portal' }); // Form of Submission
   });
 
   it('R: one text column per area, the main status, form label and Received', () => {
@@ -58,6 +68,7 @@ describe('planBoardWrites', () => {
     expect(plan.r.status9__1).toEqual({ label: 'Lime' }); // main = Adventure Mat System
     expect(plan.r.color_Mjj63A3N).toEqual({ label: 'Adventure Series' });
     expect(plan.r.project_status).toEqual({ label: 'Received' });
+    expect(plan.r.color_mm7ms39b).toEqual({ label: 'Portal' }); // Form of Submission
   });
 
   it('Accessories: ball pit, 7 Palisades pieces, 3 climb & slide pieces, foundation, each product Received', () => {
@@ -73,6 +84,26 @@ describe('planBoardWrites', () => {
     expect(plan.acc.color_mm7gvxhs).toEqual({ label: 'Received' });
     expect(plan.acc.text_mm7e27px).toBe('Red/Blue');
     expect(plan.acc.color_mm7eb6xn).toEqual({ label: 'Received' });
+    expect(plan.acc.text_mm7qs549).toBe('Purple'); // Soft Steps (2 Steps) - Mat 1
+    expect(plan.acc.text_mm7vjys0).toBe('Lime'); // Soft Steps (2 Steps) - Mat 2
+    expect(plan.acc.color_mm7qzkd4).toEqual({ label: 'Received' });
+    expect(plan.acc.text_mm7qq3wq).toBe('Tan'); // Soft Steps (3 Steps) - Mat 1
+    expect(plan.acc.text_mm7vrx44).toBe('Navy'); // Soft Steps (3 Steps) - Mat 2
+    expect(plan.acc.color_mm7qeb43).toEqual({ label: 'Received' });
+    expect(plan.acc.color_mm7mkrfb).toEqual({ label: 'Portal' }); // Form of Submission
+  });
+
+  it('R: Soar column wraps and floor padding each get their own column', () => {
+    const soar = { id: '2', productType: SOAR, colorFrameType: 'Soar', colorGates: { soarMat: 'Included' } };
+    const { plan: p } = planBoardWrites(soar, requiredColorInputs(soar), {
+      soar_mat: {
+        column_wraps: { brand: 'vinyl', code: 'Navy' },
+        floor_padding: { brand: 'vinyl', code: 'Tan' },
+      },
+    });
+    expect(p.r.text_mm7g4k9f).toBe('Navy'); // "Soar Column Wraps Color"
+    expect(p.r.text_mm7g3sm1).toBe('Tan'); // "Soar Floor Padding Color"
+    expect(p.r.status9__1).toEqual({ label: 'Navy' });
   });
 
   it('only writes parts on the current checklist, and skips boards with nothing to write', () => {
@@ -183,7 +214,7 @@ describe('syncConfirmedColorsToBoards', () => {
     const res = await syncConfirmedColorsToBoards(soarOrder, requiredColorInputs(soarOrder), soarSel);
     expect(res.boards.gb).toEqual({ itemId: '777', created: true });
     const create = calls.find((c) => c.query.includes('create_item'));
-    expect(create.variables.n).toBe('Acme Soar — portal');
+    expect(create.variables.n).toBe('Acme Soar');
     const v = JSON.parse(create.variables.v);
     expect(v[BOARDS.gb.backLink]).toEqual({ item_ids: [555] });
     expect(v[BOARDS.gb.dealsLink]).toEqual({ item_ids: [42] });

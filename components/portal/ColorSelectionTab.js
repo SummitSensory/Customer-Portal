@@ -30,15 +30,34 @@ async function fetchSelection(apiBase) {
   return res.json();
 }
 
-async function saveSelection(apiBase, body) {
+// AUDIT-2026-10-06: shown on a 409 ORDER_MISMATCH — the session was re-bound
+// to a different order (another tab/window) after this page loaded, so the
+// server refused to write these selections onto the wrong order.
+export const ORDER_MISMATCH_MESSAGE = 'This page is out of date — your account switched to a different order in another tab or window. Please reload the page and try again.';
+
+// AUDIT-2026-10-06: failures now carry `.status`, `.code` and the parsed
+// `.body` (not just a message string) so callers can react to specific
+// rejections — 409 ALREADY_CONFIRMED (switch to the locked view using the
+// server's confirmedAt) and 409 ORDER_MISMATCH (tell the customer to reload)
+// — instead of only toasting. A non-JSON error body (Vercel 413/504 pages)
+// no longer leaks a raw parser message.
+export async function saveSelection(apiBase, body) {
   const res = await fetch(apiBase, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Error saving. Please try again.');
-  return data;
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    let message = data?.error || 'Error saving. Please try again.';
+    if (res.status === 409 && data?.code === 'ORDER_MISMATCH') message = ORDER_MISMATCH_MESSAGE;
+    const err = new Error(message);
+    err.status = res.status;
+    err.code = data?.code;
+    err.body = data;
+    throw err;
+  }
+  return data || {};
 }
 
 function partIsFilled(selections, inputKey, part) {
@@ -162,16 +181,45 @@ function SwatchGrid({ colors, selected, onSelect, onInspect, otherPicks = [] }) 
 // small checkmark on the swatch itself. Shown fresh after every click (see
 // justPicked in the pickers below); "Keep browsing" just dismisses it in
 // case they want to compare against another color instead of moving on.
-function ContinueBar({ color, onContinue, onDismiss }) {
+//
+// AUDIT-2026-10-06: this used to say "selected — saved" the instant a swatch
+// was clicked, before the autosave had even been sent — and kept saying it
+// if the save then failed (the pick is reverted, but the bar didn't know).
+// `status` now tracks the real save for this pick: 'saving' → 'saved', or
+// 'failed'.
+function ContinueBar({ color, status = 'saving', onContinue, onDismiss }) {
+  const statusText = status === 'saved' ? 'saved' : status === 'failed' ? 'not saved' : 'saving…';
   return (
     <div className="cs-continue-bar" role="status">
-      <span className="cs-continue-msg">✓ <strong>{displayColorName(color)}</strong> selected — saved</span>
+      <span className="cs-continue-msg">
+        {status === 'failed' ? '⚠️' : '✓'} <strong>{displayColorName(color)}</strong> selected — {statusText}
+      </span>
       <div className="cs-continue-actions">
         <button type="button" className="btn btn-ghost btn-sm" onClick={onDismiss}>Keep browsing</button>
-        <button type="button" className="btn btn-sun btn-sm" onClick={onContinue}>Select &amp; continue →</button>
+        <button type="button" className="btn btn-sun btn-sm" onClick={onContinue} disabled={status !== 'saved'}>Select &amp; continue →</button>
       </div>
     </div>
   );
+}
+
+// AUDIT-2026-10-06: tracks the real save status of the most recent pick in
+// a part picker, for ContinueBar. `onChange` is handlePartChange, which
+// resolves true once that pick's autosave succeeded and false if it failed
+// (and was reverted). A pick superseded by a newer one never overwrites
+// the newer pick's status.
+function usePickWithSaveStatus(onChange) {
+  const [justPicked, setJustPicked] = useState(null);
+  const [pickStatus, setPickStatus] = useState('saving');
+  const pickSeqRef = useRef(0);
+  function pick(color, value) {
+    const seq = ++pickSeqRef.current;
+    setJustPicked(color);
+    setPickStatus('saving');
+    Promise.resolve(onChange(value))
+      .then((ok) => { if (pickSeqRef.current === seq) setPickStatus(ok === false ? 'failed' : 'saved'); })
+      .catch(() => { if (pickSeqRef.current === seq) setPickStatus('failed'); });
+  }
+  return { justPicked, pickStatus, pick, dismiss: () => setJustPicked(null) };
 }
 
 // Reference strip of what's already been picked for the other parts of
@@ -292,11 +340,10 @@ function StructurePartPicker({ part, selection, onChange, onBack, onContinue, in
   const [finish, setFinish] = useState('');
   const [family, setFamily] = useState('');
   const [inspecting, setInspecting] = useState(null);
-  const [justPicked, setJustPicked] = useState(null);
+  const { justPicked, pickStatus, pick, dismiss } = usePickWithSaveStatus(onChange);
 
   function handleSelect(c) {
-    onChange({ brand: c.brand, code: c.code || c.sku });
-    setJustPicked(c);
+    pick(c, { brand: c.brand, code: c.code || c.sku });
   }
 
   const otherPicks = useMemo(() => getOtherPicks(input, selections, part), [input, selections, part]);
@@ -366,7 +413,7 @@ function StructurePartPicker({ part, selection, onChange, onBack, onContinue, in
       />
       <InspectModal color={inspecting} onClose={() => setInspecting(null)} />
       {justPicked && (
-        <ContinueBar color={justPicked} onContinue={onContinue} onDismiss={() => setJustPicked(null)} />
+        <ContinueBar color={justPicked} status={pickStatus} onContinue={onContinue} onDismiss={dismiss} />
       )}
     </>
   );
@@ -386,15 +433,14 @@ const DEFAULT_FLAT_SWATCH_CATALOG = { list: listVinylColors, brand: 'vinyl' };
 function MatPadPartPicker({ part, selection, onChange, onBack, onContinue, input, selections }) {
   const [search, setSearch] = useState('');
   const [inspecting, setInspecting] = useState(null);
-  const [justPicked, setJustPicked] = useState(null);
+  const { justPicked, pickStatus, pick, dismiss } = usePickWithSaveStatus(onChange);
   const { list: getList, brand } = FLAT_SWATCH_CATALOG[input.input] || DEFAULT_FLAT_SWATCH_CATALOG;
   const list = useMemo(() => getList(), [getList]);
   const filtered = list.filter((c) => !search.trim() || c.name.toLowerCase().includes(search.trim().toLowerCase()));
   const otherPicks = useMemo(() => getOtherPicks(input, selections, part), [input, selections, part]);
 
   function handleSelect(c) {
-    onChange({ brand, code: c.name });
-    setJustPicked(c);
+    pick(c, { brand, code: c.name });
   }
 
   return (
@@ -419,7 +465,7 @@ function MatPadPartPicker({ part, selection, onChange, onBack, onContinue, input
       />
       <InspectModal color={inspecting} onClose={() => setInspecting(null)} />
       {justPicked && (
-        <ContinueBar color={justPicked} onContinue={onContinue} onDismiss={() => setJustPicked(null)} />
+        <ContinueBar color={justPicked} status={pickStatus} onContinue={onContinue} onDismiss={dismiss} />
       )}
     </>
   );
@@ -794,9 +840,42 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   // value is currently there.
   const partGenerationRef = useRef({});
 
+  // AUDIT-2026-10-06: every save carries the order this tab was rendered
+  // for, so the server can refuse it (409 ORDER_MISMATCH) if the session
+  // has been re-bound to another order since, rather than writing these
+  // selections onto the wrong order. (The portal remounts this tab per
+  // order — see the keyed <main> in pages/portal/index.js.)
+  const orderId = order?.id;
   const queueSave = useCallback((confirm) => {
-    return enqueueSaveRef.current(() => ({ selections: latestSelectionsRef.current, confirm }));
-  }, []);
+    return enqueueSaveRef.current(() => (
+      orderId ? { selections: latestSelectionsRef.current, confirm, orderId } : { selections: latestSelectionsRef.current, confirm }
+    ));
+  }, [orderId]);
+
+  // AUDIT-2026-10-06: the server answers 409 ALREADY_CONFIRMED once this
+  // order's selections are locked (confirmed in another tab/device, or by a
+  // confirm whose response never arrived). That used to be just a toast,
+  // leaving the customer in an editable picker the server will never accept
+  // a write from. Switch to the locked ConfirmedView instead, re-reading the
+  // server's real (confirmed) selections so the view shows what's actually
+  // on file rather than this tab's unsaved local picks. Returns true if it
+  // handled the error.
+  const handleAlreadyConfirmed = useCallback((err) => {
+    if (err?.status !== 409 || err?.code !== 'ALREADY_CONFIRMED') return false;
+    setConfirmedAt(err.body?.confirmedAt || new Date().toISOString());
+    setView('checklist');
+    setActivePart(null);
+    showToast('These color selections were already confirmed and are now locked.');
+    fetchSelection(apiBase)
+      .then((data) => {
+        const loaded = data.selections || {};
+        latestSelectionsRef.current = loaded;
+        setSelections(loaded);
+        if (data.confirmedAt) setConfirmedAt(data.confirmedAt);
+      })
+      .catch(() => {});
+    return true;
+  }, [apiBase, showToast]);
 
   const handlePartChange = useCallback(async (inputKey, part, value) => {
     // Real gap found by independent code review (2026-09-02): a failed
@@ -820,7 +899,9 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     setSelections(next);
     try {
       await queueSave(false);
+      return true; // AUDIT-2026-10-06: lets ContinueBar show "saved" only once it really is
     } catch (err) {
+      if (handleAlreadyConfirmed(err)) return false;
       // Real gap found by independent code review (2026-09-09), and refined
       // 2026-09-21 after independent verification caught the value-equality
       // version above still failing on a pick/re-pick/pick-original-again
@@ -839,8 +920,9 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
         setSelections(reverted);
       }
       showToast(err.message || 'Error saving — your last pick was not saved. Please try again.');
+      return false;
     }
-  }, [queueSave, showToast]);
+  }, [queueSave, showToast, handleAlreadyConfirmed]);
 
   // Drives "Select & continue" — jumps straight to the next part still
   // needing a color instead of leaving the customer to find their own way
@@ -909,13 +991,20 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
       // behind) a still-in-flight autosave from a selection made moments
       // earlier.
       const result = await queueSave(true);
-      markComplete('color', !result.checklistSyncPending);
-      setConfirmedAt(new Date().toISOString());
+      // AUDIT-2026-10-06: tagged with the order this confirm was for, so
+      // the portal ignores it if the customer has since switched orders.
+      markComplete('color', !result.checklistSyncPending, orderId);
+      setConfirmedAt(result.confirmedAt || new Date().toISOString());
       showToast(result.checklistSyncPending
         ? 'Saved — confirming with our system now. This may take a moment to show as complete.'
         : 'Color selections confirmed.');
       onNext();
     } catch (err) {
+      // Already locked server-side: show the locked view, don't mark
+      // anything complete from here (Monday's own status column is the
+      // record; the portal re-reads it on next load). ORDER_MISMATCH falls
+      // through to the toast with its reload message.
+      if (handleAlreadyConfirmed(err)) return;
       showToast(err.message || 'Error saving. Please try again.');
     } finally {
       setConfirming(false);
@@ -993,6 +1082,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
       COLOR_INPUT.CLIMBING_WALL_MAT, COLOR_INPUT.SOAR_MAT, COLOR_INPUT.FLEX_MAT,
       COLOR_INPUT.PALISADES_MAT, COLOR_INPUT.BALL_PIT, COLOR_INPUT.SLIDE,
       COLOR_INPUT.FOUNDATION_MAT, COLOR_INPUT.CLIMB_SLIDE,
+      COLOR_INPUT.SOFT_STEPS_2, COLOR_INPUT.SOFT_STEPS_3,
     ];
     const PartPicker = FLAT_SWATCH_INPUT_TYPES.includes(input.input) ? MatPadPartPicker : StructurePartPicker;
     body = (

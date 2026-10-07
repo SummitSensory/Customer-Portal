@@ -2,75 +2,74 @@
  * GET /api/cron/invite-safety-net
  * Vercel Cron Job — runs every 6 hours.
  *
- * PORTAL-058 — PAUSED 2026-09-18 (removed from vercel.json's crons list,
- * endpoint itself left intact): its first real run flagged 263 of 378 orders
- * on the board — an obvious false-positive flood, not 263 real gaps. Root
- * cause: the "has a real Manufacturing Phase value set at all" check below
- * treats ANY non-blank status as "should have an invite by now," but the
- * real statuses seen in that run include values like "Wait to Push Order,"
- * "No Action Needed," and "GB Fab Details Sent" — pre-sales/administrative
- * pipeline stages on this same shared board, not confirmed customer orders
- * past the "Incoming Order" trigger point this cron's own header describes.
- * STATUS_STAGES (lib/monday.js) only documents 5 labels; the real Manufacturing
- * Phase column clearly has many more, undocumented here — the exact class of
- * "verify against the real Monday column values first" mistake CLAUDE.md
- * warns about. Needs the real, complete list of Manufacturing Phase values
- * (and which ones actually follow "Incoming Order" in the pipeline) before
- * this can be fixed correctly — do not re-enable by guessing at a whitelist.
- *
  * Direct requirement from Bryan (2026-09-11): the customer portal invite is
  * the one thing that starts the entire customer-facing setup process — if
  * it's never sent, the customer never even knows the portal exists, and
  * Summit ends up silently waiting on delivery/billing/color information the
- * customer was never actually asked for. Today that invite is triggered
- * either by a staff member manually flipping "Customer Portal Invite" to
- * "Send Invite", or (per Bryan's separate, Monday-side automation — see
- * pages/api/monday/invite-webhook.js's own header) automatically once
- * "Manufacturing Phase" changes to "Incoming Order". Both are real triggers,
- * but neither is proven un-droppable: a status change can be made without
- * the automation ever firing (misconfigured trigger, a Monday outage, the
- * webhook secret rotating out of sync), and nothing before this cron would
- * have noticed.
+ * customer was never actually asked for. The invite is triggered by staff
+ * flipping "Customer Portal Invite" to "Send Invite", or by the Monday
+ * automation when "Manufacturing Phase" changes to "Incoming Order" (see
+ * pages/api/monday/invite-webhook.js). Neither is proven un-droppable, so
+ * this backstop finds orders that should have an invite by now and don't,
+ * and alerts the team. It never sends an invite itself.
  *
- * This is the backstop, not the primary mechanism: it does not send an
- * invite itself (deliberately — silently emailing a customer from a
- * best-effort sweep, possibly for an order that was never actually meant to
- * reach that stage, is a worse failure mode than a delayed human catching a
- * real gap). It only finds orders that look like they should already have
- * one and don't, and puts a human on it via the same internal-alert
- * mechanism every other "must not fail silently" case in this codebase uses
- * (lib/monitoring.js).
- *
- * A "gap" is an order that:
- *   - has a customer email on file (nothing to invite without one — same
- *     skip condition invite-webhook.js itself uses), AND
- *   - has a real Manufacturing Phase value set at all (blank means it
- *     hasn't been categorized yet — not a gap, just not there yet), AND
- *   - was created more than GRACE_PERIOD_HOURS ago (avoids false-flagging
- *     an order the automation simply hasn't had a chance to process yet),
- *     AND
- *   - has no "[PORTAL: Invitation Sent]" tagged update anywhere in its
- *     history.
- *
- * Deliberately does NOT depend on STATUS_STAGES/stageIndex ordering (which
- * order.js's own comments already flag as needing verification against this
- * board's real "Manufacturing Phase" labels) — "has any real status at all"
- * is true regardless of whether that ordering is configured correctly,
- * so this check stays valid even if that separate issue is still open.
+ * Paused 2026-09-18 (PORTAL-058) after its first run flagged 263 of 378
+ * orders: nearly all were orders from before the portal existed, plus
+ * pre-sales/administrative phases. Re-enabled 2026-10-06 with:
+ *   - only orders created on or after ORDERS_CREATED_SINCE (Bryan: "today's
+ *     date"), so historical orders are never considered;
+ *   - phases that aren't a live customer order (SKIP_PHASES) skipped;
+ *   - "Do Not Send" on Customer Portal Invite, and test orders on a staff
+ *     address, skipped;
+ *   - one alert per order (the first run after its grace period), then once
+ *     a day at most — not every run forever.
  */
 
-import { getAllOrders, getOrderMessages } from '../../../lib/monday';
+import { getOrderSummaries, getOrderMessages } from '../../../lib/monday';
+import { isStaffEmail, secretsMatch } from '../../../lib/auth';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
 
+// AUDIT-2026-10-06: without this, Vercel's default function limit can cut a
+// run off mid-loop. 300s is within the Pro plan limit (the 30-minute/hourly
+// cron schedules in vercel.json already require Pro; Hobby is daily-only).
+export const config = { maxDuration: 300 };
+
+// Midnight Mountain on the day this was re-enabled.
+export const ORDERS_CREATED_SINCE = new Date('2026-10-06T06:00:00Z');
 const GRACE_PERIOD_HOURS = 6;
+const CRON_INTERVAL_HOURS = 6;
+const DAILY_REMINDER_UTC_HOUR = 12; // the 12:00 UTC run (6am Mountain)
 const CHECK_CONCURRENCY = 8;
+
+// Real "Manufacturing Phase" labels that don't mean "a customer order the
+// portal should be running for" (pre-sales hold, cancelled, nothing to do).
+const SKIP_PHASES = new Set(['Wait to Push Order', 'ORDER CANCELLED', 'No Action Needed']);
+
+/** Should this order be checked for a missing invitation at all? */
+export function needsInviteCheck(order, now) {
+  if (!order.customerEmail || isStaffEmail(order.customerEmail)) return false;
+  const phase = (order.status || '').trim();
+  if (!phase || SKIP_PHASES.has(phase)) return false;
+  if ((order.inviteStatus || '').trim() === 'Do Not Send') return false;
+  const created = new Date(order.createdAt || now);
+  if (created < ORDERS_CREATED_SINCE) return false;
+  return (now - created) / 3600000 >= GRACE_PERIOD_HOURS;
+}
+
+/** Alert on the first run that sees the gap, then only on the daily run. */
+export function shouldAlertInviteGap(order, now) {
+  const ageHours = (now - new Date(order.createdAt)) / 3600000;
+  if (ageHours < GRACE_PERIOD_HOURS + CRON_INTERVAL_HOURS) return true;
+  return now.getUTCHours() === DAILY_REMINDER_UTC_HOUR;
+}
 
 export default async function handler(req, res) {
   const authHeader = req.headers['authorization'];
   // Same fail-closed discipline as every other cron in this app (PORTAL-033)
   // — an unset CRON_SECRET rejects rather than accepting "Bearer undefined".
-  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // AUDIT-2026-10-06: constant-time compare (secretsMatch) instead of `!==`.
+  if (!process.env.CRON_SECRET || !secretsMatch(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
@@ -79,42 +78,37 @@ export default async function handler(req, res) {
   const flagged = [];
 
   try {
-    const orders = await getAllOrders();
-    results.checked = orders.length;
+    // Light read (a few columns, no subitems) — getAllOrders() has timed
+    // out on this board.
+    const orders = await getOrderSummaries();
+    const candidates = orders.filter(o => needsInviteCheck(o, now));
+    results.checked = candidates.length;
+    results.skipped = orders.length - candidates.length;
 
-    await mapWithConcurrency(orders, CHECK_CONCURRENCY, async (order) => {
+    await mapWithConcurrency(candidates, CHECK_CONCURRENCY, async (order) => {
       try {
-        if (!order.customerEmail) { results.skipped++; return; }
-        if (!order.status || !order.status.trim()) { results.skipped++; return; }
-
-        const ageHours = (now - new Date(order.createdAt || now)) / (1000 * 60 * 60);
-        if (ageHours < GRACE_PERIOD_HOURS) { results.skipped++; return; }
-
         const updates = await getOrderMessages(order.id);
+        // "Invitation Sent" is also posted on a customer's other orders when
+        // one invite covers them all (invite-webhook.js).
         const hasInvite = updates.some(u => (u.body || '').includes('[PORTAL: Invitation Sent]'));
         if (hasInvite) { results.skipped++; return; }
 
         results.gaps++;
-        flagged.push({
-          id: order.id,
-          name: order.name,
-          status: order.status,
-          customerEmail: order.customerEmail,
-          createdAt: order.createdAt,
-        });
+        flagged.push({ ...order, alert: shouldAlertInviteGap(order, now) });
       } catch (orderErr) {
         console.error(`Invite safety-net check error for order ${order.id}:`, orderErr);
         results.errors++;
       }
     });
 
-    if (flagged.length > 0) {
-      const lines = flagged
-        .map(o => `- ${o.name} (id ${o.id}, status "${o.status}", created ${new Date(o.createdAt).toLocaleDateString()}) — ${o.customerEmail}`)
+    const toAlert = flagged.filter(o => o.alert);
+    if (toAlert.length > 0) {
+      const lines = toAlert
+        .map(o => `- ${o.name} (id ${o.id}, phase "${o.status}", created ${new Date(o.createdAt).toLocaleDateString()}) — ${o.customerEmail}`)
         .join('\n');
       await reportCriticalFailure(
         'cron/invite-safety-net',
-        `${flagged.length} order(s) have a Manufacturing Phase set, a customer email on file, and are more than ${GRACE_PERIOD_HOURS}h old, but have never had a portal invitation sent. Check whether the invite automation fired for these — they may be silently waiting on the customer for information nobody has actually asked for yet.`,
+        `${toAlert.length} order(s) created since ${ORDERS_CREATED_SINCE.toLocaleDateString()} have a customer email and a live Manufacturing Phase, are more than ${GRACE_PERIOD_HOURS}h old, but were never sent a portal invitation. Set "Customer Portal Invite" to "Send Invite" (or "Do Not Send" if they shouldn't get one). Each order is re-alerted at most once a day.`,
         { orders: lines }
       );
     }

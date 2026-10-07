@@ -27,10 +27,11 @@ function buildShowcaseFormUrl(formId, order) {
   return `https://form.jotform.com/${formId}${qs ? `?${qs}` : ''}`;
 }
 
-export default function ShowcaseTab({ order }) {
+export default function ShowcaseTab({ order, showToast }) {
   const [formSubmitted, setFormSubmitted] = useState(false);
   const [emailSending, setEmailSending] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+  const [emailError, setEmailError] = useState(false);
   const rawFormId = order?.showcaseFormId;
   const trimmedFormId = typeof rawFormId === 'string' ? rawFormId.trim() : '';
   const formId = isValidJotformId(trimmedFormId) ? trimmedFormId : '';
@@ -73,12 +74,18 @@ export default function ShowcaseTab({ order }) {
 
   async function emailMeLink() {
     setEmailSending(true);
+    setEmailError(false);
     try {
       const res = await fetch('/api/portal/email-upload-link', { method: 'POST' });
       if (!res.ok) throw new Error();
       setEmailSent(true);
     } catch {
+      // AUDIT-2026-10-06: a failure used to just reset the button with no
+      // sign anything had gone wrong — the customer would wait for an email
+      // that was never sent.
       setEmailSent(false);
+      setEmailError(true);
+      showToast?.('We couldn’t email you the upload link. Please try again.');
     } finally {
       setEmailSending(false);
     }
@@ -94,7 +101,7 @@ export default function ShowcaseTab({ order }) {
       <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--moss)' }}>
         <div className="ch"><h3>📸 Share Your Gym, Earn Rewards</h3></div>
         <p style={{ fontSize: 13.5, lineHeight: 1.65, marginBottom: 10 }}>
-          We love seeing your space in action — and your photos and videos help other clinics, schools, and families picture what's possible. Submit <strong>10 photos or videos</strong> (1 video counts as 2) and we'll send you a <strong>$25 gift card</strong>. Keep sharing — the reward repeats every 10 submissions.
+          We love seeing your space in action — and your photos and videos help other clinics, schools, and families picture what&apos;s possible. Submit <strong>10 photos or videos</strong> (1 video counts as 2) and we&apos;ll send you a <strong>$25 gift card</strong>. Keep sharing — the reward repeats every 10 submissions.
         </p>
         <p style={{ fontSize: 13.5, lineHeight: 1.65, marginBottom: 10, color: 'var(--mut)' }}>
           For videos: please film for at least <strong>20 seconds</strong>, capture <strong>different angles</strong>, and if possible, show <strong>people using the frame</strong> — these submit for review fastest.
@@ -104,7 +111,7 @@ export default function ShowcaseTab({ order }) {
         </p>
       </div>
 
-      {formSubmitted && <div className="alert success" style={{ marginBottom: 16 }}>✅ Thanks for sharing! We'll review your submission shortly.</div>}
+      {formSubmitted && <div className="alert success" style={{ marginBottom: 16 }}>✅ Thanks for sharing! We&apos;ll review your submission shortly.</div>}
 
       <div className="card" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <div>
@@ -114,6 +121,11 @@ export default function ShowcaseTab({ order }) {
         <button type="button" className="btn btn-ghost btn-sm" onClick={emailMeLink} disabled={emailSending || emailSent || !formId}>
           {emailSent ? '✅ Sent!' : emailSending ? 'Sending…' : 'Email Me This Link'}
         </button>
+        {emailError && (
+          <p role="alert" style={{ margin: 0, width: '100%', fontSize: 12.5, color: 'var(--rose)' }}>
+            We couldn&apos;t send the email. Please try again, or contact us if it keeps happening.
+          </p>
+        )}
       </div>
 
       {formId ? (
@@ -138,7 +150,7 @@ export default function ShowcaseTab({ order }) {
           <div className="empty">
             <div className="ei">📸</div>
             <h3>Upload form not yet available</h3>
-            <p>We're setting this up — check back soon, or contact us directly if you'd like to share photos or videos now.</p>
+            <p>We&apos;re setting this up — check back soon, or contact us directly if you&apos;d like to share photos or videos now.</p>
           </div>
         </div>
       )}

@@ -10,11 +10,11 @@ import { mergeProgress } from '../../../pages/portal/index';
 // specifically so it can be tested directly (pure function, no closure over
 // component state) rather than only indirectly through the full page.
 describe('mergeProgress', () => {
-  const allComplete = { contact: '✅', billing: '✅', delivery: '✅', colors: '✅', documents: '✅' };
+  const allComplete = { contact: '✅', billing: '✅', delivery: '✅', colors: '✅' };
 
   it('adds a completion Monday shows as done, even with no local cache at all', () => {
     const merged = mergeProgress({ progress: allComplete }, {});
-    expect(merged).toEqual({ contact: true, billing: true, delivery: true, color: true, documents: true });
+    expect(merged).toEqual({ contact: true, billing: true, delivery: true, color: true });
   });
 
   it('CLEARS a stale local completion when Monday no longer shows it as done — the actual fix', () => {
@@ -26,19 +26,19 @@ describe('mergeProgress', () => {
     expect(merged.billing).toBe(false);
   });
 
-  it('Monday wins in BOTH directions across all 5 tabs, not just some', () => {
-    const localCompletions = { contact: true, billing: false, delivery: true, color: false, documents: true };
-    const mondayProgress = { contact: 'Needs Rework', billing: '✅', delivery: 'Needs Rework', colors: '✅', documents: 'Needs Rework' };
+  it('Monday wins in BOTH directions across all 4 tabs, not just some', () => {
+    const localCompletions = { contact: true, billing: false, delivery: true, color: false };
+    const mondayProgress = { contact: 'Needs Rework', billing: '✅', delivery: 'Needs Rework', colors: '✅' };
     const merged = mergeProgress({ progress: mondayProgress }, localCompletions);
-    expect(merged).toEqual({ contact: false, billing: true, delivery: false, color: true, documents: false });
+    expect(merged).toEqual({ contact: false, billing: true, delivery: false, color: true });
   });
 
   it('does not choke on a missing/undefined order or progress object', () => {
     expect(mergeProgress(undefined, { contact: true })).toEqual({
-      contact: false, billing: false, delivery: false, color: false, documents: false,
+      contact: false, billing: false, delivery: false, color: false,
     });
     expect(mergeProgress({}, {})).toEqual({
-      contact: false, billing: false, delivery: false, color: false, documents: false,
+      contact: false, billing: false, delivery: false, color: false,
     });
   });
 
@@ -47,5 +47,10 @@ describe('mergeProgress', () => {
     // whitelist that silently drops something else the caller was tracking.
     const merged = mergeProgress({ progress: {} }, { someOtherFlag: true });
     expect(merged.someOtherFlag).toBe(true);
+  });
+
+  it("counts a step staff marked N/A as done (it does not apply to the order)", () => {
+    const merged = mergeProgress({ progress: { contact: "✅", billing: "N/A", delivery: "🚫", colors: "N/A" } }, {});
+    expect(merged).toMatchObject({ contact: true, billing: true, delivery: false, color: true });
   });
 });

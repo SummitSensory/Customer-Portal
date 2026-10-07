@@ -56,6 +56,14 @@ export default async function handler(req, res) {
 
   const normalizedEmail = email.toLowerCase().trim();
 
+  // AUDIT-2026-10-06: the per-IP limit above doesn't stop someone spreading
+  // requests across many IPs to flood one customer's inbox with codes. Also
+  // cap per target address. Applied before the order lookup and identical
+  // for every address, so it reveals nothing about whether an order exists.
+  if (!allowRequest(`send-code-email:${normalizedEmail}`, { maxRequests: 5, windowMs: 15 * 60_000 })) {
+    return res.status(429).json({ error: 'Too many codes requested for this email. Please wait a few minutes and try again.' });
+  }
+
   // Verify an order exists for this email before sending a code.
   //
   // PORTAL-060: previously read through lib/monday.js's 20-second in-memory

@@ -7,8 +7,14 @@
  *   contact         — confirmation only (data lives in Monday mirrors)
  *   billing         — stores billing address + POC as a tagged Monday update
  *   delivery        — saves editable fields + freight acknowledgment
- *   freight_ack     — records signed freight acknowledgment as Monday update
  *   tax_exemption   — Yes/No status (color_mm55tjn2) + certificate upload (file_mm55t6kn)
+ *
+ * Optional body field `orderId` (AUDIT-2026-10-06): when present and not the
+ * session's bound order → 409 ORDER_MISMATCH before anything else runs (see
+ * rejectOrderMismatch in lib/apiAuth.js).
+ *
+ * AUDIT-2026-10-06: the legacy 'freight_ack' tab was removed — see the note
+ * where its case used to be.
  */
 
 import {
@@ -23,8 +29,9 @@ import {
   STATUS_STAGES,
   TAX_EXEMPT_YES_LABEL,
   TAX_EXEMPT_NO_LABEL,
+  PORTAL_DONE_LABEL,
 } from '../../../lib/monday';
-import { requireCustomerSession, loadSessionOrder, enforceRateLimit } from '../../../lib/apiAuth';
+import { requireCustomerSession, loadSessionOrder, enforceRateLimit, rejectOrderMismatch, staffAttribution, sessionActorLabel } from '../../../lib/apiAuth';
 
 // PORTAL-017: the Delivery tab's UI hides its form once an order has shipped
 // (order.stageIndex >= shippedIdx, see DeliveryTab in pages/portal/index.js),
@@ -191,22 +198,62 @@ function validateSetupData(tab, data) {
       if (isBlank(freightAckDate)) return 'An acknowledgment date is required.';
       return null;
     }
-    case 'freight_ack': {
-      const { acknowledgedBy, acknowledgedAt } = data;
-      if (isBlank(acknowledgedBy)) return 'A name is required to acknowledge freight delivery requirements.';
-      if (isBlank(acknowledgedAt)) return 'An acknowledgment date is required.';
-      return null;
-    }
-    // 'contact' and 'color'/'documents' completion markers carry no
-    // customer-entered fields to validate; 'tax_exemption' already checks
-    // its own required fields (fileBase64/fileName) inline below.
+    // 'contact' and 'color' completion markers carry no
+    // customer-entered fields to validate; 'tax_exemption' validates its
+    // upload via validateTaxCertUpload() (AUDIT-2026-10-06) inline below.
     default:
       return null;
   }
 }
 
+// AUDIT-2026-10-06: the tax-exemption upload took any base64 blob with any
+// name/MIME type and any size, straight into Monday's file column. Now:
+//   - the extension must be one TaxExemptionCard's file input offers
+//     (pages/portal/index.js: accept=".pdf,.jpg,.jpeg,.png,.heic,.heif");
+//   - a supplied MIME type must be on the allowlist too. A blank or generic
+//     application/octet-stream type is tolerated and the type is derived
+//     from the extension instead — browsers (Chrome on Windows especially)
+//     report HEIC photos with an empty file.type, and rejecting those would
+//     lock real customers out of uploading a phone photo of a certificate;
+//   - decoded size is capped at 3MB. Vercel rejects request bodies over
+//     4.5MB outright (before this handler runs, whatever sizeLimit says
+//     below), and base64 inflates by 4/3, so ~3MB of file is the most that
+//     reliably arrives — a clear 413 beats an opaque platform error.
+const TAX_CERT_TYPES = {
+  pdf: 'application/pdf',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  heic: 'image/heic',
+  heif: 'image/heif',
+};
+const TAX_CERT_ALLOWED_MIME = new Set(Object.values(TAX_CERT_TYPES));
+export const TAX_CERT_MAX_BYTES = 3 * 1024 * 1024;
+const TAX_CERT_TYPE_ERROR = 'Please upload your certificate as a PDF, JPG, PNG, or HEIC file.';
+const TAX_CERT_SIZE_ERROR = 'That file is too large to upload here (3 MB maximum). Please upload a smaller scan or photo, or email it to orders@summitsensory.com.';
+
+// Returns { status, error } on failure, or { buffer, fileName, mimeType }.
+export function validateTaxCertUpload({ fileBase64, fileName, mimeType } = {}) {
+  if (typeof fileBase64 !== 'string' || !fileBase64 || typeof fileName !== 'string' || !fileName.trim()) {
+    return { status: 400, error: 'Please upload your tax exemption certificate.' };
+  }
+  const name = fileName.trim();
+  const extMime = name.includes('.') ? TAX_CERT_TYPES[name.split('.').pop().toLowerCase()] : undefined;
+  if (!extMime) return { status: 400, error: TAX_CERT_TYPE_ERROR };
+  const suppliedMime = typeof mimeType === 'string' ? mimeType.trim().toLowerCase() : '';
+  const genericMime = !suppliedMime || suppliedMime === 'application/octet-stream';
+  if (!genericMime && !TAX_CERT_ALLOWED_MIME.has(suppliedMime)) return { status: 400, error: TAX_CERT_TYPE_ERROR };
+  // Cheap pre-check on the encoded length before decoding anything.
+  if (fileBase64.length > Math.ceil(TAX_CERT_MAX_BYTES / 3) * 4 + 4) return { status: 413, error: TAX_CERT_SIZE_ERROR };
+  const buffer = Buffer.from(fileBase64, 'base64');
+  if (buffer.length === 0) return { status: 400, error: 'The uploaded file appears to be empty. Please choose the file again.' };
+  if (buffer.length > TAX_CERT_MAX_BYTES) return { status: 413, error: TAX_CERT_SIZE_ERROR };
+  return { buffer, fileName: name, mimeType: genericMime ? extMime : suppliedMime };
+}
+
 // Tax exemption certificate uploads arrive as base64 in the JSON body — raise
 // the default 1mb Next.js body limit so scanned PDFs/photos aren't rejected.
+// (Vercel's own 4.5MB request cap still applies first — see TAX_CERT_MAX_BYTES.)
 export const config = {
   api: {
     bodyParser: { sizeLimit: '10mb' },
@@ -218,6 +265,10 @@ export default async function handler(req, res) {
 
   const session = await requireCustomerSession(req, res);
   if (!session) return;
+
+  // AUDIT-2026-10-06: a tab still showing a different order than this
+  // browser's session is now bound to — see rejectOrderMismatch.
+  if (!rejectOrderMismatch(req, session, res)) return;
 
   // PORTAL-027: most tabs here trigger a team-notification email on every
   // save. See lib/rateLimit.js for the in-memory limiter's scope/limitations.
@@ -240,15 +291,22 @@ export default async function handler(req, res) {
   const order = await loadSessionOrder(session, res, { logPrefix: 'portal-setup' });
   if (!order) return;
 
+  // AUDIT-2026-10-06: a staff member "viewing as customer" (impersonation
+  // session) must never look like the customer's own action — every Monday
+  // audit update and team email below says who actually did it.
+  const attribution = staffAttribution(session);
+  const actor = sessionActorLabel(session);
+  const audit = (itemId, tag, content) => postTaggedUpdate(itemId, tag, `${content}${attribution}`);
+
   try {
     switch (tab) {
 
       // ── Tab 1: Contact — confirmation only ──────────────────────────────
       case 'contact': {
-        await postTaggedUpdate(order.id, 'PORTAL: Contact Confirmed',
+        await audit(order.id, 'PORTAL: Contact Confirmed',
           `Customer confirmed contact information on ${new Date().toLocaleDateString()}.`
         );
-        await notifyTeamContactChange(order.name, session.email, ['Contact Information Confirmed']).catch(console.error);
+        await notifyTeamContactChange(order.name, actor, ['Contact Information Confirmed']).catch(console.error);
         // PORTAL-014: retried and reported honestly instead of swallowed —
         // see markSectionCompleteSafe() in lib/monday.js.
         const contactSynced = await markSectionCompleteSafe(order.id, 'portalContact');
@@ -264,10 +322,10 @@ export default async function handler(req, res) {
           phone    ? `Phone: ${phone}` : null,
           newEmail ? `Email: ${newEmail}` : null,
         ].filter(Boolean);
-        await postTaggedUpdate(order.id, 'PORTAL: Contact Update Requested', lines.join('\n'));
+        await audit(order.id, 'PORTAL: Contact Update Requested', lines.join('\n'));
         await notifyTeamContactChange(
           order.name,
-          session.email,
+          actor,
           [name && 'Name', phone && 'Phone', newEmail && 'Email'].filter(Boolean)
         ).catch(console.error);
         const contactUpdateSynced = await markSectionCompleteSafe(order.id, 'portalContact');
@@ -313,10 +371,16 @@ export default async function handler(req, res) {
           billingContactSameAsPrimary, billingName, billingPhone, billingEmail,
         }) });
 
-        await postTaggedUpdate(order.id, 'PORTAL: Billing Information',
+        await audit(order.id, 'PORTAL: Billing Information',
           `Billing Address: ${addressText}\nBilling Contact: ${contactText}\nSubmitted: ${new Date().toLocaleDateString()}`
         );
-        await notifyTeamContactChange(order.name, session.email, ['Billing Information']).catch(console.error);
+        // "Contact Info Changed" only when billing was already complete — a
+        // first-time submission is just onboarding (shown by the Portal:
+        // Billing column), and alerting on it sent 3–4 "changed" emails per
+        // new customer (40 in three weeks).
+        if (order.progress?.billing === PORTAL_DONE_LABEL) {
+          await notifyTeamContactChange(order.name, actor, ['Billing Information']).catch(console.error);
+        }
         const billingSynced = await markSectionCompleteSafe(order.id, 'portalBilling');
         return res.status(200).json({ ok: true, checklistSyncPending: !billingSynced });
       }
@@ -418,7 +482,7 @@ export default async function handler(req, res) {
           `Submitted: ${new Date().toLocaleDateString()}`,
         ].filter(Boolean);
 
-        await postTaggedUpdate(order.id, 'PORTAL: Delivery Details', lines.join('\n'));
+        await audit(order.id, 'PORTAL: Delivery Details', lines.join('\n'));
 
         // PORTAL-018: the freight acknowledgment used to be a SECOND,
         // separate POST from the frontend (saveSetup('freight_ack', ...)
@@ -433,11 +497,11 @@ export default async function handler(req, res) {
         // acknowledgment into this single request makes the whole
         // submission atomic — it either succeeds together or fails
         // together, no partial state and no accidental double-submit. The
-        // separate 'freight_ack' case below is kept only for backward
-        // compatibility with any in-flight requests from an older
-        // deployed frontend.
+        // separate 'freight_ack' case was kept for backward
+        // compatibility with older deployed frontends until AUDIT-2026-10-06
+        // removed it (see where that case used to be, below).
         if (freightAckBy && freightAckDate) {
-          await postTaggedUpdate(order.id, 'PORTAL: Freight Delivery Acknowledgment',
+          await audit(order.id, 'PORTAL: Freight Delivery Acknowledgment',
             `Acknowledged by: ${freightAckBy}\nDate: ${freightAckDate}\nCustomer has read and agreed to all freight delivery requirements.`
           );
         }
@@ -505,7 +569,11 @@ export default async function handler(req, res) {
           const notifyFields = safeChangedRestricted.length > 0
             ? safeChangedRestricted
             : ['Delivery Details'];
-          await notifyTeamContactChange(order.name, session.email, notifyFields).catch(console.error);
+          // Restricted fields always alert (they need Summit's confirmation);
+          // otherwise only a change to an already-completed Delivery tab does.
+          if (safeChangedRestricted.length > 0 || order.progress?.delivery === PORTAL_DONE_LABEL) {
+            await notifyTeamContactChange(order.name, actor, notifyFields).catch(console.error);
+          }
         }
 
         const deliverySynced = await markSectionCompleteSafe(order.id, 'portalDelivery');
@@ -513,63 +581,73 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true, requiresConfirmation: safeChangedRestricted.length > 0, checklistSyncPending: !deliverySynced });
       }
 
-      // ── Freight Acknowledgment ──────────────────────────────────────────
-      case 'freight_ack': {
-        // PORTAL-017: same server-side shipped-stage gate as 'delivery' above.
-        if (isOrderShipped(order)) {
-          return res.status(409).json({ error: 'This order has already shipped — the freight acknowledgment can no longer be submitted through the portal.' });
-        }
-        const { acknowledgedBy, acknowledgedAt } = data;
-        await postTaggedUpdate(order.id, 'PORTAL: Freight Delivery Acknowledgment',
-          `Acknowledged by: ${acknowledgedBy}\nDate: ${acknowledgedAt}\nCustomer has read and agreed to all freight delivery requirements.`
-        );
-        const freightAckSynced = await markSectionCompleteSafe(order.id, 'portalDelivery');
-        return res.status(200).json({ ok: true, checklistSyncPending: !freightAckSynced });
-      }
+      // AUDIT-2026-10-06: the legacy 'freight_ack' tab was removed. It
+      // marked Delivery ✅ complete with no delivery details at all (just a
+      // name + date), and nothing has called it since PORTAL-018 folded the
+      // acknowledgment into the 'delivery' submission above (repo-wide grep
+      // for 'freight_ack' on 2026-10-06: only this file). A stray request
+      // now falls through to the default "Unknown tab" 400 below.
 
       // ── Tab 4: Color Selections ─────────────────────────────────────────
       case 'color': {
-        await postTaggedUpdate(order.id, 'PORTAL: Color Selections',
+        await audit(order.id, 'PORTAL: Color Selections',
           `Customer marked color and product selections complete on ${new Date().toLocaleDateString()}.`
         );
         const colorSynced = await markSectionCompleteSafe(order.id, 'portalColors');
         return res.status(200).json({ ok: true, checklistSyncPending: !colorSynced });
       }
 
-      // ── Tab 5: Required Documents ───────────────────────────────────────
-      case 'documents': {
-        await postTaggedUpdate(order.id, 'PORTAL: Documents Submitted',
-          `Customer marked required documents complete on ${new Date().toLocaleDateString()}.`
-        );
-        const documentsSynced = await markSectionCompleteSafe(order.id, 'portalDocuments');
-        return res.status(200).json({ ok: true, checklistSyncPending: !documentsSynced });
-      }
-
       // ── Invoice & Payment: Tax Exemption ─────────────────────────────────
       case 'tax_exemption': {
-        const { taxExempt, fileBase64, fileName, mimeType } = data;
+        const { taxExempt } = data;
+
+        // AUDIT-2026-10-06: the "Tax Exempt" status column (COLS.taxExemptStatus)
+        // is staff-managed (lib/monday.js) — staff set it once a certificate
+        // is verified — but this used to overwrite it unconditionally, so a
+        // customer clicking "No" (or a stale tab, or a direct POST) could
+        // silently flip a verified "Yes" back to "No" and sales tax would
+        // reappear on the invoice. Rule chosen:
+        //   - "No"  is written only while the column is blank or already
+        //     "No". Over a "Yes" (or any other staff-set label) it's refused
+        //     with a 409 — TaxExemptionCard (pages/portal/index.js) already
+        //     hides the "No" button once "Yes" is on file, so this only
+        //     fires for stale/direct requests, and the customer is told to
+        //     contact us instead.
+        //   - "Yes" (certificate upload) is written over blank/"No"/"Yes";
+        //     any OTHER staff-set label is left exactly as staff set it —
+        //     the new certificate and the audit update still land for review.
+        const currentStatus = (order.taxExemptStatus || '').trim();
+        const statusIsCustomerWritable = !currentStatus
+          || currentStatus === TAX_EXEMPT_NO_LABEL
+          || currentStatus === TAX_EXEMPT_YES_LABEL;
 
         // "No" — record it and stop. No certificate requested; sales tax applies.
         if (!taxExempt) {
+          if (currentStatus && currentStatus !== TAX_EXEMPT_NO_LABEL) {
+            return res.status(409).json({
+              error: 'Your tax-exempt status is already on file for this order. Please contact Summit Sensory Gym if it needs to change.',
+              code: 'TAX_STATUS_LOCKED',
+            });
+          }
           await setStatusLabel(order.id, 'taxExemptStatus', TAX_EXEMPT_NO_LABEL);
-          await postTaggedUpdate(order.id, 'PORTAL: Tax Exempt - No',
+          await audit(order.id, 'PORTAL: Tax Exempt - No',
             `Customer indicated they are NOT tax-exempt on ${new Date().toLocaleDateString()}. Sales tax applies to this order.`
           );
           return res.status(200).json({ ok: true });
         }
 
-        // "Yes" — a certificate file is required.
-        if (!fileBase64 || !fileName) {
-          return res.status(400).json({ error: 'Please upload your tax exemption certificate.' });
-        }
+        // "Yes" — a valid certificate file is required.
+        const upload = validateTaxCertUpload(data);
+        if (upload.error) return res.status(upload.status).json({ error: upload.error });
 
-        const buffer = Buffer.from(fileBase64, 'base64');
-        await uploadFileToColumn(order.id, COLS.taxExemptCertFile, buffer, fileName, mimeType);
-        await setStatusLabel(order.id, 'taxExemptStatus', TAX_EXEMPT_YES_LABEL);
-        await postTaggedUpdate(order.id, 'PORTAL: Tax Exemption Certificate Uploaded',
-          `Customer uploaded a tax exemption certificate (${fileName}) on ${new Date().toLocaleDateString()}.`
+        await uploadFileToColumn(order.id, COLS.taxExemptCertFile, upload.buffer, upload.fileName, upload.mimeType);
+        if (statusIsCustomerWritable) {
+          await setStatusLabel(order.id, 'taxExemptStatus', TAX_EXEMPT_YES_LABEL);
+        }
+        await audit(order.id, 'PORTAL: Tax Exemption Certificate Uploaded',
+          `Customer uploaded a tax exemption certificate (${upload.fileName}) on ${new Date().toLocaleDateString()}.${statusIsCustomerWritable ? '' : ` Tax Exempt status left as staff set it ("${currentStatus}").`}`
         );
-        await notifyTeamFormCompleted(order.name, session.email, 'Tax Exemption Certificate').catch(console.error);
+        await notifyTeamFormCompleted(order.name, actor, 'Tax Exemption Certificate').catch(console.error);
 
         return res.status(200).json({ ok: true });
       }

@@ -2,6 +2,10 @@
 const nextConfig = {
   reactStrictMode: true,
   eslint: { ignoreDuringBuilds: true },
+  // lib/errorAlerts.js only uses waitUntil, but the package root also has a
+  // lazy, optional `import("ws")` that webpack warns about when bundling.
+  // Loading it from node_modules at runtime avoids that; ws is never used.
+  serverExternalPackages: ['@vercel/functions'],
   env: {
     // Mirrors the real, server-only STAFF_EMAIL_DOMAIN (lib/auth.js's actual
     // access-control check) so the admin Settings page displays the domain(s)

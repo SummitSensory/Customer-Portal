@@ -40,10 +40,11 @@ export default async function handler(req, res) {
   // cron also starts its clock from this exact "PORTAL: Invitation Sent" tag
   // (see cron/reminders.js), so a failed log write is flagged loudly rather
   // than silently dropped.
+  let sent;
   try {
-    await sendPortalInvitation(
+    sent = await sendPortalInvitation(
       order.customerEmail,
-      order.pocName || order.firstName || '',
+      order.firstName || order.pocName?.split(' ')[0] || '',
       order.name
     );
   } catch (err) {
@@ -56,7 +57,7 @@ export default async function handler(req, res) {
     await postTaggedUpdate(
       orderId,
       'PORTAL: Invitation Sent',
-      `Portal invitation sent to ${order.customerEmail} by ${staffSession.user?.email || 'staff'} on ${new Date().toLocaleDateString()}.`
+      `Portal invitation sent to ${order.customerEmail} by ${staffSession.user?.email || 'staff'} on ${new Date().toLocaleDateString()}.${sent?.id ? ` Email ID: ${sent.id}` : ''}`
     );
   } catch (err) {
     console.error(`Invitation email sent to ${order.customerEmail}, but the "PORTAL: Invitation Sent" log write FAILED for order ${orderId} — add it manually in Monday so the reminder cron's clock starts correctly:`, err.message);

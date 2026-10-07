@@ -3,7 +3,7 @@
  * Sections: Dashboard, Orders, Customers, Files, Messages, Settings
  */
 
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
@@ -12,6 +12,7 @@ import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
 import { isStaffMessage, stripPortalTags, messageDisplayName } from '../../lib/messageOrigin';
 import { requiredColorInputs, unbuiltRequiredColorGates, PART_LABELS } from '../../lib/colorRequirements';
 import { resolveSelectedColor, displayColorName, findOrphanedSelections } from '../../lib/colorCatalog';
+import { safeUrl } from '../../components/safeUrl';
 
 // Lazy-loaded — most staff sessions never open Settings in a given visit,
 // so its code (see components/admin/SettingsTab.js) shouldn't be part of
@@ -37,6 +38,11 @@ export default function AdminPortal() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
+  // AUDIT-2026-10-06: loadOrders used to silently return on any non-200
+  // (or a network error), leaving `orders` at [] — the dashboard then read
+  // "0 open orders" and the Orders tab "No orders", indistinguishable from a
+  // genuinely empty board. Now tracked and shown as an error banner.
+  const [ordersError, setOrdersError] = useState('');
 
   useEffect(() => {
     if (status === 'unauthenticated') router.replace('/');
@@ -50,11 +56,16 @@ export default function AdminPortal() {
   const loadOrders = useCallback(async () => {
     try {
       const res = await fetch('/api/monday/orders');
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) {
+        setOrdersError(`Couldn't load orders from Monday.com (${res.status}${data?.error ? `: ${data.error}` : ''}). The numbers below may be missing or out of date.`);
+        return;
+      }
       setOrders(data.orders || []);
+      setOrdersError('');
     } catch (err) {
       console.error(err);
+      setOrdersError('Couldn’t reach the server to load orders. Check your connection and retry.');
     } finally {
       setLoading(false);
     }
@@ -124,11 +135,18 @@ export default function AdminPortal() {
           </nav>
 
           <main className="main">
+            {ordersError && (
+              <div className="alert warn" role="alert" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span>⚠️</span>
+                <span style={{ flex: 1 }}>{ordersError}</span>
+                <button className="btn btn-ghost btn-sm" onClick={() => loadOrders()}>Retry</button>
+              </div>
+            )}
             {activeTab === 'dashboard' && (
               <DashboardTab orders={orders} needsAttention={needsAttention} readyToShip={readyToShip} onNav={setActiveTab} />
             )}
             {activeTab === 'orders' && (
-              <OrdersTab orders={orders} onRefresh={loadOrders} showToast={showToast} />
+              <OrdersTab orders={orders} onRefresh={loadOrders} showToast={showToast} loadFailed={!!ordersError} />
             )}
             {activeTab === 'customers' && (
               <CustomersTab orders={orders} />
@@ -206,17 +224,45 @@ const FIXED_COLS = ['_name', '_actions'];
 // Default columns shown on first visit
 const DEFAULT_COL_IDS = ['_name', 'email__1', 'color_mkvw7b8', 'status__1', '_progress', 'lookup_mm1kcbb5', '_balance', '_actions'];
 
-// Setup-progress checklist — Contact/Billing/Delivery/Colors/Documents, so staff
+// Setup-progress checklist — Contact/Billing/Delivery/Colors, so staff
 // can see at a glance what a customer still needs help finishing.
 const PROGRESS_STEPS = [
   { key: 'contact',   label: 'Contact' },
   { key: 'billing',   label: 'Billing' },
   { key: 'delivery',  label: 'Delivery' },
   { key: 'colors',    label: 'Colors' },
-  { key: 'documents', label: 'Documents' },
 ];
 
-function getCellValue(order, colId) {
+// AUDIT-2026-10-06: the "GB FedEx Tracking Number" mirror (lookup_mm1kcbb5)
+// is deliberately never fetched (see MIRROR_COL_KEYS in lib/monday.js), so
+// order.trackingNumber is always blank and this column always read "—" —
+// including right after staff saved a tracking number. The tracking number
+// the list DOES carry is order.frameTrackingId (the writable "Sensory Gym
+// Frame — tracking number" text column, text_mm53p3b2), which is also what
+// the customer's Order Status tab shows first. The column keeps its id (so
+// saved column preferences still work) but shows, and is labelled as, that.
+const TRACKING_COL_ID = 'lookup_mm1kcbb5';
+const COL_TITLE_OVERRIDES = { [TRACKING_COL_ID]: 'Frame Tracking #' };
+
+// AUDIT-2026-10-06: Monday mirror (lookup) columns. GET /api/monday/orders
+// (getAllOrders) deliberately fetches NO mirror values for the list — see
+// the "Deliberately WITHOUT ORDER_MIRROR_FIELDS" note in lib/monday.js — so
+// every one of these always rendered "—" for every order, which reads as
+// "the customer never gave us this". They're no longer offered as table
+// columns (the per-order Color panel fetches the full order instead).
+const LIST_UNAVAILABLE_COL_IDS = new Set([
+  'lookup_mkwaee43', // POC Phone
+  'lookup_mkwb5bty', // POC Name
+  'lookup_mkwazctw', // POC Email
+  'lookup_mkvx85hs', // First Name
+  'lookup_mm0anh5a', // Delivery Instructions
+]);
+function isListUnavailableColumn(col) {
+  if (!col || col.id === TRACKING_COL_ID) return false;
+  return LIST_UNAVAILABLE_COL_IDS.has(col.id) || col.type === 'mirror' || col.type === 'lookup';
+}
+
+export function getCellValue(order, colId) {
   // Special virtual columns
   if (colId === '_name') return { type: 'name', value: order.name };
   if (colId === '_balance') return { type: 'balance', value: order.balance };
@@ -227,33 +273,34 @@ function getCellValue(order, colId) {
     'email__1':           order.customerEmail,
     'color_mkvw7b8':      order.productType,
     'status__1':          order.status,
-    'lookup_mm1kcbb5':    order.trackingNumber,
+    [TRACKING_COL_ID]:    order.frameTrackingId || order.trackingNumber,
     'date_mkvvpex1':      order.shipDate,
     'long_text_mkpkdtj4': order.address,
     'text_mm4wfamc':      order.invoiceLink,
-    'lookup_mkwaee43':    order.phone,
-    'lookup_mkwb5bty':    order.pocName,
-    'lookup_mkwazctw':    order.pocEmail,
-    'lookup_mkvx85hs':    order.firstName,
-    'lookup_mm0anh5a':    order.deliveryInstructions,
   };
   if (colId in knownMap) return { type: 'text', value: knownMap[colId] };
   // Fall back to raw Monday.com column data
   return { type: 'text', value: order.rawColumns?.[colId]?.text || order.rawColumns?.[colId]?.display || '' };
 }
 
-function progressIsComplete(progress) {
-  return PROGRESS_STEPS.every(step => {
-    const v = progress?.[step.key];
-    return v === '✅' || v === 'N/A' || v === '' || v == null;
-  });
+// AUDIT-2026-10-06: a blank status used to count as done here (and draw as
+// a neutral dot in ProgressDots), so an order nobody had started showed as
+// "Complete" under the Setup Progress filter. Only ✅ and N/A are done —
+// the same rule as the portal's mergeProgress() and the reminders cron's
+// DONE_LABELS.
+const PROGRESS_DONE_LABELS = new Set(['✅', 'N/A']);
+export function progressStepIsDone(v) {
+  return PROGRESS_DONE_LABELS.has(v);
+}
+export function progressIsComplete(progress) {
+  return PROGRESS_STEPS.every(step => progressStepIsDone(progress?.[step.key]));
 }
 
 // Sort key per column — numeric for balance/progress so they order
 // naturally instead of as strings, lowercased text for everything else.
 function getSortValue(order, colId) {
   if (colId === '_balance') return order.balance == null ? -1 : order.balance;
-  if (colId === '_progress') return PROGRESS_STEPS.filter(s => order.progress?.[s.key] === '✅').length;
+  if (colId === '_progress') return PROGRESS_STEPS.filter(s => progressStepIsDone(order.progress?.[s.key])).length;
   if (colId === '_name') return (order.name || '').toLowerCase();
   if (colId === '_actions') return '';
   const cell = getCellValue(order, colId);
@@ -277,7 +324,7 @@ function matchesColumnFilter(order, colId, filterValue) {
   return (cell.value ?? '').toString().toLowerCase().includes(filterValue.toLowerCase());
 }
 
-function OrdersTab({ orders, onRefresh, showToast }) {
+function OrdersTab({ orders, onRefresh, showToast, loadFailed }) {
   const [editing, setEditing] = useState({});
   const [saving, setSaving] = useState(null);
   // PORTAL-052: sendInvite/notifyByEmail/viewAsCustomer had no in-flight
@@ -322,7 +369,12 @@ function OrdersTab({ orders, onRefresh, showToast }) {
           { id: '_progress', title: 'Setup Progress', type: 'progress' },
           { id: '_actions', title: 'Actions', type: 'actions' },
         ];
-        setAvailableCols([...virtual, ...(d.columns || [])]);
+        // AUDIT-2026-10-06: mirror columns are never populated in the list
+        // (see LIST_UNAVAILABLE_COL_IDS); the tracking column is relabelled.
+        const real = (d.columns || [])
+          .filter(c => !isListUnavailableColumn(c))
+          .map(c => (COL_TITLE_OVERRIDES[c.id] ? { ...c, title: COL_TITLE_OVERRIDES[c.id] } : c));
+        setAvailableCols([...virtual, ...real]);
       })
       .catch(() => {});
   }, [showPicker, availableCols.length]);
@@ -340,15 +392,21 @@ function OrdersTab({ orders, onRefresh, showToast }) {
     showToast('Column preferences saved.');
   }
 
+  // The real "Manufacturing Phase" (status__1) labels, in board order. The
+  // old list ("Order Placed", "In Manufacturing", "Delivered"…) mostly didn't
+  // exist on the board, so picking one failed to save.
   const STATUS_OPTIONS = [
-    'Order Placed', 'Deposit Received', 'In Manufacturing',
-    'Ready to Ship', 'Shipped', 'Delivered',
+    'Incoming Order', 'Order In Review', 'Ready for Manufacturing', 'GB Fab Details Sent',
+    'Install Doc Sent', 'Shipped', 'Order Complete', 'ORDER CANCELLED',
+    'Wait to Push Order', 'Color Details Needed', 'Details Obtained', 'No Action Needed',
+    'Delivery Details Needed', 'Great Mats Order Submitted', 'RES Order Submitted',
+    'Sports Play Order Submitted', 'Needs Install Drawing', 'Bryan Fullfilling', 'Waiting on Customer Info',
   ];
 
   function startEdit(order) {
     setEditing(prev => ({
       ...prev,
-      [order.id]: { status: order.status, trackingNumber: order.trackingNumber || '' },
+      [order.id]: { status: order.status, trackingNumber: order.frameTrackingId || order.trackingNumber || '' },
     }));
   }
 
@@ -436,8 +494,16 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   }
 
   async function saveOrder(orderId) {
-    const changes = editing[orderId];
-    if (!changes) return;
+    const edited = editing[orderId];
+    if (!edited) return;
+    // AUDIT-2026-10-06: the tracking input is now seeded from the value the
+    // column actually shows (frameTrackingId — see TRACKING_COL_ID). Only
+    // send it if staff changed it, so saving a status change never re-writes
+    // an untouched tracking number into the PATCH endpoint's write column.
+    const original = orders.find(o => o.id === orderId);
+    const originalTracking = original?.frameTrackingId || original?.trackingNumber || '';
+    const changes = { status: edited.status };
+    if (edited.trackingNumber !== originalTracking) changes.trackingNumber = edited.trackingNumber;
     setSaving(orderId);
     try {
       const res = await fetch(`/api/monday/orders?id=${orderId}`, {
@@ -462,9 +528,12 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   }
 
   // Build the ordered list of columns to display
+  // AUDIT-2026-10-06: a mirror column saved in an older column preference is
+  // dropped here too (it would only ever render "—").
+  const usableColIds = selectedColIds.filter(id => !LIST_UNAVAILABLE_COL_IDS.has(id));
   const displayCols = availableCols.length > 0
-    ? selectedColIds.map(id => availableCols.find(c => c.id === id)).filter(Boolean)
-    : selectedColIds.map(id => ({ id, title: id === '_name' ? 'Order' : id === '_balance' ? 'Balance' : id === '_actions' ? '' : id }));
+    ? usableColIds.map(id => availableCols.find(c => c.id === id)).filter(Boolean)
+    : usableColIds.map(id => ({ id, title: COL_TITLE_OVERRIDES[id] || (id === '_name' ? 'Order' : id === '_balance' ? 'Balance' : id === '_actions' ? '' : id) }));
 
   function handleSort(colId) {
     if (colId === '_actions') return;
@@ -781,19 +850,21 @@ function OrdersTab({ orders, onRefresh, showToast }) {
                       );
 
                       // Tracking number — editable when in edit mode
-                      if (col.id === 'lookup_mm1kcbb5') return (
+                      // AUDIT-2026-10-06: shows cell.value (frameTrackingId — see
+                      // TRACKING_COL_ID), not the never-fetched mirror.
+                      if (col.id === TRACKING_COL_ID) return (
                         <td key={col.id}>
                           {ed ? (
                             <input
                               type="text"
                               value={ed.trackingNumber}
-                              placeholder="FedEx tracking #"
+                              placeholder="Frame tracking #"
                               onChange={e => setEditing(prev => ({ ...prev, [order.id]: { ...prev[order.id], trackingNumber: e.target.value } }))}
                               style={{ width: 160 }}
                             />
                           ) : (
-                            <span style={{ fontSize: 13, color: order.trackingNumber ? 'var(--ink)' : 'var(--mut)' }}>
-                              {order.trackingNumber || '—'}
+                            <span style={{ fontSize: 13, color: cell.value ? 'var(--ink)' : 'var(--mut)' }}>
+                              {cell.value || '—'}
                             </span>
                           )}
                         </td>
@@ -827,8 +898,12 @@ function OrdersTab({ orders, onRefresh, showToast }) {
             </tbody>
           </table>
         </div>
-        {orders.length === 0 && (
+        {/* AUDIT-2026-10-06: an empty list after a FAILED load is not "No orders". */}
+        {orders.length === 0 && !loadFailed && (
           <div className="empty"><div className="ei">📦</div><h3>No orders</h3><p>Orders from Monday.com will appear here.</p></div>
+        )}
+        {orders.length === 0 && loadFailed && (
+          <div className="empty"><div className="ei">⚠️</div><h3>Orders couldn&apos;t be loaded</h3><p>See the error above and retry.</p></div>
         )}
         {orders.length > 0 && visibleOrders.length === 0 && (
           <div className="empty">
@@ -932,7 +1007,58 @@ function DeliveryDetailPanel({ order }) {
 // identical brand-switch lookup under a local name; a real duplication a
 // code review flagged, since a future change to brand-resolution could be
 // applied everywhere except here).
+//
+// AUDIT-2026-10-06: requiredColorInputs()/unbuiltRequiredColorGates() read
+// the order's color-gate MIRROR columns (colorGates, colorFrameType, …),
+// which the Orders list (getAllOrders) never fetches — so this panel
+// computed requirements from blanks: wrong/empty required inputs and no
+// unbuilt-gate warning, for every order. It now loads the full order via
+// GET /api/monday/orders?id= when expanded and computes from that.
 function ColorSelectionDetailPanel({ order }) {
+  const [fullOrder, setFullOrder] = useState(null);
+  const [loadState, setLoadState] = useState('loading'); // 'loading' | 'ok' | 'error'
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false; // a response for a since-collapsed/other order is discarded
+    setLoadState('loading');
+    (async () => {
+      try {
+        const res = await fetch(`/api/monday/orders?id=${encodeURIComponent(order.id)}`);
+        const data = await res.json().catch(() => null);
+        if (cancelled) return;
+        if (!res.ok || !data?.order || data.order.id !== order.id) throw new Error();
+        setFullOrder(data.order);
+        setLoadState('ok');
+      } catch {
+        if (!cancelled) setLoadState('error');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [order.id, attempt]);
+
+  if (loadState !== 'ok') {
+    return (
+      <div style={{ padding: '16px 20px', borderTop: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
+        <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12 }}>
+          🎨 Color &amp; Product Selections — {order.name}
+        </div>
+        {loadState === 'loading' ? (
+          <div className="spin" style={{ width: 20, height: 20 }} />
+        ) : (
+          <div style={{ fontSize: 13, color: 'var(--rose)', display: 'flex', alignItems: 'center', gap: 10 }}>
+            Couldn&apos;t load this order&apos;s full color requirements from Monday.com.
+            <button className="btn btn-ghost btn-sm" onClick={() => setAttempt(n => n + 1)}>Retry</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return <ColorSelectionDetailBody order={fullOrder} />;
+}
+
+function ColorSelectionDetailBody({ order }) {
   const s = order.colorSelectionSnapshot || {};
   const inputs = requiredColorInputs(order) || [];
   const orphans = findOrphanedSelections(inputs, s.selections || {});
@@ -1022,6 +1148,26 @@ function ColorSelectionDetailPanel({ order }) {
 
 // ── Customers ─────────────────────────────────────────────────────────────────
 
+// AUDIT-2026-10-06: order.contactName is a Monday mirror, which the list
+// (getAllOrders) never fetches — this column was "—" for every customer.
+// Fall back to names the list row DOES carry (the customer's own submitted
+// delivery / billing contact, from their snapshot text columns), labelled
+// so staff know which contact it is, and never invented.
+function CustomerNameCell({ order }) {
+  const fallbacks = [
+    [order.contactName, null],
+    [order.deliverySnapshot?.pocName, 'delivery contact'],
+    [order.billingSnapshot?.billingName, 'billing contact'],
+  ];
+  const [name, source] = fallbacks.find(([n]) => typeof n === 'string' && n.trim()) || ['', null];
+  return (
+    <div style={{ fontWeight: 600 }}>
+      {name || '—'}
+      {source && <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--mut)', marginLeft: 6 }}>({source})</span>}
+    </div>
+  );
+}
+
 function CustomersTab({ orders }) {
   return (
     <>
@@ -1035,7 +1181,7 @@ function CustomersTab({ orders }) {
             {orders.map(order => (
               <tr key={order.id}>
                 <td>
-                  <div style={{ fontWeight: 600 }}>{order.contactName || '—'}</div>
+                  <CustomerNameCell order={order} />
                   <div style={{ fontSize: 12, color: 'var(--mut)' }}>{order.customerEmail}</div>
                 </td>
                 <td style={{ fontSize: 13 }}>{order.name}</td>
@@ -1073,12 +1219,22 @@ function FileManagerTab({ orders, showToast }) {
     { value: 'other', label: '📄 Other' },
   ];
 
+  // AUDIT-2026-10-06: the order whose files were most recently requested.
+  // Switching the dropdown A -> B while A's request was still in flight let
+  // A's slower response land last and show A's files under B (and a
+  // post-upload refresh could do the same). A response is only applied if
+  // it's for the order still selected.
+  const requestedFilesOrderRef = useRef('');
   async function loadFiles(orderId) {
+    requestedFilesOrderRef.current = orderId || '';
     setFiles([]);
     if (!orderId) return;
     try {
       const res = await fetch(`/api/monday/files?orderId=${orderId}`);
-      if (res.ok) setFiles((await res.json()).files || []);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (requestedFilesOrderRef.current !== orderId) return; // stale — discard
+      setFiles(data.files || []);
     } catch {}
   }
 
@@ -1155,7 +1311,10 @@ function FileManagerTab({ orders, showToast }) {
                   <div className="t">{file.name}</div>
                   <div className="d">{file.created_at && new Date(file.created_at).toLocaleDateString()}</div>
                 </div>
-                <a href={file.public_url} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">View</a>
+                {/* AUDIT-2026-10-06: scheme-checked (components/safeUrl.js) */}
+                {safeUrl(file.public_url) && (
+                  <a href={safeUrl(file.public_url)} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">View</a>
+                )}
               </div>
             ))
           )}
@@ -1173,12 +1332,21 @@ function AdminMessagesTab({ orders, showToast }) {
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
 
+  // AUDIT-2026-10-06: same stale-response guard as the File Manager — click
+  // thread A, then B before A's messages arrive, and A's slower response
+  // used to render under B's header (and a staff reply typed there would
+  // look like it belonged to the wrong conversation).
+  const requestedMessagesOrderRef = useRef(null);
   async function loadMessages(order) {
+    requestedMessagesOrderRef.current = order.id;
     setSelectedOrder(order);
     setMessages([]);
     try {
       const res = await fetch(`/api/monday/messages?orderId=${order.id}`);
-      if (res.ok) setMessages((await res.json()).messages || []);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (requestedMessagesOrderRef.current !== order.id) return; // stale — discard
+      setMessages(data.messages || []);
     } catch {}
   }
 
@@ -1299,8 +1467,8 @@ function AdminMessagesTab({ orders, showToast }) {
 // ── Shared Components ─────────────────────────────────────────────────────────
 
 /**
- * Compact 5-dot setup-progress readout (Contact/Billing/Delivery/Colors/
- * Documents) so staff can tell what a customer still needs help completing
+ * Compact 4-dot setup-progress readout (Contact/Billing/Delivery/Colors)
+ * so staff can tell what a customer still needs help completing
  * without opening the order. Reads the same ✅/🚫/N/A labels the portal
  * itself writes via markSectionComplete.
  */
@@ -1310,16 +1478,21 @@ function ProgressDots({ progress }) {
     <div style={{ display: 'flex', gap: 5 }}>
       {PROGRESS_STEPS.map(step => {
         const label = progress[step.key];
+        // AUDIT-2026-10-06: blank used to share N/A's neutral "done-ish"
+        // dot. Now: ✅ solid green, N/A (done — doesn't apply) pale green,
+        // blank hollow = not started, anything else (e.g. 🚫) solid red.
         const done = label === '✅';
-        const na = label === 'N/A' || label === '';
-        const color = done ? 'var(--ok)' : na ? 'var(--line)' : 'var(--rose)';
+        const na = label === 'N/A';
+        const notStarted = !label;
+        const background = done ? 'var(--ok)' : na ? 'var(--ok-lt)' : notStarted ? 'transparent' : 'var(--rose)';
+        const border = na ? '1px solid var(--ok)' : notStarted ? '1.5px solid var(--rose)' : 'none';
         return (
           <span
             key={step.key}
             title={`${step.label}: ${label || 'Not started'}`}
             style={{
               width: 9, height: 9, borderRadius: '50%',
-              background: color, display: 'inline-block',
+              background, border, boxSizing: 'border-box', display: 'inline-block',
               flexShrink: 0,
             }}
           />
@@ -1332,12 +1505,14 @@ function ProgressDots({ progress }) {
 function StatusPill({ status }) {
   if (!status) return <span style={{ color: 'var(--mut)' }}>—</span>;
   const colors = {
-    'Order Placed':       { bg: 'var(--sky-lt)',  color: 'var(--sky)' },
-    'Deposit Received':   { bg: 'var(--sun-lt)',  color: 'var(--sun)' },
-    'In Manufacturing':   { bg: 'var(--moss-lt)', color: 'var(--moss-dk)' },
-    'Ready to Ship':      { bg: '#fff3d4',         color: '#8a6200' },
-    'Shipped':            { bg: 'var(--ok-lt)',   color: 'var(--ok)' },
-    'Delivered':          { bg: 'var(--ok-lt)',   color: 'var(--ok)' },
+    'Incoming Order':          { bg: 'var(--sky-lt)',  color: 'var(--sky)' },
+    'Order In Review':         { bg: 'var(--sky-lt)',  color: 'var(--sky)' },
+    'Ready for Manufacturing': { bg: 'var(--moss-lt)', color: 'var(--moss-dk)' },
+    'GB Fab Details Sent':     { bg: 'var(--moss-lt)', color: 'var(--moss-dk)' },
+    'Install Doc Sent':        { bg: '#fff3d4',         color: '#8a6200' },
+    'Shipped':                 { bg: 'var(--ok-lt)',   color: 'var(--ok)' },
+    'Order Complete':          { bg: 'var(--ok-lt)',   color: 'var(--ok)' },
+    'ORDER CANCELLED':         { bg: 'var(--rose-lt)', color: 'var(--rose)' },
   };
   const c = colors[status] || { bg: 'var(--paper)', color: 'var(--mut)' };
   return (

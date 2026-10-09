@@ -216,25 +216,54 @@ describe('handler — auth and customer isolation', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('ONLY ever loads the order bound to the session — a client-supplied orderId in the body is ignored entirely', async () => {
+  it('ONLY ever loads the order bound to the session — a body orderId naming a DIFFERENT order is rejected (409), never written', async () => {
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
     mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
 
     const req = {
       method: 'POST',
       headers: {},
-      // An attacker-style attempt to target a different order via the body.
-      // The handler must never read this field — isolation comes entirely
-      // from the server-derived session.orderId, never from client input.
+      // Either an attacker-style attempt to target a different order, or a
+      // tab still showing order A after the customer switched to B in
+      // another tab. Neither may write anywhere.
       body: { orderId: 'someone-elses-order-999', selections: fullValidSelections(), confirm: false },
     };
     const res = makeRes();
     await handler(req, res);
 
-    expect(mockGetOrderById).toHaveBeenCalledWith('real-order-123');
+    expect(res.statusCode).toBe(409);
+    expect(res.body.code).toBe('ORDER_MISMATCH');
     expect(mockGetOrderById).not.toHaveBeenCalledWith('someone-elses-order-999');
-    expect(mockWriteColorSelectionSnapshot).toHaveBeenCalledWith('real-order-123', expect.anything());
+    expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('saves to the session order when the body orderId matches it', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { orderId: 'real-order-123', selections: fullValidSelections(), confirm: false } }, res);
+
     expect(res.statusCode).toBe(200);
+    expect(mockWriteColorSelectionSnapshot).toHaveBeenCalledWith('real-order-123', expect.anything());
+  });
+
+  it("a GET naming a different order is rejected too (the picker would otherwise show another order's picks)", async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
+    const res = makeRes();
+    await handler({ method: 'GET', headers: {}, query: { orderId: 'other-order' } }, res);
+    expect(res.statusCode).toBe(409);
+  });
+
+  it('staff acting via View as Customer are named in the confirm audit update and team email', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123', impersonatedBy: 'staff@summitsensory.com' });
+    mockGetOrderById.mockResolvedValue({ id: 'real-order-123', name: 'Order', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { orderId: 'real-order-123', selections: fullValidSelections(), confirm: true } }, res);
+
+    expect(mockPostTaggedUpdate).toHaveBeenCalledWith('real-order-123', 'PORTAL: Color Selections', expect.stringContaining('entered by staff staff@summitsensory.com'));
+    expect(mockNotifyColorsConfirmed).toHaveBeenCalledWith('Order', expect.stringContaining('staff@summitsensory.com'), expect.anything());
   });
 
   it('rejects a fabricated catalog code on an ordinary AUTOSAVE (confirm:false) — never prices or persists it (regression, found in code review 2026-09-01)', async () => {

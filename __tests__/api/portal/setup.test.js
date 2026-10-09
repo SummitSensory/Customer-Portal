@@ -147,6 +147,37 @@ describe('setup.js — shared apiAuth preamble (extracted 2026-09-03)', () => {
     expect(mockMarkSectionCompleteSafe).toHaveBeenCalledWith('real-order-123', 'portalContact');
   });
 
+  // Audit 2026-10-09: a save from a tab still showing order A, after the
+  // customer switched to B in another tab, used to be written onto B.
+  it('rejects a save whose orderId is not the session order (409), before loading or writing anything', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'order-B' });
+    const req = { method: 'POST', headers: {}, body: { tab: 'contact', data: {}, orderId: 'order-A' } };
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(409);
+    expect(res.body.code).toBe('ORDER_MISMATCH');
+    expect(mockGetOrderById).not.toHaveBeenCalled();
+    expect(mockPostTaggedUpdate).not.toHaveBeenCalled();
+  });
+
+  it('accepts a save whose orderId matches the session order', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'order-B' });
+    mockGetOrderById.mockResolvedValue({ id: 'order-B', name: 'B', productType: 'Therapy Mats & Pads' });
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { tab: 'contact', data: {}, orderId: 'order-B' } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockPostTaggedUpdate).toHaveBeenCalledWith('order-B', 'PORTAL: Contact Confirmed', expect.any(String));
+  });
+
+  it('names the staff member in the audit update when acting via View as Customer', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'order-B', impersonatedBy: 'staff@summitsensory.com' });
+    mockGetOrderById.mockResolvedValue({ id: 'order-B', name: 'B', productType: 'Therapy Mats & Pads' });
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { tab: 'contact_update', data: { name: 'N', phone: '1', email: 'e@x.com' }, orderId: 'order-B' } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockPostTaggedUpdate).toHaveBeenCalledWith('order-B', 'PORTAL: Contact Update Requested', expect.stringContaining('entered by staff staff@summitsensory.com'));
+  });
+
   it('rejects a request missing tab/data before ever loading the order', async () => {
     mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'real-order-123' });
     const req = { method: 'POST', headers: {}, body: {} };

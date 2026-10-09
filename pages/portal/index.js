@@ -155,6 +155,8 @@ export default function CustomerPortal() {
   const [toast, setToast] = useState('');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [impersonatedBy, setImpersonatedBy] = useState(null); // staff email, when set via /api/admin/impersonate
+  const [loadError, setLoadError] = useState(false); // initial order load failed (vs. genuinely no order)
+  const [messagesSeenAt, setMessagesSeenAt] = useState(0); // see unreadMessages
 
   async function exitImpersonation() {
     try { await fetch('/api/auth/signout-customer').catch(() => {}); } finally { router.push('/admin'); }
@@ -172,6 +174,11 @@ export default function CustomerPortal() {
     // (see mergeProgress below); this just avoids masking an unconfirmed
     // sync with an optimistic local write in the meantime.
     if (!synced) return;
+    // A save that finishes after the customer switched to another order
+    // must not merge its tab into the NEW order's completions (and write
+    // that mix into the old order's cache key). Monday has the real status.
+    const forOrderId = order?.id;
+    if (currentOrderIdRef.current && forOrderId !== currentOrderIdRef.current) return;
     setCompletions(prev => {
       const next = { ...prev, [tabId]: true };
       if (typeof window !== 'undefined') {
@@ -194,11 +201,23 @@ export default function CustomerPortal() {
     try { localStorage.setItem(`summit_setup_${resolvedOrder?.id}`, JSON.stringify(merged)); } catch {}
   }
 
+  // Returns the freshly loaded order (or null). A failed refresh — Monday
+  // timing out or rate-limiting — used to replace the whole portal with "No
+  // order found"; the order already on screen now stays, with a toast.
   const loadOrder = useCallback(async () => {
+    let resolvedOrder = null;
     try {
       const res = await fetch('/api/monday/order');
-      if (res.status === 401) { router.replace('/'); return; }
-      const data = await res.json();
+      if (res.status === 401) { router.replace('/'); return null; }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // 404 = genuinely no order for this login: the "No order found" screen.
+        if (res.status === 404 && !currentOrderIdRef.current) return null;
+        if (currentOrderIdRef.current) showToast("Couldn't refresh your order just now. Showing the last loaded details.");
+        else setLoadError(true);
+        return null;
+      }
+      setLoadError(false);
 
       setImpersonatedBy(data.impersonatedBy || null);
 
@@ -206,7 +225,7 @@ export default function CustomerPortal() {
         // Multiple orders — show picker
         setOrders(data.orders);
       } else {
-        const resolvedOrder = data.order || data.orders?.[0] || null;
+        resolvedOrder = data.order || data.orders?.[0] || null;
         setOrder(resolvedOrder);
         applyCompletions(resolvedOrder);
       }
@@ -216,9 +235,13 @@ export default function CustomerPortal() {
       if (fmRes.ok) setFormMap(await fmRes.json());
     } catch (err) {
       console.error(err);
+      if (currentOrderIdRef.current) showToast("Couldn't refresh your order just now. Showing the last loaded details.");
+      else setLoadError(true);
     } finally {
       setLoading(false);
     }
+    return resolvedOrder;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   // currentOrderIdRef always holds the order actually selected RIGHT NOW,
@@ -313,10 +336,17 @@ export default function CustomerPortal() {
     // can survive onto the new one.
     setFiles([]);
     setMessages([]);
-    setOrder(o);
-    applyCompletions(o);
     setActiveTab('dashboard'); // land somewhere orienting, not a stale tab from the old order
     setSwitcherOpen(false);
+    // `o` comes from the order list fetched once per session — switching
+    // back to an order edited since showed its old details and cleared real
+    // checkmarks. Load it fresh (the session is now bound to it); fall back
+    // to the list copy only if that load fails.
+    const fresh = await loadOrder();
+    if (!fresh) {
+      setOrder(o);
+      applyCompletions(o);
+    }
   }
 
   useEffect(() => { loadOrder(); }, [loadOrder]);
@@ -364,10 +394,33 @@ export default function CustomerPortal() {
   // of them non-chat system tags, badge showed "15" for 1 actual message).
   // isPortalChatMessage() isolates genuine chat posts (tagged `[PORTAL]` at
   // send time — see /api/monday/messages.js) before counting staff ones.
-  const unreadMessages = useMemo(
-    () => messages.filter(m => isPortalChatMessage(m) && isStaffMessage(m)).length,
-    [messages]
-  );
+  //
+  // Audit 2026-10-09: the badge counted every staff message ever sent, so it
+  // never went down, and staff replies in Monday threads never counted. It
+  // now counts staff messages and staff replies newer than the last time
+  // the customer opened the Messages tab for this order (per-order
+  // timestamp in localStorage — a per-browser convenience, not a record).
+  useEffect(() => {
+    if (!order?.id) return;
+    try { setMessagesSeenAt(Number(localStorage.getItem(`summit_messages_seen_${order.id}`)) || 0); }
+    catch { setMessagesSeenAt(0); }
+  }, [order?.id]);
+  useEffect(() => {
+    if (activeTab !== 'messages' || !order?.id) return;
+    const now = Date.now();
+    setMessagesSeenAt(now);
+    try { localStorage.setItem(`summit_messages_seen_${order.id}`, String(now)); } catch {}
+  }, [activeTab, messages, order?.id]);
+  const unreadMessages = useMemo(() => {
+    const isNew = (ts) => new Date(ts).getTime() > messagesSeenAt;
+    let count = 0;
+    for (const m of messages) {
+      if (!isPortalChatMessage(m)) continue;
+      if (isStaffMessage(m) && isNew(m.created_at)) count++;
+      for (const r of m.replies || []) if (isStaffReply(r) && isNew(r.created_at)) count++;
+    }
+    return count;
+  }, [messages, messagesSeenAt]);
 
   // Forms for this customer's product type
   const productForms = useMemo(() => Object.entries(formMap).filter(([, f]) =>
@@ -400,11 +453,27 @@ export default function CustomerPortal() {
       showToast('Could not select that order. Please try again.');
       return;
     }
-    setOrder(o);
     setOrders(null);
     setAllOrders(orders); // already have the full list in memory — no need for the switcher's background fetch to re-fetch it
-    applyCompletions(o);
+    // The picker's copy has no mirror columns or files — load the full order
+    // now that the session is bound to it (see switchOrder).
+    const fresh = await loadOrder();
+    if (!fresh) {
+      setOrder(o);
+      applyCompletions(o);
+    }
   }} />;
+
+  if (!order && loadError) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', padding: 24 }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
+        <h2>We couldn&apos;t load your order</h2>
+        <p style={{ color: 'var(--mut)', marginTop: 6 }}>This is usually temporary. Please try again in a moment.</p>
+        <button className="btn btn-moss btn-sm" style={{ marginTop: 16 }} onClick={() => { setLoading(true); loadOrder(); }}>Try Again</button>
+      </div>
+    </div>
+  );
 
   if (!order) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', padding: 24 }}>
@@ -556,7 +625,7 @@ export default function CustomerPortal() {
           <main className="main">
             {activeTab === 'contact'      && <ContactTab      order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('billing')} />}
             {activeTab === 'billing'      && <BillingTab      order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('delivery')} onBack={() => setActiveTab('contact')} onOrderRefresh={loadOrder} />}
-            {activeTab === 'delivery'     && <DeliveryTab     order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('color')} onBack={() => setActiveTab('billing')} />}
+            {activeTab === 'delivery'     && <DeliveryTab     order={order} completions={completions} markComplete={markComplete} showToast={showToast} onNext={() => setActiveTab('color')} onBack={() => setActiveTab('billing')} onOrderRefresh={loadOrder} />}
             {activeTab === 'color' && (
               // colorSelectionWritable guards against routing a customer into a
               // picker that can never save — see lib/monday.js's parseOrderItem
@@ -647,18 +716,66 @@ export default function CustomerPortal() {
 
 // ── Shared save helper ────────────────────────────────────────────────────────
 
-async function saveSetup(tab, data) {
-  const res = await fetch('/api/portal/setup', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tab, data }),
-  });
-  if (!res.ok) {
-    const d = await res.json();
-    throw new Error(d.error || 'Save failed.');
+// orderId is the order this page is showing. The session cookie is shared by
+// every browser tab, so if the customer switched orders in another tab the
+// API answers 409 ORDER_MISMATCH instead of writing onto the other order, and
+// the page reloads to show the order the session is now on.
+//
+// Errors carry a message safe to show as-is: a non-JSON body (Vercel's own
+// 413 for an oversized upload, a 504 timeout page) used to surface raw
+// JSON-parse error text in the toast.
+async function saveSetup(tab, data, orderId) {
+  let res;
+  try {
+    res = await fetch('/api/portal/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tab, data, orderId }),
+    });
+  } catch {
+    throw new Error('Could not reach the server. Check your connection and try again.');
   }
-  return res.json();
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (d.code === 'ORDER_MISMATCH' && typeof window !== 'undefined') {
+      setTimeout(() => window.location.reload(), 2500);
+    }
+    if (res.status === 413) throw new Error('That file is too large to upload. Please use a file under 3 MB.');
+    if (res.status === 504) throw new Error('This is taking longer than expected. Please wait a minute, then check whether it saved before trying again.');
+    throw new Error(d.error || 'Save failed. Please try again.');
+  }
+  return d;
 }
+
+// Only http(s) links from Monday are rendered as clickable links/embeds —
+// React does not block a `javascript:` href, and these values are typed by
+// staff (or anyone with Monday edit access) into order columns.
+function safeHref(url) {
+  const u = typeof url === 'string' ? url.trim() : '';
+  return /^https?:///i.test(u) ? u : undefined;
+}
+
+// Contact values compared the way a person would: staff re-typing the same
+// phone number with different punctuation is still the same number.
+function normalizeContact(c) {
+  return {
+    name: String(c?.name || '').trim().replace(/s+/g, ' ').toLowerCase(),
+    phone: String(c?.phone || '').replace(/D/g, ''),
+    email: String(c?.email || '').trim().toLowerCase(),
+  };
+}
+function contactsMatch(a, b) {
+  const x = normalizeContact(a);
+  const y = normalizeContact(b);
+  return x.name === y.name && x.phone === y.phone && x.email === y.email;
+}
+// A pending contact correction stops showing after this long even if Monday's
+// mirror never matches exactly (staff may have applied it differently).
+const CONTACT_PENDING_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+
+// Vercel rejects request bodies over 4.5 MB before they reach the API, and
+// base64 adds about a third — so certificates are capped well under that.
+const MAX_CERT_BYTES = 3 * 1024 * 1024;
 
 /** Read a File object into a base64 string (stripped of the data: URL prefix) for
  *  the tax exemption certificate upload — sent as JSON to /api/portal/setup,
@@ -688,13 +805,22 @@ export function ContactTab({ order, completions, markComplete, showToast, onNext
   const [pendingUpdate, setPendingUpdate] = useState(() => {
     try {
       const raw = typeof window !== 'undefined' ? localStorage.getItem(pendingKey) : null;
-      return raw ? JSON.parse(raw) : null;
+      const parsed = raw ? JSON.parse(raw) : null;
+      // Expire old corrections — see CONTACT_PENDING_MAX_AGE_MS.
+      if (parsed?.submittedAt && Date.now() - parsed.submittedAt > CONTACT_PENDING_MAX_AGE_MS) {
+        localStorage.removeItem(pendingKey);
+        return null;
+      }
+      return parsed;
     } catch { return null; }
   });
   // Once staff applies the correction in Monday, the mirror fields will match
-  // what was pending — clear the local flag so we don't show a stale "pending" banner forever.
+  // what was pending — clear the local flag so we don't show a stale "pending"
+  // banner forever. Compared normalized (contactsMatch): an exact comparison
+  // never cleared when staff entered the same phone with other punctuation,
+  // leaving the banner up and hiding Monday's real values for good.
   useEffect(() => {
-    if (pendingUpdate && order.contactName === pendingUpdate.name && order.contactPhone === pendingUpdate.phone && order.contactEmail === pendingUpdate.email) {
+    if (pendingUpdate && contactsMatch(pendingUpdate, { name: order.contactName, phone: order.contactPhone, email: order.contactEmail })) {
       setPendingUpdate(null);
       try { localStorage.removeItem(pendingKey); } catch {}
     }
@@ -728,14 +854,21 @@ export function ContactTab({ order, completions, markComplete, showToast, onNext
     setErrors({});
     setSaving(true);
     try {
-      await saveSetup('contact_update', { name, phone, email });
-      const pending = { name, phone, email };
-      setPendingUpdate(pending);
-      try { localStorage.setItem(pendingKey, JSON.stringify(pending)); } catch {}
-      setEditing(false);
+      await sendContactUpdate();
       showToast('Contact update submitted — our team will confirm within 1 business day.');
-    } catch { showToast('Error saving. Please try again.'); }
+    } catch (err) { showToast(err?.message || 'Error saving. Please try again.'); }
     finally { setSaving(false); }
+  }
+
+  // Posts the typed contact details for staff review (contact_update also
+  // marks Contact complete server-side) and remembers them as pending.
+  async function sendContactUpdate() {
+    const result = await saveSetup('contact_update', { name, phone, email }, order.id);
+    const pending = { name, phone, email, submittedAt: Date.now() };
+    setPendingUpdate(pending);
+    try { localStorage.setItem(pendingKey, JSON.stringify(pending)); } catch {}
+    setEditing(false);
+    return result;
   }
 
   async function confirm() {
@@ -760,15 +893,37 @@ export function ContactTab({ order, completions, markComplete, showToast, onNext
       showToast('Please complete all required contact fields before continuing.');
       return;
     }
+    // Details typed into the form but never sent with "Submit Changes" used
+    // to be dropped here: this button sent an empty confirmation, Contact
+    // was marked complete, and staff never saw what the customer entered
+    // (audit 2026-10-09). Anything that differs from what Monday (or an
+    // already-submitted correction) holds is now sent for review first.
+    const local = { name, phone, email };
+    const mirror = { name: order.contactName, phone: order.contactPhone, email: order.contactEmail };
+    const hasUnsentEdits = !contactsMatch(local, mirror) && !(pendingUpdate && contactsMatch(local, pendingUpdate));
+    if (hasUnsentEdits) {
+      const errs = validate();
+      if (Object.keys(errs).length > 0) {
+        setErrors(errs);
+        setEditing(true);
+        showToast('Please complete all required contact fields before continuing.');
+        return;
+      }
+      setErrors({});
+    }
     setSaving(true);
     try {
-      const result = await saveSetup('contact', {});
+      const result = hasUnsentEdits
+        ? await sendContactUpdate()
+        : await saveSetup('contact', {}, order.id);
       markComplete('contact', !result.checklistSyncPending);
       showToast(result.checklistSyncPending
         ? "Saved — confirming with our system now. This may take a moment to show as complete."
-        : 'Contact information confirmed.');
+        : hasUnsentEdits
+          ? 'Contact details sent — our team will confirm within 1 business day.'
+          : 'Contact information confirmed.');
       onNext();
-    } catch { showToast('Error saving. Please try again.'); }
+    } catch (err) { showToast(err?.message || 'Error saving. Please try again.'); }
     finally { setSaving(false); }
   }
 
@@ -942,7 +1097,7 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
         billingAddress, billingAddressSuite, billingCity, billingState, billingZip, billingCountry,
         billingContactSameAsPrimary: sameContact,
         billingName, billingPhone, billingEmail,
-      });
+      }, order.id);
       markComplete('billing', !billingResult.checklistSyncPending);
       showToast(billingResult.checklistSyncPending
         ? "Saved — confirming with our system now. This may take a moment to show as complete."
@@ -951,7 +1106,7 @@ function BillingTab({ order, completions, markComplete, showToast, onNext, onBac
       // immediately as the Delivery Logistics tab's default ship-to address.
       await onOrderRefresh?.();
       onNext();
-    } catch { showToast('Error saving. Please try again.'); }
+    } catch (err) { showToast(err?.message || 'Error saving. Please try again.'); }
     finally { setSaving(false); }
   }
 
@@ -1174,7 +1329,7 @@ export function addressOnFileParts(order) {
   return { line1: '', line2: '', city: '', state: '', zip: '', country: '' };
 }
 
-export function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBack }) {
+export function DeliveryTab({ order, completions, markComplete, showToast, onNext, onBack, onOrderRefresh }) {
   // Lock logistics editing once order has shipped
   const shippedIdx = order.stages?.findIndex(s => s.key === 'shipped') ?? 3;
   const isShipped = order.stageIndex >= shippedIdx;
@@ -1448,8 +1603,13 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
         // used to be stamped with tomorrow's date).
         freightAckDate: (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })(),
       };
-      const deliveryResult = await saveSetup('delivery', deliveryPayload);
+      const deliveryResult = await saveSetup('delivery', deliveryPayload, order.id);
       markComplete('delivery', !deliveryResult.checklistSyncPending);
+      // Reload the order so this tab (and anything reading the snapshot)
+      // shows what was just saved. Without it, coming back to this tab
+      // re-seeded the form from the pre-save snapshot, and a resubmit wrote
+      // the OLD address back onto the order (audit 2026-10-09).
+      await onOrderRefresh?.();
       if (changedRestricted.length > 0) setShowRestrictionNote(true);
       else {
         showToast(deliveryResult.checklistSyncPending
@@ -1876,16 +2036,24 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
   // /api/portal/setup endpoint every other tab already uses.
   const [saving, setSaving] = useState(false);
   async function complete() {
+    // Audit 2026-10-09: this was clickable with no form assigned and before
+    // any form was submitted, flipping Portal: Colors to done and stopping
+    // reminders for colors nobody had chosen. The embed reports a real
+    // submission (formSubmitted); a form opened in a new tab can't, so ask.
+    if (!formSubmitted && !completions.color && typeof window !== 'undefined'
+      && !window.confirm('Have you submitted your color selection form? Only mark this complete after submitting it.')) {
+      return;
+    }
     setSaving(true);
     try {
-      const colorResult = await saveSetup('color', {});
+      const colorResult = await saveSetup('color', {}, order.id);
       markComplete('color', !colorResult.checklistSyncPending);
       showToast(colorResult.checklistSyncPending
         ? "Saved — confirming with our system now. This may take a moment to show as complete."
         : 'Color selections marked complete.');
       onNext();
-    } catch {
-      showToast('Error saving. Please try again.');
+    } catch (err) {
+      showToast(err?.message || 'Error saving. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -1997,13 +2165,18 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
 
       <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
         <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back</button>
-        <button
-          className="btn btn-moss"
-          onClick={complete}
-          disabled={saving}
-        >
-          {saving ? 'Saving…' : 'Mark as Complete & Continue →'}
-        </button>
+        {formId || colorForms.length > 0 ? (
+          <button
+            className="btn btn-moss"
+            onClick={complete}
+            disabled={saving}
+          >
+            {saving ? 'Saving…' : 'Mark as Complete & Continue →'}
+          </button>
+        ) : (
+          // Nothing to complete until staff assign a form.
+          <button className="btn btn-ghost" onClick={onNext}>Continue →</button>
+        )}
       </div>
     </>
   );
@@ -2662,7 +2835,7 @@ function InstallationTab({ order, onNav }) {
                   <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: 'var(--paper)', borderRadius: 10, border: '1px solid var(--line)' }}>
                     <div style={{ flex: 1, fontWeight: 600, fontSize: 14 }}>{link.label}</div>
                     <a
-                      href={link.url}
+                      href={safeHref(link.url)}
                       target="_blank"
                       rel="noreferrer"
                       title={`Open ${link.label}`}
@@ -2690,7 +2863,7 @@ function InstallationTab({ order, onNav }) {
                 if (!embed) {
                   return (
                     <div key={i} style={{ marginBottom: 10 }}>
-                      <a href={url} target="_blank" rel="noreferrer" className="btn btn-ghost">▶ View Video →</a>
+                      <a href={safeHref(url)} target="_blank" rel="noreferrer" className="btn btn-ghost">▶ View Video →</a>
                     </div>
                   );
                 }
@@ -2732,7 +2905,7 @@ function InstallationTab({ order, onNav }) {
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {docs.map((doc, i) => (
-                  <a key={i} href={doc.url} target="_blank" rel="noreferrer"
+                  <a key={i} href={safeHref(doc.url)} target="_blank" rel="noreferrer"
                     style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: 'var(--paper)', borderRadius: 10, border: '1px solid var(--line)', textDecoration: 'none', color: 'var(--ink)', transition: '.15s' }}
                     onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--moss)'}
                     onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--line)'}
@@ -2813,7 +2986,7 @@ function FilesTab({ files }) {
               <div className="t">{file.name}</div>
               <div className="d">{file.file_extension?.toUpperCase()}{file.file_size && ` · ${fileSize(file.file_size)}`}{file.created_at && ` · ${new Date(file.created_at).toLocaleDateString()}`}</div>
             </div>
-            <a href={file.public_url} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">Download</a>
+            <a href={safeHref(file.public_url)} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">Download</a>
           </div>
         ))}
       </div>
@@ -2851,12 +3024,12 @@ function InvoiceTab({ order, showToast, onRefresh }) {
           <div className="card pad0" style={{ marginBottom: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid var(--line)' }}>
               <h3 style={{ fontSize: 16, margin: 0 }}>Your Invoice</h3>
-              <a href={order.invoiceLink} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">
+              <a href={safeHref(order.invoiceLink)} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">
                 Open in New Tab →
               </a>
             </div>
             <iframe
-              src={order.invoiceLink}
+              src={safeHref(order.invoiceLink)}
               title="Invoice"
               className="jf-embed"
               style={{ width: '100%', height: 700, border: 'none', display: 'block' }}
@@ -2872,7 +3045,7 @@ function InvoiceTab({ order, showToast, onRefresh }) {
               <p style={{ color: 'var(--mut)', fontSize: 14, marginBottom: 20 }}>
                 Click below to securely submit your payment. Your order will be released to ship once payment is confirmed.
               </p>
-              <a href={order.paymentLink} target="_blank" rel="noreferrer" className="btn btn-moss" style={{ display: 'inline-flex', fontSize: 15, padding: '12px 28px' }}>
+              <a href={safeHref(order.paymentLink)} target="_blank" rel="noreferrer" className="btn btn-moss" style={{ display: 'inline-flex', fontSize: 15, padding: '12px 28px' }}>
                 Submit Payment →
               </a>
             </div>
@@ -2921,12 +3094,12 @@ export function TaxExemptionCard({ order, showToast, onRefresh }) {
     setChoice('no');
     setSaving(true);
     try {
-      await saveSetup('tax_exemption', { taxExempt: false });
+      await saveSetup('tax_exemption', { taxExempt: false }, order.id);
       showToast('Got it — sales tax will apply to your invoice.');
       onRefresh?.();
-    } catch {
+    } catch (err) {
       setChoice(previousChoice); // revert on failure
-      showToast('Error saving. Please try again.');
+      showToast(err?.message || 'Error saving. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -2942,6 +3115,10 @@ export function TaxExemptionCard({ order, showToast, onRefresh }) {
       showToast('Please select your tax exemption certificate to upload.');
       return;
     }
+    if (file.size > MAX_CERT_BYTES) {
+      showToast('That file is larger than 3 MB. Please upload a smaller scan or photo (or a PDF), or email it to us.');
+      return;
+    }
     setSaving(true);
     try {
       const fileBase64 = await fileToBase64(file);
@@ -2950,12 +3127,12 @@ export function TaxExemptionCard({ order, showToast, onRefresh }) {
         fileBase64,
         fileName: file.name,
         mimeType: file.type,
-      });
+      }, order.id);
       showToast("Certificate uploaded — we'll review it and remove sales tax once approved.");
       setFile(null);
       onRefresh?.();
-    } catch {
-      showToast('Error uploading your certificate. Please try again.');
+    } catch (err) {
+      showToast(err?.message ? `Error uploading your certificate: ${err.message}` : 'Error uploading your certificate. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -2998,7 +3175,16 @@ export function TaxExemptionCard({ order, showToast, onRefresh }) {
             <input
               type="file"
               accept=".pdf,.jpg,.jpeg,.png"
-              onChange={e => setFile(e.target.files?.[0] || null)}
+              onChange={e => {
+                const picked = e.target.files?.[0] || null;
+                if (picked && picked.size > MAX_CERT_BYTES) {
+                  showToast('That file is larger than 3 MB. Please upload a smaller scan or photo (or a PDF), or email it to us.');
+                  e.target.value = '';
+                  setFile(null);
+                  return;
+                }
+                setFile(picked);
+              }}
               required
             />
           </div>

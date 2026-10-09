@@ -1,7 +1,7 @@
 /**
  * POST /api/portal/setup
  * Saves customer account setup data for a given tab.
- * Body: { tab, data }
+ * Body: { tab, data, orderId } — orderId is the order the page is showing (409 on mismatch)
  *
  * Tabs handled:
  *   contact         — confirmation only (data lives in Monday mirrors)
@@ -26,6 +26,7 @@ import {
   PORTAL_DONE_LABEL,
 } from '../../../lib/monday';
 import { requireCustomerSession, loadSessionOrder, enforceRateLimit } from '../../../lib/apiAuth';
+import { rejectOrderMismatch, staffActorNote } from '../../../lib/portalRequest';
 
 // PORTAL-017: the Delivery tab's UI hides its form once an order has shipped
 // (order.stageIndex >= shippedIdx, see DeliveryTab in pages/portal/index.js),
@@ -224,8 +225,9 @@ export default async function handler(req, res) {
   // save. See lib/rateLimit.js for the in-memory limiter's scope/limitations.
   if (!enforceRateLimit(res, `portal-setup:${session.email}`, { maxRequests: 20, windowMs: 60_000 })) return;
 
-  const { tab, data } = req.body || {};
+  const { tab, data, orderId } = req.body || {};
   if (!tab || !data) return res.status(400).json({ error: 'tab and data required.' });
+  if (rejectOrderMismatch(res, session, orderId, 'portal-setup')) return;
 
   const validationError = validateSetupData(tab, data);
   if (validationError) return res.status(400).json({ error: validationError });
@@ -241,15 +243,21 @@ export default async function handler(req, res) {
   const order = await loadSessionOrder(session, res, { logPrefix: 'portal-setup' });
   if (!order) return;
 
+  // Staff "view as customer" actions are attributed to the staff member in
+  // the order's audit trail and team emails, not passed off as the customer's.
+  const actorNote = staffActorNote(session);
+  const actorEmail = actorNote ? `${session.email}${actorNote}` : session.email;
+  const postTagged = (tag, content) => postTaggedUpdate(order.id, tag, `${content}${actorNote}`);
+
   try {
     switch (tab) {
 
       // ── Tab 1: Contact — confirmation only ──────────────────────────────
       case 'contact': {
-        await postTaggedUpdate(order.id, 'PORTAL: Contact Confirmed',
+        await postTagged('PORTAL: Contact Confirmed',
           `Customer confirmed contact information on ${new Date().toLocaleDateString()}.`
         );
-        await notifyTeamContactChange(order.name, session.email, ['Contact Information Confirmed']).catch(console.error);
+        await notifyTeamContactChange(order.name, actorEmail, ['Contact Information Confirmed']).catch(console.error);
         // PORTAL-014: retried and reported honestly instead of swallowed —
         // see markSectionCompleteSafe() in lib/monday.js.
         const contactSynced = await markSectionCompleteSafe(order.id, 'portalContact');
@@ -265,10 +273,10 @@ export default async function handler(req, res) {
           phone    ? `Phone: ${phone}` : null,
           newEmail ? `Email: ${newEmail}` : null,
         ].filter(Boolean);
-        await postTaggedUpdate(order.id, 'PORTAL: Contact Update Requested', lines.join('\n'));
+        await postTagged('PORTAL: Contact Update Requested', lines.join('\n'));
         await notifyTeamContactChange(
           order.name,
-          session.email,
+          actorEmail,
           [name && 'Name', phone && 'Phone', newEmail && 'Email'].filter(Boolean)
         ).catch(console.error);
         const contactUpdateSynced = await markSectionCompleteSafe(order.id, 'portalContact');
@@ -314,7 +322,7 @@ export default async function handler(req, res) {
           billingContactSameAsPrimary, billingName, billingPhone, billingEmail,
         }) });
 
-        await postTaggedUpdate(order.id, 'PORTAL: Billing Information',
+        await postTagged('PORTAL: Billing Information',
           `Billing Address: ${addressText}\nBilling Contact: ${contactText}\nSubmitted: ${new Date().toLocaleDateString()}`
         );
         // "Contact Info Changed" only when billing was already complete — a
@@ -322,7 +330,7 @@ export default async function handler(req, res) {
         // Billing column), and alerting on it sent 3–4 "changed" emails per
         // new customer (40 in three weeks).
         if (order.progress?.billing === PORTAL_DONE_LABEL) {
-          await notifyTeamContactChange(order.name, session.email, ['Billing Information']).catch(console.error);
+          await notifyTeamContactChange(order.name, actorEmail, ['Billing Information']).catch(console.error);
         }
         const billingSynced = await markSectionCompleteSafe(order.id, 'portalBilling');
         return res.status(200).json({ ok: true, checklistSyncPending: !billingSynced });
@@ -425,7 +433,7 @@ export default async function handler(req, res) {
           `Submitted: ${new Date().toLocaleDateString()}`,
         ].filter(Boolean);
 
-        await postTaggedUpdate(order.id, 'PORTAL: Delivery Details', lines.join('\n'));
+        await postTagged('PORTAL: Delivery Details', lines.join('\n'));
 
         // PORTAL-018: the freight acknowledgment used to be a SECOND,
         // separate POST from the frontend (saveSetup('freight_ack', ...)
@@ -444,7 +452,7 @@ export default async function handler(req, res) {
         // compatibility with any in-flight requests from an older
         // deployed frontend.
         if (freightAckBy && freightAckDate) {
-          await postTaggedUpdate(order.id, 'PORTAL: Freight Delivery Acknowledgment',
+          await postTagged('PORTAL: Freight Delivery Acknowledgment',
             `Acknowledged by: ${freightAckBy}\nDate: ${freightAckDate}\nCustomer has read and agreed to all freight delivery requirements.`
           );
         }
@@ -515,7 +523,7 @@ export default async function handler(req, res) {
           // Restricted fields always alert (they need Summit's confirmation);
           // otherwise only a change to an already-completed Delivery tab does.
           if (safeChangedRestricted.length > 0 || order.progress?.delivery === PORTAL_DONE_LABEL) {
-            await notifyTeamContactChange(order.name, session.email, notifyFields).catch(console.error);
+            await notifyTeamContactChange(order.name, actorEmail, notifyFields).catch(console.error);
           }
         }
 
@@ -531,7 +539,7 @@ export default async function handler(req, res) {
           return res.status(409).json({ error: 'This order has already shipped — the freight acknowledgment can no longer be submitted through the portal.' });
         }
         const { acknowledgedBy, acknowledgedAt } = data;
-        await postTaggedUpdate(order.id, 'PORTAL: Freight Delivery Acknowledgment',
+        await postTagged('PORTAL: Freight Delivery Acknowledgment',
           `Acknowledged by: ${acknowledgedBy}\nDate: ${acknowledgedAt}\nCustomer has read and agreed to all freight delivery requirements.`
         );
         const freightAckSynced = await markSectionCompleteSafe(order.id, 'portalDelivery');
@@ -540,7 +548,7 @@ export default async function handler(req, res) {
 
       // ── Tab 4: Color Selections ─────────────────────────────────────────
       case 'color': {
-        await postTaggedUpdate(order.id, 'PORTAL: Color Selections',
+        await postTagged('PORTAL: Color Selections',
           `Customer marked color and product selections complete on ${new Date().toLocaleDateString()}.`
         );
         const colorSynced = await markSectionCompleteSafe(order.id, 'portalColors');
@@ -554,7 +562,7 @@ export default async function handler(req, res) {
         // "No" — record it and stop. No certificate requested; sales tax applies.
         if (!taxExempt) {
           await setStatusLabel(order.id, 'taxExemptStatus', TAX_EXEMPT_NO_LABEL);
-          await postTaggedUpdate(order.id, 'PORTAL: Tax Exempt - No',
+          await postTagged('PORTAL: Tax Exempt - No',
             `Customer indicated they are NOT tax-exempt on ${new Date().toLocaleDateString()}. Sales tax applies to this order.`
           );
           return res.status(200).json({ ok: true });
@@ -568,10 +576,10 @@ export default async function handler(req, res) {
         const buffer = Buffer.from(fileBase64, 'base64');
         await uploadFileToColumn(order.id, COLS.taxExemptCertFile, buffer, fileName, mimeType);
         await setStatusLabel(order.id, 'taxExemptStatus', TAX_EXEMPT_YES_LABEL);
-        await postTaggedUpdate(order.id, 'PORTAL: Tax Exemption Certificate Uploaded',
+        await postTagged('PORTAL: Tax Exemption Certificate Uploaded',
           `Customer uploaded a tax exemption certificate (${fileName}) on ${new Date().toLocaleDateString()}.`
         );
-        await notifyTeamFormCompleted(order.name, session.email, 'Tax Exemption Certificate').catch(console.error);
+        await notifyTeamFormCompleted(order.name, actorEmail, 'Tax Exemption Certificate').catch(console.error);
 
         return res.status(200).json({ ok: true });
       }

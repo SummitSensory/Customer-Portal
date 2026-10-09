@@ -54,6 +54,7 @@ describe('TaxExemptionCard.chooseNo() — revert on failed save (PORTAL-066)', (
 
     await waitFor(() => expect(noButton.className).not.toMatch(/btn-moss/));
     expect(noButton.className).toMatch(/btn-ghost/);
-    expect(toasts.some((t) => /error/i.test(t))).toBe(true);
+    // The server's own message is shown now (it says what went wrong).
+    expect(toasts.some((t) => /Monday write failed/.test(t))).toBe(true);
   });
 });

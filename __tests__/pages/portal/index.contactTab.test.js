@@ -77,6 +77,36 @@ describe('ContactTab.confirm() — auto-edit-mode customers can actually confirm
     expect(screen.queryByRole('button', { name: /Submit Changes/ })).not.toBeInTheDocument();
   });
 
+  // Audit 2026-10-09: typing the details and clicking the main "Confirm &
+  // Continue" (without "Submit Changes" first) sent an empty confirmation —
+  // Contact was marked complete and staff never saw what was typed.
+  it('Confirm & Continue with typed-but-unsent details sends them to staff instead of dropping them', async () => {
+    const bodies = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      bodies.push(body);
+      return { ok: true, json: async () => ({ ok: true, checklistSyncPending: false }) };
+    }));
+    const onNext = vi.fn();
+    const markComplete = vi.fn();
+    const user = userEvent.setup();
+
+    render(<ContactTab order={newOrderWithBlankMirrors()} completions={{}} markComplete={markComplete} showToast={() => {}} onNext={onNext} />);
+    await user.type(screen.getByPlaceholderText('Full name'), 'Jane Doe');
+    await user.type(screen.getByPlaceholderText('email@example.com'), 'jane@example.com');
+    await user.type(screen.getByPlaceholderText('+1 303 555 0100'), '303-555-0100');
+    await user.click(screen.getByRole('button', { name: /Confirm & Continue/ }));
+
+    await waitFor(() => expect(onNext).toHaveBeenCalledTimes(1));
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({
+      tab: 'contact_update',
+      data: { name: 'Jane Doe', phone: '303-555-0100', email: 'jane@example.com' },
+      orderId: 'order-new',
+    });
+    expect(markComplete).toHaveBeenCalledWith('contact', true);
+  });
+
   it('still blocks confirm with the real error when there is truly no contact info anywhere (no regression)', async () => {
     const toasts = [];
     const onNext = vi.fn();

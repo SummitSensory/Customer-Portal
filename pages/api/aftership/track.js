@@ -25,13 +25,26 @@ export default async function handler(req, res) {
   let order = null;
   let shipmentKey = null;
   let accessoryItemName = null;
+  // The carrier slug sent to AfterShip. For a customer it comes from the
+  // order itself, not the request — a client-chosen slug could register the
+  // order's tracking number with AfterShip under the wrong carrier.
+  let effectiveSlug = slug;
 
   if (!staffSession) {
     const cookies = parse(req.headers.cookie || '');
     const customerSession = await verifyCustomerSession(cookies[SESSION_COOKIE]);
     if (!customerSession) return res.status(401).json({ error: 'Not authenticated.' });
+    if (!customerSession.orderId) return res.status(400).json({ error: 'No order selected.' });
 
-    order = await getOrderById(customerSession.orderId);
+    // Previously outside any try: a Monday failure here crashed the route
+    // with a raw 500 instead of a clean error.
+    try {
+      order = await getOrderById(customerSession.orderId);
+    } catch (err) {
+      console.error('AfterShip track endpoint: order load failed:', err.message);
+      return res.status(500).json({ error: 'Failed to fetch tracking info.' });
+    }
+    if (!order) return res.status(404).json({ error: 'Order not found.' });
 
     const matsNumbers = order?.matTracking && order.matTracking !== 'N/A'
       ? order.matTracking.split(',').map(t => t.trim())
@@ -56,12 +69,14 @@ export default async function handler(req, res) {
     // A generic/legacy tracking number (order.trackingNumber /
     // order.matTracking with no live column behind it — see lib/monday.js's
     // COLS.matTracking) falls back to the bare order name, same as before.
-    if (number === order?.frameTrackingId) shipmentKey = 'frame';
-    else if (number === order?.matsTrackingId || matsNumbers.includes(number)) shipmentKey = 'mats';
+    let orderSlug = '';
+    if (number === order?.frameTrackingId) { shipmentKey = 'frame'; orderSlug = order.frameCarrierSlug; }
+    else if (number === order?.matsTrackingId || matsNumbers.includes(number)) { shipmentKey = 'mats'; orderSlug = order.matsCarrierSlug; }
     else {
       const accessoryMatch = (order?.accessoryItems || []).find((a) => a.trackingNumber === number);
-      if (accessoryMatch) { shipmentKey = 'accessory'; accessoryItemName = accessoryMatch.name; }
+      if (accessoryMatch) { shipmentKey = 'accessory'; accessoryItemName = accessoryMatch.name; orderSlug = accessoryMatch.carrierSlug; }
     }
+    if (orderSlug && orderSlug.trim()) effectiveSlug = orderSlug.trim();
   }
 
   try {
@@ -71,7 +86,7 @@ export default async function handler(req, res) {
     // for the customer-session path — a staff lookup has no `order` loaded.
     const { primary, secondary } = order ? resolveDeliveryContacts(order) : {};
     const contacts = [primary, secondary].filter(Boolean);
-    const tracking = await trackShipment(slug, number, {
+    const tracking = await trackShipment(effectiveSlug, number, {
       title: buildTrackingTitle(order?.name, shipmentKey, accessoryItemName) || order?.name,
       orderId: order?.id,
       customerName: order?.name,

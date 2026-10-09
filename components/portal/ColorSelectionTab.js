@@ -24,9 +24,24 @@ const DEFAULT_API_BASE = '/api/portal/color-selection';
 // sandboxed endpoint instead of the real customer API — no separate copy
 // of the picker to keep in sync, no risk of drifting from what customers
 // actually get. See pages/portal/color-preview.js.
-async function fetchSelection(apiBase) {
-  const res = await fetch(apiBase);
-  if (!res.ok) throw new Error('Failed to load color selections.');
+//
+// orderId is the order this page is showing: the API rejects a request for
+// any other order with 409 ORDER_MISMATCH (the customer switched orders in
+// another tab, re-binding the shared session cookie), and the page reloads
+// rather than writing these picks onto the other order.
+function reloadOnOrderMismatch(data) {
+  if (data?.code === 'ORDER_MISMATCH' && typeof window !== 'undefined') {
+    setTimeout(() => window.location.reload(), 2500);
+  }
+}
+
+async function fetchSelection(apiBase, orderId) {
+  const res = await fetch(orderId ? `${apiBase}?orderId=${encodeURIComponent(orderId)}` : apiBase);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    reloadOnOrderMismatch(data);
+    throw new Error(data.error || 'Failed to load color selections.');
+  }
   return res.json();
 }
 
@@ -37,8 +52,20 @@ async function saveSelection(apiBase, body) {
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Error saving. Please try again.');
+  if (!res.ok) {
+    reloadOnOrderMismatch(data);
+    throw new Error(data.error || 'Error saving. Please try again.');
+  }
   return data;
+}
+
+// A saved pick whose code is no longer in the catalog (e.g. one of the
+// Prismatic SKUs retired 2026-09-03 — still valid and priced for orders that
+// chose it) used to render as "—", reading as "nothing picked". Show the
+// raw brand and code instead.
+function retiredLabel(selection) {
+  if (!selection?.code) return '—';
+  return `${selection.brand ? `${selection.brand} — ` : ''}${selection.code} (retired)`;
 }
 
 function partIsFilled(selections, inputKey, part) {
@@ -581,9 +608,9 @@ function Summary({ requiredInputs, selections, onConfirm, onBack, confirming }) 
                 <>
                   <span className="cs-summary-brand">{line.selection.brand}</span> — {displayColorName(line.color)}
                 </>
-              ) : '—'}
+              ) : retiredLabel(line.selection)}
             </span>
-            <span className="cs-summary-code">{line.color ? (line.color.code || line.color.sku || '—') : '—'}</span>
+            <span className="cs-summary-code">{line.color ? (line.color.code || line.color.sku || '—') : (line.selection?.code || '—')}</span>
             <span className="cs-summary-amount">{line.amount > 0 ? `$${line.amount.toLocaleString()}` : '—'}</span>
           </div>
         ))}
@@ -628,9 +655,12 @@ function RunningTotal({ total }) {
 // independently enforces the same rule (pages/api/portal/color-selection.js
 // rejects any further write once confirmedAt is set), so this view can't
 // drift into showing an editable UI the backend would just reject anyway.
-function ConfirmedView({ requiredInputs, selections, confirmedAt }) {
+function ConfirmedView({ requiredInputs, selections, confirmedAt, storedTotal }) {
   const lines = computeLineItemPricing(requiredInputs, selections);
-  const total = lines.reduce((sum, l) => sum + l.amount, 0);
+  // The total actually priced at confirmation (stored in the snapshot) wins
+  // over a re-price from today's inputs, which drift if staff change a gate
+  // after the customer confirmed.
+  const total = typeof storedTotal === 'number' ? storedTotal : lines.reduce((sum, l) => sum + l.amount, 0);
   // Real bug found by independent code review (2026-09-02) — the exact same
   // gap already fixed on the admin side: requiredInputs reflects the
   // order's CURRENT productType only. If productType is edited on Monday
@@ -653,8 +683,8 @@ function ConfirmedView({ requiredInputs, selections, confirmedAt }) {
         {lines.map((line) => (
           <div className="cs-summary-row" key={`${line.inputKey}-${line.part}`}>
             <span className="cs-summary-part">{PART_LABELS[line.part] || line.part}</span>
-            <span>{line.color ? (<><span className="cs-summary-brand">{line.selection.brand}</span> — {displayColorName(line.color)}</>) : '—'}</span>
-            <span className="cs-summary-code">{line.color ? (line.color.code || line.color.sku || '—') : '—'}</span>
+            <span>{line.color ? (<><span className="cs-summary-brand">{line.selection.brand}</span> — {displayColorName(line.color)}</>) : retiredLabel(line.selection)}</span>
+            <span className="cs-summary-code">{line.color ? (line.color.code || line.color.sku || '—') : (line.selection?.code || '—')}</span>
             <span className="cs-summary-amount">{line.amount > 0 ? `$${line.amount.toLocaleString()}` : '—'}</span>
           </div>
         ))}
@@ -703,6 +733,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   // a customer sees a locked, informative screen instead of just having
   // their edits silently rejected.
   const [confirmedAt, setConfirmedAt] = useState(null);
+  const [storedTotal, setStoredTotal] = useState(null);
   const [view, setView] = useState('checklist'); // 'checklist' | { input } | 'summary'
   const [activePart, setActivePart] = useState(null);
   const [confirming, setConfirming] = useState(false);
@@ -731,7 +762,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     // actually changes. Caught in review before this shipped.
     let cancelled = false;
     setLoadError(false);
-    fetchSelection(apiBase)
+    fetchSelection(apiBase, order?.id)
       .then((data) => {
         if (cancelled) return;
         setRequiredInputs(data.requiredInputs || []);
@@ -739,6 +770,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
         latestSelectionsRef.current = loaded;
         setSelections(loaded);
         setConfirmedAt(data.confirmedAt || null);
+        setStoredTotal(typeof data.totalUpcharge === 'number' ? data.totalUpcharge : null);
       })
       .catch(() => {
         if (cancelled) return;
@@ -777,7 +809,11 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   // stale snapshot on exactly the rapid-selection case this exists to fix.
   const latestSelectionsRef = useRef(selections);
   const enqueueSaveRef = useRef(null);
-  if (!enqueueSaveRef.current) enqueueSaveRef.current = createSaveQueue((body) => saveSelection(apiBase, body));
+  // Read at send time (not captured once) so a queued save always names the
+  // order this tab is showing.
+  const orderIdRef = useRef(order?.id);
+  orderIdRef.current = order?.id;
+  if (!enqueueSaveRef.current) enqueueSaveRef.current = createSaveQueue((body) => saveSelection(apiBase, { ...body, orderId: orderIdRef.current }));
 
   // Real gap found by independent verification (2026-09-21): the revert-on-
   // failure fix below originally compared by VALUE ("is the current value
@@ -911,6 +947,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
       const result = await queueSave(true);
       markComplete('color', !result.checklistSyncPending);
       setConfirmedAt(new Date().toISOString());
+      if (typeof result.totalUpcharge === 'number') setStoredTotal(result.totalUpcharge);
       showToast(result.checklistSyncPending
         ? 'Saved — confirming with our system now. This may take a moment to show as complete.'
         : 'Color selections confirmed.');
@@ -964,7 +1001,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
 
   let body;
   if (confirmedAt) {
-    body = <ConfirmedView requiredInputs={requiredInputs} selections={selections} confirmedAt={confirmedAt} />;
+    body = <ConfirmedView requiredInputs={requiredInputs} selections={selections} confirmedAt={confirmedAt} storedTotal={storedTotal} />;
   } else if (view === 'summary') {
     body = (
       <Summary

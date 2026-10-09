@@ -12,7 +12,8 @@
  */
 
 import { getOrderById, postTaggedUpdate, markSectionCompleteSafe, writeColorSelectionSnapshot } from '../../../lib/monday';
-import { requiredColorInputs } from '../../../lib/colorRequirements';
+import { requiredColorInputs, unbuiltRequiredColorGates } from '../../../lib/colorRequirements';
+import { rejectOrderMismatch, staffActorNote } from '../../../lib/portalRequest';
 import { validatePresentSelections, validateColorSelectionData, computeTotalUpcharge, sanitizeSelections } from '../../../lib/colorSelectionValidation';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { requireCustomerSession, loadSessionOrder, enforceRateLimit } from '../../../lib/apiAuth';
@@ -111,6 +112,12 @@ export default async function handler(req, res) {
   const session = await requireCustomerSession(req, res);
   if (!session) return;
 
+  // The picker says which order it is showing (see lib/portalRequest.js) —
+  // without this, picks made in a tab still showing order A were written to
+  // whichever order the shared session cookie had since been switched to.
+  const claimedOrderId = req.method === 'GET' ? req.query?.orderId : req.body?.orderId;
+  if ((req.method !== 'GET' || claimedOrderId) && rejectOrderMismatch(res, session, claimedOrderId, 'color-selection')) return;
+
   const order = await loadSessionOrder(session, res, { logPrefix: 'color-selection' });
   if (!order) return;
 
@@ -121,6 +128,10 @@ export default async function handler(req, res) {
       requiredInputs: inputs || [],
       selections: order.colorSelectionSnapshot?.selections || {},
       confirmedAt: order.colorSelectionSnapshot?.confirmedAt || null,
+      // What was actually priced at confirmation — ConfirmedView shows this
+      // rather than re-pricing from today's inputs, which drift if staff
+      // change a gate after the customer confirmed.
+      totalUpcharge: order.colorSelectionSnapshot?.totalUpcharge ?? null,
     });
   }
 
@@ -283,12 +294,28 @@ export default async function handler(req, res) {
       // — but staff still need to know the audit-trail update never landed,
       // via the same alerting path already used for other silent-failure
       // classes in this codebase (markSectionCompleteSafe, cron runs).
+      // Required parts the portal has no picker for yet (Ball Pit Balls) —
+      // the confirm still completes the Color tab, so staff must be told
+      // these still need collecting by hand rather than finding out from the
+      // admin panel later (audit 2026-10-09).
+      const unbuilt = unbuiltRequiredColorGates(freshOrder || order);
+      const unbuiltNote = unbuilt.length
+        ? ` Still needed outside the portal: ${unbuilt.map(g => g.label).join(', ')}.`
+        : '';
+      if (unbuilt.length) {
+        await reportCriticalFailure(
+          'color-selection-unbuilt-gates',
+          `Order ${order.id} ("${order.name}") confirmed colors in the portal, but these required parts have no portal picker and still need colors collected by staff: ${unbuilt.map(g => g.label).join(', ')}.`,
+          { orderId: order.id, unbuilt }
+        ).catch(console.error);
+      }
+
       let auditUpdatePending = false;
       try {
         await postTaggedUpdate(
           order.id,
           'PORTAL: Color Selections',
-          `Customer confirmed color/finish selections on ${new Date().toLocaleDateString()}. Total upcharge: $${totalUpcharge}.`
+          `Customer confirmed color/finish selections on ${new Date().toLocaleDateString()}. Total upcharge: $${totalUpcharge}.${unbuiltNote}${staffActorNote(session)}`
         );
       } catch (err) {
         auditUpdatePending = true;
@@ -303,7 +330,7 @@ export default async function handler(req, res) {
       // FIRST — they are the billing signal and the customer-visible state, so
       // nothing slower (the board fill below) can ever keep them from landing.
       // Never fails the confirm; a failed email with money attached is escalated.
-      await notifyTeamColorsConfirmed(order.name, session.email, totalUpcharge).catch(async (err) => {
+      await notifyTeamColorsConfirmed(order.name, `${session.email}${staffActorNote(session)}`, totalUpcharge).catch(async (err) => {
         console.error('color-selection: confirm email failed:', err.message);
         if (totalUpcharge > 0) {
           await reportCriticalFailure('color-selection-confirm-email',

@@ -17,6 +17,7 @@ vi.mock('../../../lib/email', () => ({
   sendCombinedSetupReminder: (...args) => mockSendCombined(...args),
   sendSetupReminder: (...args) => mockSendSetupReminder(...args),
   notifyTeamRemindersExhausted: (...args) => mockNotifyExhausted(...args),
+  isSendTimeout: (err) => /Resend request timed out/.test(err?.message || ''),
 }));
 
 const mockReportCriticalFailure = vi.fn().mockResolvedValue(undefined);
@@ -264,7 +265,7 @@ describe('GET /api/cron/reminders', () => {
     const res = makeRes();
     await handler(makeReq(), res);
 
-    expect(mockSendSetupReminder).toHaveBeenCalledWith('a@b.com', 'Alex', 'Order A', expect.arrayContaining(['Color & Product Selections']), 1);
+    expect(mockSendSetupReminder).toHaveBeenCalledWith('a@b.com', 'Alex', 'Order A', expect.arrayContaining(['Color & Product Selections']), 1, { idempotencyKey: expect.stringMatching(/^reminder\/1-1\//) });
     expect(mockPostTaggedUpdate).toHaveBeenCalledWith('1', 'PORTAL: Reminder #1', expect.any(String));
     expect(res.body.reminded).toBe(1);
     expect(res.body.errors).toBe(0);
@@ -350,6 +351,24 @@ describe('GET /api/cron/reminders', () => {
     await handler(makeReq(), res);
 
     expect(mockReportCriticalFailure).toHaveBeenCalledTimes(1);
+  });
+
+  // Audit 2026-10-09: a send that timed out may have been delivered; retry
+  // once with the same idempotency key so Resend resolves which it was.
+  it('retries a timed-out send once with the same idempotency key, then logs the marker', async () => {
+    mockGetAllOrders.mockResolvedValue([{ id: '1', customerEmail: 'a@b.com', name: 'Order A', progress: INCOMPLETE_PROGRESS }]);
+    mockGetOrderMessages.mockResolvedValue([inviteUpdate(3)]);
+    mockSendSetupReminder
+      .mockRejectedValueOnce(new Error('Resend request timed out after 15000ms'))
+      .mockResolvedValueOnce({ id: 'email-1' });
+
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(mockSendSetupReminder).toHaveBeenCalledTimes(2);
+    expect(mockSendSetupReminder.mock.calls[0][5]).toEqual(mockSendSetupReminder.mock.calls[1][5]);
+    expect(mockPostTaggedUpdate).toHaveBeenCalledWith('1', 'PORTAL: Reminder #1', expect.stringContaining('email-1'));
+    expect(res.body.reminded).toBe(1);
   });
 
   it('a send failure (nothing went out) counts as an error, not reminded, and does not attempt the marker write', async () => {

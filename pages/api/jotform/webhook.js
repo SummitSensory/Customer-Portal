@@ -13,10 +13,43 @@
  *   to the Documents checklist).
  */
 
-import { getOrdersByEmail, getOrderMessages, postTaggedUpdate, markSectionCompleteSafe, attachUgcFile, incrementUgcCounts } from '../../../lib/monday';
+import { getOrdersByEmail, getOrderById, getOrderMessages, postTaggedUpdate, markSectionCompleteSafe, attachUgcFile, incrementUgcCounts } from '../../../lib/monday';
 import { notifyTeamFormCompleted, notifyTeamUgcThreshold } from '../../../lib/email';
-import { secretsMatch } from '../../../lib/auth';
+import * as auth from '../../../lib/auth';
 import { reportCriticalFailure } from '../../../lib/monitoring';
+
+const { secretsMatch } = auth;
+
+// A showcase claim younger than this means another delivery of the same
+// submission is still attaching files — skip instead of double-attaching.
+const SHOWCASE_CLAIM_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * The order a signed `portal_order_token` hidden field points at, or null.
+ * The webhook secret only proves a request came from Jotform, not who filled
+ * the form in, and the forms are public — so matching purely on a typed-in
+ * email let anyone mark a customer's tab complete or attach files to their
+ * order (audit 2026-10-09). When the portal prefills this token (signed by
+ * lib/auth.js's signFormOrderToken), it decides the order outright. Guarded
+ * so this file still works while that helper isn't deployed yet.
+ */
+async function orderFromToken(data) {
+  const token = findFieldValue(data, (key) => /portal_order_token/i.test(key));
+  if (!token) return null;
+  let verified = null;
+  try {
+    const verify = auth.verifyFormOrderToken;
+    verified = typeof verify === 'function' ? await verify(String(token).trim()) : null;
+  } catch {
+    verified = null;
+  }
+  const orderId = typeof verified === 'string' ? verified : verified?.orderId;
+  if (!orderId) {
+    console.warn('Jotform webhook: portal_order_token present but invalid — falling back to email matching.');
+    return null;
+  }
+  return getOrderById(String(orderId));
+}
 
 // Parse the form→checklist map from env. The Showcase and default Color
 // Selection forms are already identified by their own env vars, so they're
@@ -262,7 +295,14 @@ export default async function handler(req, res) {
 
   // Extract customer email from the submission
   // Jotform sends field values as q{N}_email, q{N}_email3, etc.
-  const email = extractEmail(submissionData);
+  let tokenOrder = null;
+  try {
+    tokenOrder = await orderFromToken(submissionData);
+  } catch (err) {
+    console.error('Monday lookup error (portal_order_token order):', err.message);
+    return res.status(500).json({ error: 'Failed to look up order.' });
+  }
+  const email = extractEmail(submissionData) || tokenOrder?.customerEmail || null;
   if (!email) {
     console.error('Jotform webhook: no email found in submission', formID);
     return res.status(200).json({ ok: true, note: 'No email found — skipped.' });
@@ -285,9 +325,9 @@ export default async function handler(req, res) {
 
   // Find the order. PORTAL-025: no longer just "the customer's most recent
   // order" — see resolveOrderForSubmission above for why.
-  let order;
+  let order = tokenOrder;
   try {
-    order = await resolveOrderForSubmission(email.toLowerCase(), formMap, tabType);
+    if (!order) order = await resolveOrderForSubmission(email.toLowerCase(), formMap, tabType);
   } catch (err) {
     console.error('Monday lookup error:', err.message);
     return res.status(500).json({ error: 'Failed to look up order.' });
@@ -310,6 +350,12 @@ export default async function handler(req, res) {
       if (alreadyProcessed) {
         return res.status(200).json({ ok: true, duplicate: true, note: 'Submission already processed.' });
       }
+      // A showcase delivery still attaching files (see the claim below).
+      const inFlight = priorUpdates.some((u) => (u.body || '').includes(`(submission-claim:${submissionID})`)
+        && Date.now() - new Date(u.created_at).getTime() < SHOWCASE_CLAIM_TTL_MS);
+      if (inFlight) {
+        return res.status(200).json({ ok: true, duplicate: true, note: 'Submission is already being processed.' });
+      }
     } catch (err) {
       // Non-fatal — if the dedupe check itself fails, proceed rather than
       // block a legitimate submission over it.
@@ -321,6 +367,20 @@ export default async function handler(req, res) {
   // tabType was already resolved above (needed for order resolution).
   if (tabType === 'showcase') {
     const { photos, videos } = extractShowcaseFiles(submissionData);
+
+    // Claim BEFORE the (slow, sequential) attaches: the processed marker
+    // below only lands after every file is attached, which can take tens of
+    // seconds — a Jotform redelivery in that window attached every file and
+    // credited the reward tally twice (audit 2026-10-09). The claim uses a
+    // distinct marker so a run that fails outright can still be retried
+    // once the claim expires.
+    if (submissionID) {
+      await postTaggedUpdate(
+        order.id,
+        'PORTAL: Photo/Video Processing',
+        `Attaching ${photos.length} photo(s) and ${videos.length} video(s) from a Photo & Video Showcase submission (submission-claim:${submissionID})`
+      ).catch(err => console.warn('Jotform webhook: showcase claim write failed (continuing):', err.message));
+    }
 
     // Track actual successes, not attempts — previously every attach was
     // fire-and-forget (errors only logged), so postTaggedUpdate/
@@ -359,10 +419,31 @@ export default async function handler(req, res) {
       order.id,
       'PORTAL: Photo/Video Submitted',
       `Customer submitted ${photosOk} photo(s) and ${videosOk} video(s) via the Photo & Video Showcase form on ${new Date().toLocaleDateString()}.${partialFailureNote} Submitted by: ${email}${submissionTag}`
-    ).catch(console.error);
+    ).catch(async (err) => {
+      // Same treatment as the standard-tab marker below (PORTAL-025): this
+      // update IS the dedupe marker, so a silent failure meant a Jotform
+      // retry re-attached every file and re-credited the tally.
+      console.error('Jotform webhook: failed to post the showcase dedupe marker update:', err.message);
+      await reportCriticalFailure(
+        'jotform-webhook-dedupe-marker',
+        `Failed to record the Photo/Video Showcase marker for order ${order.id}${submissionID ? ` (submission ${submissionID})` : ''} — a Jotform retry of this submission may attach the files and credit the reward tally a second time.`,
+        { orderId: order.id, formID, submissionID: submissionID || null, error: err.message }
+      );
+    });
 
+    // incrementUgcCounts throws when any count write fails — the counts it
+    // would have returned were never saved, so don't announce a reward tier
+    // the board doesn't show; alert so staff can fix the tally by hand.
     const result = await incrementUgcCounts(order.id, photosOk, videosOk)
-      .catch(err => { console.error('incrementUgcCounts failed:', err.message); return null; });
+      .catch(async (err) => {
+        console.error('incrementUgcCounts failed:', err.message);
+        await reportCriticalFailure(
+          'jotform-webhook-ugc-counts',
+          `Order ${order.id} ("${order.name}"): ${photosOk} photo(s) / ${videosOk} video(s) were attached but the UGC photo/video/credit counts failed to save — update them by hand in Monday.`,
+          { orderId: order.id, photosOk, videosOk, error: err.message }
+        );
+        return null;
+      });
 
     if (result?.crossedNewTier) {
       await notifyTeamUgcThreshold(order.name, email, result.photoCount, result.videoCount, result.credits, order.id).catch(console.error);
@@ -427,7 +508,11 @@ export default async function handler(req, res) {
         id === formID || bodies.some((b) => b.includes(tag) && b.includes(`(form:${id})`))
       );
     } catch (err) {
-      console.error('Jotform webhook: failed to check other forms mapped to this tab — marking complete based on this submission alone:', err.message);
+      // Can't tell whether the OTHER forms are in — don't flip ✅ (and stop
+      // reminders) on one form of several. The next form's submission
+      // re-runs this check.
+      tabComplete = false;
+      console.error('Jotform webhook: failed to check other forms mapped to this tab — NOT marking the tab complete this time:', err.message);
     }
   }
 
@@ -462,23 +547,47 @@ const EMAIL_RE = /[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-
  * submission nowhere, per the "no order found for email" branch above) for
  * any Jotform field shape nested any deeper than that.
  */
-function extractEmail(data) {
-  let found = null;
-
-  const visit = (val) => {
-    if (found || val == null) return;
+//
+// Audit 2026-10-09: taking the first email-shaped value ANYWHERE meant a form
+// with an earlier installer / billing / referral email field routed the
+// submission (and the ✅ flip) to that other person's order. Prefer, in
+// order: a field whose key names it the customer/contact email, then any
+// field whose key mentions "email" and isn't another party's, then the old
+// first-anywhere fallback.
+const OTHER_PARTY_KEY = /install|billing|bill_to|referr|friend|contractor|vendor|cc_|_cc\b|alternate|secondary/i;
+export function extractEmail(data) {
+  const entries = [];
+  const visit = (key, val) => {
+    if (val == null) return;
     if (typeof val === 'string') {
       const match = val.trim().match(EMAIL_RE);
-      if (match) found = match[0];
+      if (match) entries.push({ key, email: match[0] });
       return;
     }
-    if (Array.isArray(val)) { val.forEach(visit); return; }
+    if (Array.isArray(val)) { val.forEach((v) => visit(key, v)); return; }
     if (typeof val === 'object') {
-      Object.values(val).forEach(visit);
+      Object.entries(val).forEach(([k, v]) => visit(`${key}.${k}`, v));
     }
   };
+  Object.entries(data || {}).forEach(([k, v]) => visit(k, v));
 
-  Object.values(data || {}).forEach(visit);
+  const pick = (pred) => entries.find((e) => pred(e.key))?.email;
+  return pick((k) => /(customer|contact|your)[^.]*email|email[^.]*(customer|contact)/i.test(k) && !OTHER_PARTY_KEY.test(k))
+    || pick((k) => /email/i.test(k) && !OTHER_PARTY_KEY.test(k))
+    || entries[0]?.email
+    || null;
+}
+
+/** First non-empty string value whose (nested) key matches `keyPred`. */
+function findFieldValue(data, keyPred) {
+  let found = null;
+  const visit = (key, val) => {
+    if (found || val == null) return;
+    if (typeof val === 'string') { if (keyPred(key) && val.trim()) found = val.trim(); return; }
+    if (Array.isArray(val)) { val.forEach((v) => visit(key, v)); return; }
+    if (typeof val === 'object') Object.entries(val).forEach(([k, v]) => visit(`${key}.${k}`, v));
+  };
+  Object.entries(data || {}).forEach(([k, v]) => visit(k, v));
   return found;
 }
 

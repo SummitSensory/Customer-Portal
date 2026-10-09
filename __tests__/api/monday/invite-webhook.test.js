@@ -232,3 +232,36 @@ describe('POST /api/monday/invite-webhook — one invitation per customer email'
     expect(mockSendPortalInvitation).toHaveBeenCalledTimes(1);
   });
 });
+
+// Audit 2026-10-09: automatic triggers must honor "Do Not Send".
+describe('POST /api/monday/invite-webhook — "Do Not Send"', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetOrderMessages.mockResolvedValue([]);
+  });
+
+  it('an automatic (non-manual) trigger skips an order whose Customer Portal Invite is "Do Not Send"', async () => {
+    mockGetOrderById.mockResolvedValue({ ...ORDER, rawColumns: { color_mm5427cr: { text: 'Do Not Send' } } });
+    const res = makeRes();
+    await handler(makeReq({ pulseId: 123, columnId: 'status__1', value: { label: { text: 'Incoming Order' } } }), res);
+    expect(res.body.skipped).toMatch(/Do Not Send/);
+    expect(mockSendPortalInvitation).not.toHaveBeenCalled();
+  });
+
+  it('the manual column still sends even when Customer Portal Invite is "Do Not Send"', async () => {
+    mockGetOrderById.mockResolvedValue({ ...ORDER, rawColumns: { color_mm5427cr: { text: 'Do Not Send' } } });
+    const res = makeRes();
+    await handler(makeReq({ pulseId: 123, columnId: 'color_mm7mvqg9', value: { label: { text: 'Manually Send Invite' } } }), res);
+    expect(mockSendPortalInvitation).toHaveBeenCalledTimes(1);
+  });
+
+  it('a change of the invite column to anything but "Send Invite" sends nothing', async () => {
+    mockGetOrderById.mockResolvedValue(ORDER);
+    for (const text of ['Invite Sent', 'Do Not Send', 'TBD']) {
+      const res = makeRes();
+      await handler(makeReq({ pulseId: 123, columnId: 'color_mm5427cr', value: { label: { text } } }), res);
+      expect(res.body.skipped).toBeTruthy();
+    }
+    expect(mockSendPortalInvitation).not.toHaveBeenCalled();
+  });
+});

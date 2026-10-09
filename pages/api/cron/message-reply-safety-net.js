@@ -21,6 +21,7 @@
 import { getOrderSummaries, getOrderMessages } from '../../../lib/monday';
 import { findUnnotifiedStaffMessages, notifyPendingStaffReplies } from '../../../lib/replyNotify';
 import { reportCriticalFailure } from '../../../lib/monitoring';
+import { secretsMatch } from '../../../lib/auth';
 import { mapWithConcurrency } from '../../../lib/concurrency';
 
 const CHECK_CONCURRENCY = 8;
@@ -34,12 +35,17 @@ export function shouldAlertGap(ageMinutes, now) {
   return now.getUTCHours() === DAILY_REMINDER_UTC_HOUR && now.getUTCMinutes() < CRON_INTERVAL_MINUTES;
 }
 
+// Vercel kills a run at the function's time limit with no summary log or
+// alert; declare the ceiling explicitly (Pro plan max) — audit 2026-10-09.
+export const config = { maxDuration: 300 };
+
 export default async function handler(req, res) {
   const authHeader = req.headers['authorization'];
   // Same fail-closed discipline as every other cron in this app (PORTAL-033).
-  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || !secretsMatch(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
+  console.log('Message reply safety-net cron: run started');
 
   const now = new Date();
   const results = { checked: 0, sent: 0, failed: 0, errors: 0 };

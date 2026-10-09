@@ -18,7 +18,7 @@
 
 import crypto from 'crypto';
 import { getOrderIdsByEmail, getOrderMessages, postTaggedUpdate } from '../../../lib/monday';
-import { sendInternalAlert } from '../../../lib/email';
+import { sendInternalAlert, isInternalAlertAddress } from '../../../lib/email';
 import { BOUNCE_TAG, hasBounced } from '../../../lib/bounces';
 
 export const config = { api: { bodyParser: false } };
@@ -76,6 +76,13 @@ export default async function handler(req, res) {
 
   try {
     for (const address of recipients) {
+      // The alert would go to this same bouncing address and bounce again —
+      // a loop. warn, not error: lib/errorAlerts.js emails every error, which
+      // would also go to a bouncing alert inbox.
+      if (isInternalAlertAddress(address)) {
+        console.warn(`Resend webhook: internal alert address ${address} ${kind} ("${subject}") — not alerting about it (would loop).`);
+        continue;
+      }
       const orderIds = await getOrderIdsByEmail(address).catch(() => []);
       const newlyTagged = [];
       for (const id of orderIds) {

@@ -20,11 +20,11 @@
  */
 
 import { getAllOrders, getOrderMessages, postTaggedUpdate, getCustomerFirstName } from '../../../lib/monday';
-import { sendSetupReminder, sendCombinedSetupReminder, notifyTeamRemindersExhausted } from '../../../lib/email';
+import { sendSetupReminder, sendCombinedSetupReminder, notifyTeamRemindersExhausted, isSendTimeout } from '../../../lib/email';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
 import { hasBounced } from '../../../lib/bounces';
-import { isStaffEmail } from '../../../lib/auth';
+import { isStaffEmail, secretsMatch } from '../../../lib/auth';
 
 // Orders were previously processed one at a time; this run took as long as
 // (order count) × (message fetch + reminder send latency). 8 concurrent
@@ -152,15 +152,20 @@ export function incompleteSetupTabs(order) {
   return SETUP_TABS.filter(tab => !DONE_LABELS.has(order.progress?.[PROGRESS_KEYS[tab.key]]));
 }
 
+// Vercel kills a run at the function's time limit with no summary log or
+// alert; declare the ceiling explicitly (Pro plan max) — audit 2026-10-09.
+export const config = { maxDuration: 300 };
+
 export default async function handler(req, res) {
   const authHeader = req.headers['authorization'];
   // PORTAL-033: an unset CRON_SECRET used to make this a literal string
   // comparison against "Bearer undefined" — trivially satisfiable by
   // anyone. Fail closed when the secret itself isn't configured, matching
   // the discipline lib/auth.js already applies to NEXTAUTH_SECRET.
-  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || !secretsMatch(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
+  console.log('Reminders cron: run started');
 
   const INTERVAL_DAYS = parseInt(process.env.REMINDER_INTERVAL_DAYS || '3', 10);
   const MAX_REMINDERS = parseInt(process.env.REMINDER_MAX_COUNT || '6', 10);
@@ -227,15 +232,30 @@ export default async function handler(req, res) {
       const first = group[0].order;
       const customerName = await getCustomerFirstName(first);
       let sent;
+      // A send that hits lib/email.js's 15s timeout may still have been
+      // delivered; counting it as failed left no marker, so the next run
+      // re-sent the same reminder. Keyed sends let us retry once right away:
+      // Resend returns the original result if the first one went out, and
+      // sends it if it didn't — either way the outcome is known (audit
+      // 2026-10-09).
+      const idempotencyKey = `reminder/${group.map(d => `${d.order.id}-${d.number}`).sort().join(',')}/${now.toISOString().slice(0, 10)}`;
+      const sendOnce = () => (group.length === 1
+        ? sendSetupReminder(first.customerEmail, customerName, first.name, group[0].labels, group[0].number, { idempotencyKey })
+        : sendCombinedSetupReminder(
+          first.customerEmail,
+          customerName,
+          group.map(d => ({ name: d.order.name, incomplete: d.labels })),
+          Math.max(...group.map(d => d.number)),
+          { idempotencyKey }
+        ));
       try {
-        sent = group.length === 1
-          ? await sendSetupReminder(first.customerEmail, customerName, first.name, group[0].labels, group[0].number)
-          : await sendCombinedSetupReminder(
-            first.customerEmail,
-            customerName,
-            group.map(d => ({ name: d.order.name, incomplete: d.labels })),
-            Math.max(...group.map(d => d.number))
-          );
+        try {
+          sent = await sendOnce();
+        } catch (firstErr) {
+          if (!isSendTimeout(firstErr)) throw firstErr;
+          console.warn(`Reminder send to ${first.customerEmail} timed out — retrying with the same idempotency key`);
+          sent = await sendOnce();
+        }
       } catch (sendErr) {
         console.error(`Reminder send failed for ${first.customerEmail} (orders ${group.map(d => d.order.id).join(', ')}):`, sendErr);
         results.errors += group.length;

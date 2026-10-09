@@ -74,8 +74,19 @@ describe('notifyPendingStaffReplies', () => {
     const result = await notifyPendingStaffReplies('9', { now: NOW, updates });
     expect(result.sent).toBe(true);
     expect(mockSend).toHaveBeenCalledTimes(1);
-    expect(mockSend).toHaveBeenCalledWith('a@school.org', 'Ann', 'Acme', 'two');
+    expect(mockSend).toHaveBeenCalledWith('a@school.org', 'Ann', 'Acme', 'two', { idempotencyKey: expect.stringMatching(/^reply\/9\//) });
     expect(mockPostTaggedUpdate.mock.calls[0][2]).toContain('reply 11, reply 14');
+  });
+
+  // Audit 2026-10-09: two staff replies seconds apart fired two webhook
+  // calls that both emailed the customer about the same pending reply.
+  it('keys the send on the pending-id set and treats a Resend idempotency conflict as already handled', async () => {
+    const updates = [customerMsg('10', [staffReply('11', 'one', 6)])];
+    await notifyPendingStaffReplies('9', { now: NOW, updates });
+    mockSend.mockRejectedValueOnce(Object.assign(new Error('concurrent idempotent requests'), { idempotencyConflict: true }));
+    const second = await notifyPendingStaffReplies('9', { now: NOW, updates });
+    expect(mockSend.mock.calls.at(-1)[4].idempotencyKey).toBe(mockSend.mock.calls.at(-2)[4].idempotencyKey);
+    expect(second.sent).toBe(false);
   });
 
   it('does not mark anything when the send fails, so the next run retries', async () => {

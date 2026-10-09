@@ -26,7 +26,7 @@
  */
 
 import { getOrderSummaries, getOrderMessages } from '../../../lib/monday';
-import { isStaffEmail } from '../../../lib/auth';
+import { isStaffEmail, secretsMatch } from '../../../lib/auth';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
 
@@ -59,13 +59,18 @@ export function shouldAlertInviteGap(order, now) {
   return now.getUTCHours() === DAILY_REMINDER_UTC_HOUR;
 }
 
+// Vercel kills a run at the function's time limit with no summary log or
+// alert; declare the ceiling explicitly (Pro plan max) — audit 2026-10-09.
+export const config = { maxDuration: 300 };
+
 export default async function handler(req, res) {
   const authHeader = req.headers['authorization'];
   // Same fail-closed discipline as every other cron in this app (PORTAL-033)
   // — an unset CRON_SECRET rejects rather than accepting "Bearer undefined".
-  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || !secretsMatch(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
+  console.log('Invite safety-net cron: run started');
 
   const now = new Date();
   const results = { checked: 0, gaps: 0, skipped: 0, errors: 0 };

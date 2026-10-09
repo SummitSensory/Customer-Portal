@@ -11,6 +11,7 @@ import { getOrderMessages, postOrderMessage, getOrderById, setStatusLabel } from
 import { notifyTeamNewMessage } from '../../../lib/email';
 import { notifyPendingStaffReplies } from '../../../lib/replyNotify';
 import { allowRequest } from '../../../lib/rateLimit';
+import { customerVisibleMessages } from '../../../lib/messageOrigin';
 
 async function getIdentity(req, res) {
   // Try staff session first
@@ -60,7 +61,11 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     try {
       const messages = await getOrderMessages(orderId);
-      return res.status(200).json({ messages });
+      // Customers get only portal chat, never internal updates or staff
+      // emails — see customerVisibleMessages in lib/messageOrigin.js.
+      return res.status(200).json({
+        messages: identity.role === 'customer' ? customerVisibleMessages(messages) : messages,
+      });
     } catch (err) {
       return res.status(500).json({ error: 'Failed to load messages.' });
     }
@@ -91,14 +96,21 @@ export default async function handler(req, res) {
       const originTag = identity.role === 'staff' ? '[PORTAL:STAFF]' : '[PORTAL:CUSTOMER]';
       const message = await postOrderMessage(orderId, `[PORTAL]${originTag}\n${body.trim()}`);
 
-      // Notify team + flag the queue when a customer sends a message
+      // Notify team + flag the queue when a customer sends a message. The
+      // message is already posted, so nothing below may turn this into a
+      // 500 — the customer would retry and post a duplicate (audit
+      // 2026-10-09: getOrderById here had no catch of its own).
       if (identity.role === 'customer') {
-        const order = await getOrderById(orderId);
-        await notifyTeamNewMessage(
-          order?.name || orderId,
-          identity.email,
-          body.trim().slice(0, 100)
-        ).catch(console.error);
+        try {
+          const order = await getOrderById(orderId);
+          await notifyTeamNewMessage(
+            order?.name || identity.orderName || orderId,
+            identity.email,
+            body.trim().slice(0, 100)
+          );
+        } catch (err) {
+          console.error(`Customer message posted on order ${orderId}, but the team notification FAILED:`, err);
+        }
         await setStatusLabel(orderId, 'messageStatus', 'Needs Reply').catch(console.error);
       }
 
@@ -111,7 +123,11 @@ export default async function handler(req, res) {
         await notifyCustomerOfStaffReply(orderId, message);
       }
 
-      return res.status(201).json({ message });
+      return res.status(201).json({
+        message: identity.role === 'customer' && message
+          ? (customerVisibleMessages([message])[0] || { id: message.id })
+          : message,
+      });
     } catch (err) {
       return res.status(500).json({ error: 'Failed to send message.' });
     }

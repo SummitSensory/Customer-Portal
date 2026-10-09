@@ -29,8 +29,10 @@ vi.mock('../../../lib/auth', () => ({
 }));
 
 const mockGetOrdersByEmail = vi.fn();
+const mockGetOrderById = vi.fn();
 vi.mock('../../../lib/monday', () => ({
   getOrdersByEmail: (...args) => mockGetOrdersByEmail(...args),
+  getOrderById: (...args) => mockGetOrderById(...args),
 }));
 
 const { default: handler } = await import('../../../pages/api/auth/select-order.js');
@@ -61,6 +63,7 @@ describe('select-order.js — session re-sign preserves session kind (PORTAL-059
     mockSignCustomerSession.mockReset().mockResolvedValue('signed.customer.token');
     mockSignImpersonationSession.mockReset().mockResolvedValue('signed.impersonation.token');
     mockGetOrdersByEmail.mockReset().mockResolvedValue(ORDERS);
+    mockGetOrderById.mockReset().mockResolvedValue(null);
   });
 
   it('rejects a non-POST method', async () => {
@@ -121,5 +124,27 @@ describe('select-order.js — session re-sign preserves session kind (PORTAL-059
     expect(res.statusCode).toBe(403);
     expect(mockSignCustomerSession).not.toHaveBeenCalled();
     expect(mockSignImpersonationSession).not.toHaveBeenCalled();
+  });
+
+  // Audit 2026-10-09: the response used to be the board-list copy of the
+  // order (no mirrors/files/color gates) including rawColumns.
+  it('returns the full order, without internal fields', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'order-1', role: 'customer' });
+    mockGetOrderById.mockResolvedValue({ id: 'order-2', name: 'Order Two', colorGates: { x: 'Included' }, rawColumns: { secret: {} }, messageStatus: 'Needs Reply' });
+    const res = makeRes();
+    await handler(makeReq({ body: { orderId: 'order-2' } }), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.order).toMatchObject({ id: 'order-2', colorGates: { x: 'Included' } });
+    expect(res.body.order.rawColumns).toBeUndefined();
+    expect(res.body.order.messageStatus).toBeUndefined();
+  });
+
+  it('falls back to the list copy when the full read fails', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'order-1', role: 'customer' });
+    mockGetOrderById.mockRejectedValue(new Error('Monday down'));
+    const res = makeRes();
+    await handler(makeReq({ body: { orderId: 'order-2' } }), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.order).toMatchObject({ id: 'order-2', name: 'Order Two' });
   });
 });

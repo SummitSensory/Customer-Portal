@@ -16,7 +16,8 @@
 
 import { parse, serialize } from 'cookie';
 import { verifyCustomerSession, signCustomerSession, signImpersonationSession, SESSION_COOKIE, cookieOptions } from '../../../lib/auth';
-import { getOrdersByEmail } from '../../../lib/monday';
+import { getOrdersByEmail, getOrderById } from '../../../lib/monday';
+import { customerSafeOrder } from '../../../lib/apiAuth';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -61,5 +62,15 @@ export default async function handler(req, res) {
   const maxAge = session.impersonatedBy ? 60 * 60 * 2 : 60 * 60 * 24 * 7;
   res.setHeader('Set-Cookie', serialize(SESSION_COOKIE, sessionToken, cookieOptions(maxAge)));
 
-  return res.status(200).json({ ok: true, order: match });
+  // `match` is a board-list order (no mirrors, files or color gates — see
+  // getAllOrders). Return the full order so the portal can render the
+  // switched-to order directly instead of a stale or partial copy. Falls back
+  // to the list copy if the full read fails; the session is already re-bound.
+  let full = null;
+  try {
+    full = await getOrderById(match.id);
+  } catch (err) {
+    console.error('select-order: full order read failed (returning list copy):', err.message);
+  }
+  return res.status(200).json({ ok: true, order: customerSafeOrder(full || match) });
 }

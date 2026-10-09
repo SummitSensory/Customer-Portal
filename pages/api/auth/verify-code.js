@@ -19,6 +19,27 @@ import {
 import { getOrdersByEmail } from '../../../lib/monday';
 import { allowRequest, getClientIp } from '../../../lib/rateLimit';
 
+// Wrong guesses per issued code (keyed by code hash), kept for the code's
+// 10-minute life.
+const CODE_TTL_MS = 10 * 60_000;
+const failedByCode = new Map();
+
+function failedAttemptsFor(codeHash) {
+  const entry = failedByCode.get(codeHash);
+  if (!entry || entry.expiresAt < Date.now()) return 0;
+  return entry.count;
+}
+
+function recordFailedAttempt(codeHash) {
+  const now = Date.now();
+  if (failedByCode.size > 5000) {
+    for (const [k, v] of failedByCode) if (v.expiresAt < now) failedByCode.delete(k);
+  }
+  const entry = failedByCode.get(codeHash);
+  if (!entry || entry.expiresAt < now) failedByCode.set(codeHash, { count: 1, expiresAt: now + CODE_TTL_MS });
+  else entry.count++;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
@@ -53,7 +74,16 @@ export default async function handler(req, res) {
   // this, a 6-digit code is guessable in a bounded number of requests since
   // nothing else throttled attempts. Once the limit is hit, the code cookie
   // is cleared so the customer must request a fresh code.
-  const attemptsSoFar = Number(payload.attempts) || 0;
+  // Audit 2026-10-09: the cookie's counter resets whenever the attacker
+  // replays the ORIGINAL cookie, and the IP limiter above is bypassed by
+  // rotating IPs. Two server-side backstops that need neither: wrong
+  // guesses are counted per issued code (keyed by its hash, which is unique
+  // per code) regardless of which cookie copy is sent, and verify attempts
+  // are capped per email. Per-instance in-memory, like lib/rateLimit.js.
+  if (!allowRequest(`verify-code-email:${String(payload.email).toLowerCase()}`, { maxRequests: 10, windowMs: 10 * 60_000 })) {
+    return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes and request a new code.' });
+  }
+  const attemptsSoFar = Math.max(Number(payload.attempts) || 0, failedAttemptsFor(payload.codeHash));
   if (attemptsSoFar >= MAX_CODE_ATTEMPTS) {
     res.setHeader('Set-Cookie', serialize(CODE_COOKIE, '', clearCookieOptions()));
     return res.status(429).json({ error: 'Too many incorrect attempts. Please request a new code.' });
@@ -63,6 +93,7 @@ export default async function handler(req, res) {
     // Re-sign the cookie with the incremented attempt count so the limit
     // above is enforced across requests without needing server-side state.
     // Carries forward the same codeHash — never the code itself.
+    recordFailedAttempt(payload.codeHash);
     const nextToken = await signCodeHashToken(payload.email, payload.codeHash, attemptsSoFar + 1);
     res.setHeader('Set-Cookie', serialize(CODE_COOKIE, nextToken, cookieOptions(60 * 10)));
     return res.status(401).json({ error: 'Incorrect code. Please try again.' });

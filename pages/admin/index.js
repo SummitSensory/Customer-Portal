@@ -3,7 +3,7 @@
  * Sections: Dashboard, Orders, Customers, Files, Messages, Settings
  */
 
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
@@ -11,7 +11,8 @@ import dynamic from 'next/dynamic';
 import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
 import { isStaffMessage, stripPortalTags, messageDisplayName } from '../../lib/messageOrigin';
 import { requiredColorInputs, unbuiltRequiredColorGates, PART_LABELS } from '../../lib/colorRequirements';
-import { resolveSelectedColor, displayColorName, findOrphanedSelections } from '../../lib/colorCatalog';
+import { displayColorName, findOrphanedSelections, describeSelection } from '../../lib/colorCatalog';
+import { withDetail, MIRROR_TABLE_COL_IDS } from '../../components/admin/orderDetail';
 
 // Lazy-loaded — most staff sessions never open Settings in a given visit,
 // so its code (see components/admin/SettingsTab.js) shouldn't be part of
@@ -45,6 +46,19 @@ export default function AdminPortal() {
   function showToast(msg) {
     setToast(msg);
     setTimeout(() => setToast(''), 3000);
+  }
+
+  // A "View as Customer" session lives in the customer cookie for 2 hours
+  // and NextAuth's signOut() never touched it — on a shared machine anyone
+  // could keep acting as that customer after staff signed out. Clear it
+  // first; a failure here must not block signing out.
+  async function staffSignOut() {
+    try {
+      await fetch('/api/auth/signout-customer', { method: 'POST', credentials: 'same-origin' });
+    } catch (err) {
+      console.error('Clearing customer session on sign-out failed:', err);
+    }
+    signOut({ callbackUrl: '/' });
   }
 
   const loadOrders = useCallback(async () => {
@@ -96,7 +110,7 @@ export default function AdminPortal() {
           <div className="who">
             <div className="av">{initials}</div>
             <span style={{ fontSize: 13 }}>{session.user.name}</span>
-            <button className="btn btn-ghost btn-sm" onClick={() => signOut({ callbackUrl: '/' })}>Sign out</button>
+            <button className="btn btn-ghost btn-sm" onClick={staffSignOut}>Sign out</button>
           </div>
         </div>
 
@@ -295,6 +309,35 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   // haven't submitted yet.
   const [expandedDelivery, setExpandedDelivery] = useState(null);
   const [expandedColors, setExpandedColors] = useState(null);
+  // Full getOrderById() records, keyed by order id, loaded on demand. The
+  // list (getAllOrders) deliberately has no mirror columns, so the color
+  // gates and contact/POC fields were blank there — the color panel
+  // computed the wrong required parts from that. See withDetail().
+  const [details, setDetails] = useState({});
+  const [detailLoading, setDetailLoading] = useState({});
+  const [bulkDetailLoading, setBulkDetailLoading] = useState(false);
+
+  const loadDetail = useCallback(async (orderId, { force = false } = {}) => {
+    if (!force && details[orderId]) return details[orderId];
+    setDetailLoading(prev => ({ ...prev, [orderId]: true }));
+    try {
+      const res = await fetch(`/api/monday/orders?id=${encodeURIComponent(orderId)}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.order) throw new Error(data.error || 'Failed to load order details.');
+      setDetails(prev => ({ ...prev, [orderId]: data.order }));
+      return data.order;
+    } catch (err) {
+      showToast(err.message);
+      return null;
+    } finally {
+      setDetailLoading(prev => { const n = { ...prev }; delete n[orderId]; return n; });
+    }
+  }, [details, showToast]);
+
+  function toggleColors(orderId) {
+    setExpandedColors(prev => (prev === orderId ? null : orderId));
+    if (expandedColors !== orderId) loadDetail(orderId);
+  }
   const [availableCols, setAvailableCols] = useState([]);
   const [sortConfig, setSortConfig] = useState({ colId: null, dir: 'asc' });
   const [columnFilters, setColumnFilters] = useState({});
@@ -451,16 +494,19 @@ function OrdersTab({ orders, onRefresh, showToast }) {
         body: JSON.stringify(changes),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Save failed.');
-      // Some fields (tracking number, balance) can be individually skipped
-      // server-side if their Monday column env var isn't configured — that's
-      // real, actionable information, not something to hide behind a generic
-      // success toast (see PATCH /api/monday/orders.js).
+      if (!res.ok) {
+        throw new Error(data.warnings?.length ? data.warnings.join(' ') : (data.error || 'Failed to save. Please try again.'));
+      }
+      // Each field is saved independently server-side, so a partial save
+      // comes back 200 with per-field warnings — real, actionable information
+      // (what saved, what didn't, whether the customer was emailed), not
+      // something to hide behind a generic toast (see PATCH /api/monday/orders.js).
       showToast(data.warnings?.length ? data.warnings.join(' ') : 'Order updated.');
       setEditing(prev => { const n = { ...prev }; delete n[orderId]; return n; });
       await onRefresh();
-    } catch {
-      showToast('Failed to save. Please try again.');
+      if (details[orderId]) loadDetail(orderId, { force: true });
+    } catch (err) {
+      showToast(err.message || 'Failed to save. Please try again.');
     } finally {
       setSaving(null);
     }
@@ -485,7 +531,9 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   // column's filter's effect since matchesColumnFilter is only run for
   // displayCols.
   const visibleOrders = useMemo(() => {
-    let result = orders.filter(order =>
+    // Filter/sort on the detail-overlaid rows so mirror columns (once loaded)
+    // filter and sort on real values, not blanks.
+    let result = orders.map(o => withDetail(o, details[o.id])).filter(order =>
       displayCols.every(col => matchesColumnFilter(order, col.id, columnFilters[col.id]))
     );
     if (sortConfig.colId) {
@@ -499,7 +547,25 @@ function OrdersTab({ orders, onRefresh, showToast }) {
       });
     }
     return result;
-  }, [orders, displayCols, columnFilters, sortConfig]);
+  }, [orders, details, displayCols, columnFilters, sortConfig]);
+
+  const mirrorColsShown = displayCols.some(col => MIRROR_TABLE_COL_IDS.has(col.id));
+  const missingDetailIds = mirrorColsShown ? visibleOrders.filter(o => !details[o.id]).map(o => o.id) : [];
+
+  // Staff-initiated and capped at 3 concurrent requests — one getOrderById
+  // per order, so this isn't run automatically for the whole board.
+  async function loadShownDetails() {
+    if (bulkDetailLoading) return;
+    setBulkDetailLoading(true);
+    const queue = [...missingDetailIds];
+    try {
+      await Promise.all(Array.from({ length: Math.min(3, queue.length) }, async () => {
+        while (queue.length) await loadDetail(queue.shift());
+      }));
+    } finally {
+      setBulkDetailLoading(false);
+    }
+  }
 
   return (
     <>
@@ -516,6 +582,17 @@ function OrdersTab({ orders, onRefresh, showToast }) {
               style={{ whiteSpace: 'nowrap' }}
             >
               ✕ Clear Filters ({activeFilterCount})
+            </button>
+          )}
+          {mirrorColsShown && missingDetailIds.length > 0 && (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={loadShownDetails}
+              disabled={bulkDetailLoading}
+              title="Contact/POC columns come from mirror columns, which the order list doesn't include — this loads them for the orders shown."
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              {bulkDetailLoading ? 'Loading contact details…' : `👤 Load contact details (${missingDetailIds.length})`}
             </button>
           )}
           <button
@@ -744,7 +821,7 @@ function OrdersTab({ orders, onRefresh, showToast }) {
                                 <button
                                   className="btn btn-ghost btn-sm"
                                   title="View this customer's selected colors/finishes"
-                                  onClick={() => setExpandedColors(prev => (prev === order.id ? null : order.id))}
+                                  onClick={() => toggleColors(order.id)}
                                   style={{ whiteSpace: 'nowrap' }}
                                 >
                                   🎨 Colors {expandedColors === order.id ? '▲' : '▼'}
@@ -822,7 +899,15 @@ function OrdersTab({ orders, onRefresh, showToast }) {
                   {expandedColors === order.id && order.colorSelectionSnapshot && (
                     <tr>
                       <td colSpan={displayCols.length} style={{ background: '#f7f9f5', padding: 0 }}>
-                        <ColorSelectionDetailPanel order={order} />
+                        {details[order.id]
+                          ? <ColorSelectionDetailPanel order={order} />
+                          : (
+                            <div style={{ padding: '16px 20px', fontSize: 13, color: 'var(--mut)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                              {detailLoading[order.id]
+                                ? <><div className="spin" style={{ width: 16, height: 16 }} /> Loading this order&apos;s color requirements…</>
+                                : <>Couldn&apos;t load this order&apos;s color requirements. <button className="btn btn-ghost btn-sm" onClick={() => loadDetail(order.id, { force: true })}>Retry</button></>}
+                            </div>
+                          )}
                       </td>
                     </tr>
                   )}
@@ -977,7 +1062,7 @@ function ColorSelectionDetailPanel({ order }) {
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 28px' }}>
             {input.parts.map((part) => {
-              const color = resolveSelectedColor(s.selections?.[input.input]?.[part]);
+              const { color, label, retired } = describeSelection(s.selections?.[input.input]?.[part]);
               return (
                 <div key={part} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 160 }}>
                   {color && (
@@ -987,7 +1072,7 @@ function ColorSelectionDetailPanel({ order }) {
                   )}
                   <div>
                     <div style={{ fontSize: 11, color: 'var(--mut)' }}>{PART_LABELS[part] || part}</div>
-                    <div style={{ fontSize: 13 }}>{color ? `${displayColorName(color)}${color.code || color.sku ? ` (${color.code || color.sku})` : ''}` : '—'}</div>
+                    <div style={{ fontSize: 13, color: retired ? 'var(--rose)' : undefined }}>{label || '—'}</div>
                   </div>
                 </div>
               );
@@ -1078,12 +1163,19 @@ function FileManagerTab({ orders, showToast }) {
     { value: 'other', label: '📄 Other' },
   ];
 
+  // Same stale-response guard as the Messages tab: a slow load for an order
+  // staff already switched away from must not overwrite the list.
+  const currentFilesOrderRef = useRef('');
   async function loadFiles(orderId) {
+    currentFilesOrderRef.current = orderId;
     setFiles([]);
     if (!orderId) return;
     try {
-      const res = await fetch(`/api/monday/files?orderId=${orderId}`);
-      if (res.ok) setFiles((await res.json()).files || []);
+      const res = await fetch(`/api/monday/files?orderId=${encodeURIComponent(orderId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (currentFilesOrderRef.current !== orderId) return;
+      setFiles(data.files || []);
     } catch {}
   }
 
@@ -1175,31 +1267,51 @@ function FileManagerTab({ orders, showToast }) {
 function AdminMessagesTab({ orders, showToast }) {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [body, setBody] = useState('');
+  // Drafts are kept per order. A single shared draft survived switching
+  // threads, so text typed on order A was sent to order B's customer once
+  // staff clicked B.
+  const [drafts, setDrafts] = useState({});
   const [sending, setSending] = useState(false);
+  // The order whose thread should be on screen. A slow response for a
+  // thread staff already clicked away from is dropped — it used to land
+  // last and show A's messages under B's header, inviting a reply to B
+  // about A's conversation.
+  const currentOrderIdRef = useRef(null);
+  const body = selectedOrder ? (drafts[selectedOrder.id] || '') : '';
+  const setBody = (text) => {
+    if (!selectedOrder) return;
+    setDrafts(prev => ({ ...prev, [selectedOrder.id]: text }));
+  };
 
   async function loadMessages(order) {
+    currentOrderIdRef.current = order.id;
     setSelectedOrder(order);
     setMessages([]);
     try {
-      const res = await fetch(`/api/monday/messages?orderId=${order.id}`);
-      if (res.ok) setMessages((await res.json()).messages || []);
+      const res = await fetch(`/api/monday/messages?orderId=${encodeURIComponent(order.id)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (currentOrderIdRef.current !== order.id) return;
+      setMessages(data.messages || []);
     } catch {}
   }
 
   async function send(e) {
     e.preventDefault();
-    if (!body.trim() || !selectedOrder) return;
+    // Capture the order and its draft at click time.
+    const order = selectedOrder;
+    const text = order ? (drafts[order.id] || '') : '';
+    if (!text.trim() || !order) return;
     setSending(true);
     try {
       const res = await fetch('/api/monday/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: selectedOrder.id, body }),
+        body: JSON.stringify({ orderId: order.id, body: text }),
       });
       if (!res.ok) throw new Error();
-      setBody('');
-      await loadMessages(selectedOrder);
+      setDrafts(prev => { const n = { ...prev }; delete n[order.id]; return n; });
+      if (currentOrderIdRef.current === order.id) await loadMessages(order);
       showToast('Message sent.');
     } catch {
       showToast('Failed to send.');

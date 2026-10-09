@@ -297,6 +297,61 @@ describe('GET /api/cron/reminders', () => {
     );
   });
 
+  // 2026-10-09 Firefly Autism: the marker mutation hit the 30s fetch timeout
+  // but Monday had already applied it, so the alert asked staff to add a
+  // marker that already existed.
+  it('a marker write that errors but actually landed does not alert', async () => {
+    mockGetAllOrders.mockResolvedValue([{ id: '1', customerEmail: 'a@b.com', name: 'Order A', progress: INCOMPLETE_PROGRESS }]);
+    mockSendSetupReminder.mockResolvedValue({ id: 'email-123' });
+    mockGetOrderMessages
+      .mockResolvedValueOnce([inviteUpdate(3)])
+      .mockResolvedValueOnce([
+        { body: '[PORTAL: Reminder #1]\nReminder #1 sent to a@b.com. Email ID: email-123', created_at: new Date().toISOString() },
+        inviteUpdate(3),
+      ]);
+    mockPostTaggedUpdate.mockRejectedValue(new Error('Monday.com API request failed (mutation, not retried): This operation was aborted'));
+
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(res.body.reminded).toBe(1);
+    expect(mockReportCriticalFailure).not.toHaveBeenCalled();
+  });
+
+  it('still alerts when the read-back finds only an older reminder marker', async () => {
+    mockGetAllOrders.mockResolvedValue([{ id: '1', customerEmail: 'a@b.com', name: 'Order A', progress: INCOMPLETE_PROGRESS }]);
+    mockSendSetupReminder.mockResolvedValue({ id: 'email-new' });
+    mockGetOrderMessages
+      .mockResolvedValueOnce([inviteUpdate(3)])
+      .mockResolvedValueOnce([
+        { body: '[PORTAL: Reminder #1]\nEmail ID: email-old', created_at: new Date().toISOString() },
+        inviteUpdate(3),
+      ]);
+    mockPostTaggedUpdate.mockRejectedValue(new Error('aborted'));
+
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(mockReportCriticalFailure).toHaveBeenCalledWith(
+      'cron/reminders',
+      expect.stringContaining('"[PORTAL: Reminder #1]", square brackets included'),
+      expect.objectContaining({ orderId: '1', reminderNumber: 1 })
+    );
+  });
+
+  it('still alerts when the read-back itself fails', async () => {
+    mockGetAllOrders.mockResolvedValue([{ id: '1', customerEmail: 'a@b.com', name: 'Order A', progress: INCOMPLETE_PROGRESS }]);
+    mockGetOrderMessages
+      .mockResolvedValueOnce([inviteUpdate(3)])
+      .mockRejectedValueOnce(new Error('Monday down'));
+    mockPostTaggedUpdate.mockRejectedValue(new Error('aborted'));
+
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(mockReportCriticalFailure).toHaveBeenCalledTimes(1);
+  });
+
   it('a send failure (nothing went out) counts as an error, not reminded, and does not attempt the marker write', async () => {
     mockGetAllOrders.mockResolvedValue([{ id: '1', customerEmail: 'a@b.com', name: 'Order A', progress: INCOMPLETE_PROGRESS }]);
     mockGetOrderMessages.mockResolvedValue([inviteUpdate(3)]);

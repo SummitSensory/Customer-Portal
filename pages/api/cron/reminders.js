@@ -127,6 +127,27 @@ export function reminderDecision(updates, now, intervalDays, maxReminders) {
   return { action: 'send', number: reminders.length + 1 };
 }
 
+/**
+ * Whether the "[PORTAL: Reminder #N]" marker for the email just sent is on the
+ * order even though its write reported an error. Matched by the email
+ * provider id when there is one, otherwise by being logged during this run.
+ * A failed read-back counts as "not landed", so the alert still fires.
+ */
+export async function markerLanded(orderId, reminderNumber, emailId, runStart) {
+  const tag = `[PORTAL: Reminder #${reminderNumber}]`;
+  try {
+    const updates = await getOrderMessages(orderId);
+    return updates.some(u => {
+      const body = u.body || '';
+      if (!body.startsWith(tag)) return false;
+      if (emailId) return body.includes(emailId);
+      return new Date(u.created_at).getTime() >= runStart.getTime() - 60 * 1000;
+    });
+  } catch {
+    return false;
+  }
+}
+
 export function incompleteSetupTabs(order) {
   return SETUP_TABS.filter(tab => !DONE_LABELS.has(order.progress?.[PROGRESS_KEYS[tab.key]]));
 }
@@ -249,11 +270,20 @@ export default async function handler(req, res) {
             `Reminder #${reminderNumber} sent to ${order.customerEmail} on ${now.toLocaleDateString()}. Incomplete: ${incompleteTabs.map(t => t.label).join(', ')}.${combinedNote}${sent?.id ? ` Email ID: ${sent.id}` : ''}`
           );
         } catch (markerErr) {
-          await reportCriticalFailure(
-            'cron/reminders',
-            `Reminder #${reminderNumber} was successfully emailed to ${order.customerEmail} (order ${order.id}, "${order.name}") but the "[PORTAL: Reminder #${reminderNumber}]" marker update failed to write afterward — the next scheduled run will NOT see this reminder as sent and WILL RE-SEND an identical reminder email to this customer. Add the marker manually in Monday.com (an update on the order reading "PORTAL: Reminder #${reminderNumber}") to prevent the duplicate send, or investigate the write failure below.`,
-            { orderId: order.id, orderName: order.name, customerEmail: order.customerEmail, reminderNumber, error: markerErr.message }
-          );
+          // A timed-out mutation may still have been applied by Monday — on
+          // 2026-10-09 Firefly Autism's marker landed at 14:01:26 but the
+          // request hit the 30s fetch timeout and alerted at 14:01:55, telling
+          // staff to add a marker that already existed (a second one would
+          // count as Reminder #2). Read it back before raising the alarm.
+          if (await markerLanded(order.id, reminderNumber, sent?.id, now)) {
+            console.warn(`Reminder #${reminderNumber} marker write for order ${order.id} reported an error (${markerErr.message}) but the marker is on the order — no action needed.`);
+          } else {
+            await reportCriticalFailure(
+              'cron/reminders',
+              `Reminder #${reminderNumber} was successfully emailed to ${order.customerEmail} (order ${order.id}, "${order.name}") but the "[PORTAL: Reminder #${reminderNumber}]" marker update failed to write afterward — the next scheduled run will NOT see this reminder as sent and WILL RE-SEND an identical reminder email to this customer. Add the marker manually in Monday.com — an update on the order whose first line is exactly "[PORTAL: Reminder #${reminderNumber}]", square brackets included (without them the cron won't recognize it) — to prevent the duplicate send, or investigate the write failure below.`,
+              { orderId: order.id, orderName: order.name, customerEmail: order.customerEmail, reminderNumber, error: markerErr.message }
+            );
+          }
         }
 
         results.reminded++;

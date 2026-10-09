@@ -17,7 +17,7 @@
 import { parse, serialize } from 'cookie';
 import { verifyCustomerSession, signCustomerSession, signImpersonationSession, SESSION_COOKIE, cookieOptions } from '../../../lib/auth';
 import { getOrdersByEmail, getOrderById } from '../../../lib/monday';
-import { customerSafeOrder } from '../../../lib/apiAuth';
+import { customerOrderForPortal } from '../../../lib/apiAuth';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -72,5 +72,5 @@ export default async function handler(req, res) {
   } catch (err) {
     console.error('select-order: full order read failed (returning list copy):', err.message);
   }
-  return res.status(200).json({ ok: true, order: customerSafeOrder(full || match) });
+  return res.status(200).json({ ok: true, order: await customerOrderForPortal(full || match) });
 }

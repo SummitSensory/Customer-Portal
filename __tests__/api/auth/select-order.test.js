@@ -18,6 +18,7 @@ vi.mock('../../../lib/auth', () => ({
   verifyCustomerSession: (...args) => mockVerifyCustomerSession(...args),
   signCustomerSession: (...args) => mockSignCustomerSession(...args),
   signImpersonationSession: (...args) => mockSignImpersonationSession(...args),
+  signFormOrderToken: async (id) => `form-token-${id}`,
   SESSION_COOKIE: 'summit_customer_session',
   cookieOptions: (maxAge) => ({
     httpOnly: true,

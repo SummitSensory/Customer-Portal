@@ -43,8 +43,18 @@ const nextConfig = {
               "frame-ancestors 'self' https://summitsensory.com https://www.summitsensory.com",
               // Allow any https iframe — covers Jotform, YouTube, Vimeo, invoice links, etc.
               "frame-src 'self' https:",
-              // Allow any https script — covers Jotform CDN, Google Maps, YouTube player, etc.
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:",
+              // Only the hosts this app actually loads scripts from (audit
+              // 2026-10-09 — `https:` let any site's script run here):
+              //   cdn.jotfor.ms          Jotform embed handler (ColorTab, ShowcaseTab)
+              //   *.googleapis.com,      Google Maps/Places autocomplete (_app.js) and
+              //   *.gstatic.com          the scripts it pulls in, per Google's Maps CSP guide
+              //   va.vercel-scripts.com  Vercel Analytics/Speed Insights (same-origin
+              //                          /_vercel/* in production; this host in dev/preview)
+              // 'unsafe-inline' stays: the pages router injects inline scripts
+              // without nonces. 'unsafe-eval' stays: Google's Maps CSP guide still
+              // lists it for the Maps JS API. Videos and forms run inside iframes,
+              // which have their own policy, so they need no entry here.
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jotfor.ms https://*.googleapis.com https://*.gstatic.com https://va.vercel-scripts.com",
               // Allow any https fetch/XHR — covers Jotform API, tracking APIs, etc.
               "connect-src 'self' https:",
               // Allow any https image — covers Jotform, Monday, YouTube thumbnails, etc.

@@ -5,6 +5,7 @@ vi.mock('../../../lib/auth', () => ({
   verifyCustomerSession: (...a) => mockVerifyCustomerSession(...a),
   SESSION_COOKIE: 'summit_customer_session',
   clearCookieOptions: () => ({ path: '/', maxAge: 0 }),
+  signFormOrderToken: async (id) => `form-token-${id}`,
 }));
 
 const mockGetOrderById = vi.fn();
@@ -42,6 +43,14 @@ describe('/api/monday/order', () => {
     expect(res.body.order.id).toBe('o1');
     expect(res.body.order.rawColumns).toBeUndefined();
     expect(res.body.order.messageStatus).toBeUndefined();
+  });
+
+  it('includes a signed Jotform order token for the bound order', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'c@school.org', orderId: 'o1' });
+    mockGetOrderById.mockResolvedValue({ id: 'o1', customerEmail: 'c@school.org' });
+    const res = makeRes();
+    await handler(req(), res);
+    expect(res.body.order.formOrderToken).toBe('form-token-o1');
   });
 
   it('revokes a session whose email no longer matches the order', async () => {

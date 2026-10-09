@@ -20,6 +20,7 @@
 import { getOrderById, sendCustomerNotificationOnce, COLS } from '../../../lib/monday';
 import { notifyCustomerStatusChange, isCustomerFacingStatus } from '../../../lib/email';
 import { secretsMatch } from '../../../lib/auth';
+import { reportCriticalFailure } from '../../../lib/monitoring';
 
 // Same three-location secret extraction as accessory-webhook.js — Monday's
 // newer automation builder wants an Authentication field, not just a query
@@ -84,9 +85,29 @@ export default async function handler(req, res) {
       if (!isCustomerFacingStatus(status)) {
         return res.status(200).json({ ok: true, skipped: `"${status}" is not a customer-facing phase.` });
       }
-      const result = await sendCustomerNotificationOnce(itemId, 'Status', status, () =>
-        notifyCustomerStatusChange(order.customerEmail, order.contactName, order.name, status)
-      );
+      // Once the email has gone out, never answer 500: Monday would redeliver
+      // and — with the "[PORTAL: Status Notified]" marker missing — the
+      // customer would get the same email again on every retry (audit
+      // 2026-10-09). The Resend idempotency key, keyed on Monday's own
+      // triggerUuid (stable across its retries), is the second guard.
+      let emailed = false;
+      const triggerKey = event.triggerUuid ? `status/${itemId}/${event.triggerUuid}` : null;
+      let result;
+      try {
+        result = await sendCustomerNotificationOnce(itemId, 'Status', status, async () => {
+          await notifyCustomerStatusChange(order.customerEmail, order.contactName, order.name, status,
+            triggerKey ? { idempotencyKey: triggerKey } : {});
+          emailed = true;
+        });
+      } catch (err) {
+        if (!emailed) throw err;
+        await reportCriticalFailure(
+          'monday/status-balance-webhook',
+          `The "${status}" status email was sent to ${order.customerEmail} (order ${itemId}, "${order.name}") but the "[PORTAL: Status Notified - ${status}]" marker failed to save. Another change to this status (or the Admin Portal) may email the customer again — add an update on the order starting with exactly "[PORTAL: Status Notified - ${status}]" to prevent it.`,
+          { itemId, status, error: err.message }
+        );
+        return res.status(200).json({ ok: true, notified: 'status', value: status, markFailed: true });
+      }
       if (!result.sent) {
         return res.status(200).json({ ok: true, skipped: 'Already notified for this status.' });
       }

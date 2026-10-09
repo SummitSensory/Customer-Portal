@@ -112,7 +112,10 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Failed to submit referral. Please try again or contact us directly.' });
     }
 
-    notifyTeamNewReferral(order.name, session.email, friendName, friendEmail, referralItemId).catch(console.error);
+    // Awaited: Vercel can freeze the instance as soon as the response is
+    // sent, so a fire-and-forget send could silently never go out. A failure
+    // still doesn't fail the request — the referral item already exists.
+    await notifyTeamNewReferral(order.name, session.email, friendName, friendEmail, referralItemId).catch(console.error);
 
     return res.status(200).json({ ok: true });
   } finally {

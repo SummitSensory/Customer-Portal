@@ -89,6 +89,10 @@ export default async function handler(req, res) {
   if (manual && label && label !== 'Manually Send Invite') {
     return res.status(200).json({ skipped: `Column changed to "${label}", not "Manually Send Invite".` });
   }
+  // Same rule for the "Customer Portal Invite" column itself.
+  if (!manual && label && req.body?.event?.columnId === COLS.inviteStatus && label !== 'Send Invite') {
+    return res.status(200).json({ skipped: `Column changed to "${label}", not "Send Invite".` });
+  }
 
   let claim = null;
   const releaseClaim = async () => {
@@ -99,6 +103,14 @@ export default async function handler(req, res) {
     const order = await getOrderById(itemId);
     if (!order?.customerEmail) {
       return res.status(200).json({ skipped: 'Order has no customer email.' });
+    }
+    // Automatic triggers (e.g. the "Manufacturing Phase → Incoming Order"
+    // automation) must honor "Do Not Send" on Customer Portal Invite — only
+    // the deliberate "Manually Send Invite" column overrides it (audit
+    // 2026-10-09; invite-safety-net already treats it as final).
+    const inviteStatus = (order.inviteStatus ?? order.rawColumns?.[COLS.inviteStatus]?.text ?? '').trim();
+    if (!manual && inviteStatus === 'Do Not Send') {
+      return res.status(200).json({ skipped: 'Customer Portal Invite is "Do Not Send".' });
     }
 
     // Duplicate guard. Monday fires the "Manufacturing Phase → Incoming Order"

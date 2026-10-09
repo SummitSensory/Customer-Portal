@@ -92,6 +92,9 @@ export default async function handler(req, res) {
     const tracking = await trackShipment(subitem.carrierSlug, subitem.trackingNumber, {
       title: subitem.name,
       orderId: subitemId,
+      // Only the item name is known here — don't overwrite the cron's
+      // "Order — Item" title or its resolved customers on an existing tracking.
+      createOnly: true,
     });
 
     if (tracking?.status) {

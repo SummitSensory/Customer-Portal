@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockGetOrdersByEmail = vi.fn();
+const mockGetOrderById = vi.fn();
 const mockGetOrderMessages = vi.fn();
 const mockPostTaggedUpdate = vi.fn().mockResolvedValue(undefined);
 const mockMarkSectionCompleteSafe = vi.fn().mockResolvedValue(true);
@@ -8,6 +9,7 @@ const mockAttachUgcFile = vi.fn().mockResolvedValue(undefined);
 const mockIncrementUgcCounts = vi.fn().mockResolvedValue({ crossedNewTier: false, photoCount: 0, videoCount: 0, credits: 0 });
 vi.mock('../../../lib/monday', () => ({
   getOrdersByEmail: (...args) => mockGetOrdersByEmail(...args),
+  getOrderById: (...args) => mockGetOrderById(...args),
   getOrderMessages: (...args) => mockGetOrderMessages(...args),
   postTaggedUpdate: (...args) => mockPostTaggedUpdate(...args),
   markSectionCompleteSafe: (...args) => mockMarkSectionCompleteSafe(...args),
@@ -27,6 +29,7 @@ vi.mock('../../../lib/email', () => ({
 // secretsMatch is stubbed to always pass rather than re-verified per test.
 vi.mock('../../../lib/auth', () => ({
   secretsMatch: () => true,
+  verifyFormOrderToken: async (t) => (t === 'good-token' ? { orderId: 'order-token' } : null),
 }));
 
 const mockReportCriticalFailure = vi.fn().mockResolvedValue(undefined);
@@ -34,7 +37,7 @@ vi.mock('../../../lib/monitoring', () => ({
   reportCriticalFailure: (...args) => mockReportCriticalFailure(...args),
 }));
 
-const { default: handler } = await import('../../../pages/api/jotform/webhook.js');
+const { default: handler, extractEmail } = await import('../../../pages/api/jotform/webhook.js');
 
 function makeRes() {
   const res = {};
@@ -221,5 +224,89 @@ describe('POST /api/jotform/webhook — dedupe marker write failure is reported,
 
     expect(res.statusCode).toBe(200);
     expect(mockReportCriticalFailure).not.toHaveBeenCalled();
+  });
+});
+
+// Audit 2026-10-09 fixes.
+describe('POST /api/jotform/webhook — audit 2026-10-09', () => {
+  beforeEach(() => {
+    mockGetOrdersByEmail.mockReset().mockResolvedValue([{ id: 'order-email', name: 'Email Order', productType: 'Adventure Series' }]);
+    mockGetOrderById.mockReset().mockResolvedValue({ id: 'order-token', name: 'Token Order', productType: 'Adventure Series', customerEmail: 'owner@school.org' });
+    mockGetOrderMessages.mockReset().mockResolvedValue([]);
+    mockPostTaggedUpdate.mockReset().mockResolvedValue(undefined);
+    mockMarkSectionCompleteSafe.mockReset().mockResolvedValue(true);
+    mockAttachUgcFile.mockReset().mockResolvedValue(undefined);
+    mockIncrementUgcCounts.mockReset().mockResolvedValue({ crossedNewTier: false, photoCount: 0, videoCount: 0, credits: 0 });
+    mockNotifyTeamFormCompleted.mockReset().mockResolvedValue(undefined);
+    mockNotifyTeamUgcThreshold.mockReset().mockResolvedValue(undefined);
+    mockReportCriticalFailure.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('extractEmail prefers the customer email field over an earlier installer/billing email', () => {
+    expect(extractEmail({ q2_installerEmail: 'installer@co.com', q5_email: 'customer@school.org' })).toBe('customer@school.org');
+    expect(extractEmail({ q2_billingEmail: 'ap@school.org', q9_contactEmail: 'pat@school.org' })).toBe('pat@school.org');
+    expect(extractEmail({ q1_notes: 'call joe@x.com', q3_email: 'c@school.org' })).toBe('c@school.org');
+    expect(extractEmail({ q1_notes: 'only joe@x.com here' })).toBe('joe@x.com');
+  });
+
+  it('a valid portal_order_token picks the order regardless of the typed-in email', async () => {
+    setDocumentsFormMap();
+    const res = makeRes();
+    await handler(makeReq({ formID: DOCUMENTS_FORM_ID, tabExtra: { q20_portal_order_token: 'good-token' } }), res);
+    expect(res.body.orderName).toBe('Token Order');
+    expect(mockGetOrdersByEmail).not.toHaveBeenCalled();
+  });
+
+  it('an invalid portal_order_token falls back to email matching', async () => {
+    setDocumentsFormMap();
+    const res = makeRes();
+    await handler(makeReq({ formID: DOCUMENTS_FORM_ID, tabExtra: { q20_portal_order_token: 'forged' } }), res);
+    expect(res.body.orderName).toBe('Email Order');
+  });
+
+  it('showcase: posts a claim before attaching, and a redelivery during the attach window is skipped', async () => {
+    setShowcaseFormMap();
+    const res = makeRes();
+    await handler(makeReq({ formID: SHOWCASE_FORM_ID, submissionID: 'S1', tabExtra: { q4_photos: 'https://www.jotform.com/uploads/a.jpg' } }), res);
+    const claimIdx = mockPostTaggedUpdate.mock.calls.findIndex((c) => String(c[2]).includes('(submission-claim:S1)'));
+    expect(claimIdx).toBe(0);
+    expect(mockAttachUgcFile.mock.invocationCallOrder[0]).toBeGreaterThan(mockPostTaggedUpdate.mock.invocationCallOrder[0]);
+
+    mockGetOrderMessages.mockResolvedValue([{ body: '[PORTAL: Photo/Video Processing] (submission-claim:S1)', created_at: new Date().toISOString() }]);
+    mockAttachUgcFile.mockClear();
+    const res2 = makeRes();
+    await handler(makeReq({ formID: SHOWCASE_FORM_ID, submissionID: 'S1', tabExtra: { q4_photos: 'https://www.jotform.com/uploads/a.jpg' } }), res2);
+    expect(res2.body.duplicate).toBe(true);
+    expect(mockAttachUgcFile).not.toHaveBeenCalled();
+  });
+
+  it('showcase: a failed UGC count write is reported and no reward-tier email goes out', async () => {
+    setShowcaseFormMap();
+    mockIncrementUgcCounts.mockRejectedValue(new Error('UGC count writes failed: photoCount'));
+    const res = makeRes();
+    await handler(makeReq({ formID: SHOWCASE_FORM_ID, submissionID: 'S2', tabExtra: { q4_photos: 'https://www.jotform.com/uploads/a.jpg' } }), res);
+    expect(mockReportCriticalFailure).toHaveBeenCalledWith('jotform-webhook-ugc-counts', expect.any(String), expect.objectContaining({ orderId: 'order-email' }));
+    expect(mockNotifyTeamUgcThreshold).not.toHaveBeenCalled();
+  });
+
+  it('showcase: a failed dedupe-marker write is reported', async () => {
+    setShowcaseFormMap();
+    mockPostTaggedUpdate.mockImplementation((id, tag) => (tag === 'PORTAL: Photo/Video Submitted' ? Promise.reject(new Error('Monday down')) : Promise.resolve(undefined)));
+    const res = makeRes();
+    await handler(makeReq({ formID: SHOWCASE_FORM_ID, submissionID: 'S3', tabExtra: { q4_photos: 'https://www.jotform.com/uploads/a.jpg' } }), res);
+    expect(mockReportCriticalFailure).toHaveBeenCalledWith('jotform-webhook-dedupe-marker', expect.any(String), expect.anything());
+  });
+
+  it('color tab with several forms is NOT marked complete when the history read fails', async () => {
+    process.env.JOTFORM_FORM_MAP = JSON.stringify({
+      c1: { name: 'Color A', tab: 'color' },
+      c2: { name: 'Color B', tab: 'color' },
+    });
+    // First read (dedupe) ok, second read (completeness) fails.
+    mockGetOrderMessages.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('Monday timeout'));
+    const res = makeRes();
+    await handler(makeReq({ formID: 'c1', submissionID: 'S4' }), res);
+    expect(res.body.tabComplete).toBe(false);
+    expect(mockMarkSectionCompleteSafe).not.toHaveBeenCalled();
   });
 });

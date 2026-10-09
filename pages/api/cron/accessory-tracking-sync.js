@@ -34,6 +34,9 @@ import { getAllAccessoryItems, updateAccessoryCarrierStatus, getAllOrders, getOr
 import { trackShipment, onboardShipment, buildTrackingTitle, buildCustomFields } from '../../../lib/aftership';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { mapWithConcurrency } from '../../../lib/concurrency';
+import { secretsMatch } from '../../../lib/auth';
+
+export const config = { maxDuration: 300 };
 
 // getAllOrders() skips mirror columns (too slow board-wide), so pocName /
 // pocEmail / phone are always blank on its orders. For an opted-in order with
@@ -43,10 +46,15 @@ import { mapWithConcurrency } from '../../../lib/concurrency';
 // and silencing AfterShip's own delivery emails. Load the full order (with
 // mirrors) for just those orders. Opted-out orders still resolve to nothing,
 // which is the intended way to strip contacts from AfterShip.
+//
+// Returns null (unknown — don't touch AfterShip's customers) when that full
+// load fails, rather than falling back to the mirror-less order: resolving
+// from it produced [] and overwrote the real POC (audit 2026-10-09).
 async function contactsFor(order) {
   let source = order;
   if (order?.freightNotifyEnabled && !order.deliverySnapshot) {
-    source = (await getOrderById(order.id).catch(() => null)) || order;
+    source = await getOrderById(order.id).catch(() => null);
+    if (!source) return null;
   }
   const { primary, secondary } = resolveDeliveryContacts(source);
   return [primary, secondary].filter(Boolean);
@@ -72,9 +80,10 @@ export default async function handler(req, res) {
   // comparison against "Bearer undefined" — trivially satisfiable by
   // anyone. Fail closed when the secret itself isn't configured, matching
   // the discipline lib/auth.js already applies to NEXTAUTH_SECRET.
-  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || !secretsMatch(authHeader, `Bearer ${process.env.CRON_SECRET}`)) {
     return res.status(401).json({ error: 'Unauthorized.' });
   }
+  console.log('Accessory tracking sync: run started');
 
   try {
     // Fetched once, shared by both loops below. Accessory items need this
@@ -88,8 +97,10 @@ export default async function handler(req, res) {
     // contact enrichment / a real title for that run, and the Frame/Mats
     // loop simply has nothing to do.
     let orders = [];
+    let ordersLoaded = false;
     try {
       orders = await getAllOrders();
+      ordersLoaded = true;
     } catch (err) {
       console.error('accessory-tracking-sync: failed to load orders (accessory contact enrichment + Frame/Mats onboarding both skipped this run):', err.message);
       // PORTAL-057: this used to be console.error only, which is why a real
@@ -119,19 +130,28 @@ export default async function handler(req, res) {
         // Mats — register the item's real parent-order delivery contact
         // (when resolvable) the same way Frame/Mats already do.
         const order = item.orderId ? ordersById.get(String(item.orderId)) : null;
-        const contacts = order ? await contactsFor(order) : [];
+        // Contacts are UNKNOWN (null) when the parent order couldn't be
+        // loaded — the board load failed, or the item's parent isn't in it.
+        // Then leave AfterShip's existing customers alone (skipCustomers)
+        // instead of replacing them with just the item name.
+        const contacts = order ? await contactsFor(order) : (ordersLoaded && !item.orderId ? [] : null);
         // The item's own specific name (e.g. "Weighted Blanket") is more
         // useful in the title than the generic "Therapy Equipment &
         // Accessories" bucket label — see buildTrackingTitle's `detail` param.
-        const title = buildTrackingTitle(order?.name, 'accessory', item.name);
-        const customFields = buildCustomFields('accessory', contacts);
+        // Without the order, keep the existing title too (it has the order name).
+        const title = order ? buildTrackingTitle(order.name, 'accessory', item.name) : undefined;
+        const customFields = contacts ? buildCustomFields('accessory', contacts) : undefined;
         const tracking = await trackShipment(item.carrierSlug, item.trackingNumber, {
           title,
           orderId: item.id,
           customerName: item.name,
-          contacts,
+          contacts: contacts || [],
           customFields,
+          skipCustomers: contacts === null,
         });
+        // trackShipment returns null instead of throwing (missing key,
+        // AfterShip down) — count it, so the all-failed alert below can fire.
+        if (!tracking) { errors++; return; }
         if (tracking?.status && tracking.status !== item.carrierStatus) {
           await updateAccessoryCarrierStatus(item.id, tracking.status);
           updated++;
@@ -147,6 +167,7 @@ export default async function handler(req, res) {
     // above only covers accessory subitems). Frame: text_mm538vtm/text_mm53p3b2;
     // Mats: text_mm51pap1/text_mm51wdm5.
     let framesMatsOnboarded = 0;
+    let framesMatsAttempted = 0;
     try {
       await mapWithConcurrency(orders, SYNC_CONCURRENCY, async (order) => {
         const shipments = [
@@ -171,8 +192,12 @@ export default async function handler(req, res) {
           // combined title, so an AfterShip email template can read
           // naturally (e.g. "Your Therapy Mats & Padding shipment is on
           // its way!") instead of quoting the whole order-name+type title.
-          const customFields = buildCustomFields(s.key, contacts);
-          const id = await onboardShipment(s.slug, s.number, { title, orderId: order.id, customerName: order.name, contacts, customFields });
+          const customFields = contacts ? buildCustomFields(s.key, contacts) : undefined;
+          const id = await onboardShipment(s.slug, s.number, {
+            title, orderId: order.id, customerName: order.name,
+            contacts: contacts || [], customFields, skipCustomers: contacts === null,
+          });
+          framesMatsAttempted++;
           if (id) framesMatsOnboarded++;
         }
       });
@@ -184,7 +209,17 @@ export default async function handler(req, res) {
     // outbound call mid-loop, see PORTAL-021) is visible in Vercel's function
     // logs — previously this only went out in the HTTP response body, which
     // nothing reads for a scheduled Cron invocation.
-    console.log(`Accessory tracking sync summary: checked=${candidates.length} updated=${updated} errors=${errors} framesMatsOnboarded=${framesMatsOnboarded}`);
+    console.log(`Accessory tracking sync summary: checked=${candidates.length} updated=${updated} errors=${errors} framesMatsOnboarded=${framesMatsOnboarded}/${framesMatsAttempted}`);
+
+    // onboardShipment returns null on any failure — if every Frame/Mats
+    // onboard failed, that's systemic (key revoked, AfterShip down).
+    if (framesMatsAttempted > 0 && framesMatsOnboarded === 0) {
+      await reportCriticalFailure(
+        'cron/accessory-tracking-sync',
+        `Every Frame/Mats AfterShip onboarding failed this run (attempted=${framesMatsAttempted}). Likely a revoked/missing AFTERSHIP_API_KEY or an AfterShip outage — check Vercel function logs.`,
+        { framesMatsAttempted }
+      );
+    }
 
     // Same reasoning as cron/reminders.js: every per-item failure above is
     // caught inline, so a systemic cause (revoked AFTERSHIP_API_KEY, a

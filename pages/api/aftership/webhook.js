@@ -32,9 +32,25 @@ import {
   findOrderByFreightTracking,
   updateFreightNotifyTag,
   getCustomerFirstName,
+  mondayQuery,
+  COLS,
 } from '../../../lib/monday';
 import { labelForTag, publicUrl, SHIPMENT_LABELS } from '../../../lib/aftership';
 import { notifyCustomerFreightUpdate } from '../../../lib/email';
+
+// findOrderByFreightTracking reads lastNotifiedTag from getAllOrders()'s
+// 20-second per-instance cache, and PORTAL-060's invalidation only clears the
+// instance that wrote it — two checkpoints landing on different instances
+// both saw the old tag and both emailed (audit 2026-10-09). Re-read just that
+// one column, uncached, immediately before deciding to send.
+async function readNotifyTagFresh(itemId, shipmentKey) {
+  const columnId = shipmentKey === 'frame' ? COLS.frameNotifyTag : COLS.matsNotifyTag;
+  const data = await mondayQuery(
+    'query($ids: [ID!], $cols: [String!]) { items(ids: $ids) { column_values(ids: $cols) { text } } }',
+    { ids: [String(itemId)], cols: [columnId] }
+  );
+  return (data?.items?.[0]?.column_values?.[0]?.text || '').trim();
+}
 
 // Only these carrier statuses are worth emailing a customer about — skip the
 // noisy/early ones (Pending, InfoReceived) that don't tell them anything new.
@@ -151,16 +167,19 @@ export default async function handler(req, res) {
 
   try {
     // 1. Therapy Equipment & Accessories — Monday-board-only sync (no customer email).
+    // No early return on a match: accessories can ship on the same LTL PRO
+    // number as the frame, and returning here meant an opted-in customer
+    // never got the frame's freight emails (audit 2026-10-09).
     const subitem = await findAccessorySubitemByTracking(slug, trackingNumber);
     if (subitem) {
       await updateAccessoryCarrierStatus(subitem.id, labelForTag(tag));
-      return res.status(200).json({ ok: true, matched: true, board: 'accessories', subitemId: subitem.id });
     }
 
     // 2. Sensory Gym Frame / Therapy Mats & Padding — customer-facing email,
     // gated on their opt-in preference and deduped against the last tag sent.
     const order = await findOrderByFreightTracking(slug, trackingNumber);
     if (!order) {
+      if (subitem) return res.status(200).json({ ok: true, matched: true, board: 'accessories', subitemId: subitem.id });
       // Not one of ours at all.
       return res.status(200).json({ ok: true, matched: false });
     }
@@ -175,11 +194,18 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, matched: true, board: 'freight', skipped: 'No customer email on order.' });
     }
     const statusLabel = labelForTag(tag);
-    if (order.lastNotifiedTag === statusLabel) {
-      return res.status(200).json({ ok: true, matched: true, board: 'freight', skipped: 'Already notified for this status.' });
+    const alreadySent = (last) => {
+      if (last === statusLabel) return 'Already notified for this status.';
+      if (isBackwardStep(last, statusLabel)) return `"${statusLabel}" is behind the last status we emailed ("${last}").`;
+      return null;
+    };
+    const cachedSkip = alreadySent(order.lastNotifiedTag);
+    if (cachedSkip) {
+      return res.status(200).json({ ok: true, matched: true, board: 'freight', skipped: cachedSkip });
     }
-    if (isBackwardStep(order.lastNotifiedTag, statusLabel)) {
-      return res.status(200).json({ ok: true, matched: true, board: 'freight', skipped: `"${statusLabel}" is behind the last status we emailed ("${order.lastNotifiedTag}").` });
+    const freshSkip = alreadySent(await readNotifyTagFresh(order.itemId, order.shipmentKey));
+    if (freshSkip) {
+      return res.status(200).json({ ok: true, matched: true, board: 'freight', skipped: freshSkip });
     }
 
     // Send + dedupe-tag-write are handled as two distinct steps (not both
@@ -198,11 +224,16 @@ export default async function handler(req, res) {
         order.orderName,
         SHIPMENT_LABELS[order.shipmentKey] || 'Shipment',
         statusLabel,
-        publicUrl(slug, trackingNumber)
+        publicUrl(slug, trackingNumber),
+        // Resend drops a repeat of the same key for 24h — covers two
+        // concurrent deliveries that both passed the re-read above.
+        { idempotencyKey: `freight/${order.itemId}/${order.shipmentKey}/${trackingNumber}/${statusLabel}` }
       );
     } catch (err) {
       console.error(`AfterShip webhook: failed to send freight update email for order ${order.itemId} (${order.shipmentKey} -> "${statusLabel}"):`, err.message);
-      return res.status(200).json({ ok: false, matched: true, board: 'freight', error: 'Failed to send customer email.' });
+      // 5xx so AfterShip retries: nothing was marked, so a retry sends once.
+      // ("Delivered" has no later status to catch it up — a 200 here lost it.)
+      return res.status(502).json({ ok: false, matched: true, board: 'freight', error: 'Failed to send customer email.' });
     }
 
     try {
@@ -214,8 +245,12 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, matched: true, board: 'freight', notified: order.customerEmail });
   } catch (err) {
     console.error('AfterShip webhook processing error:', err.message);
-    // Still 200 — a transient error on our side shouldn't make AfterShip retry
-    // forever; the shipment's next status change will sync on its own.
-    return res.status(200).json({ ok: false, error: 'Processing error.' });
+    // 5xx so AfterShip redelivers (it retries a bounded number of times, not
+    // forever). This used to answer 200 on the theory that the next status
+    // would catch up — but there's no status after "Delivered", so a Monday
+    // timeout at that moment lost the customer's Delivered email for good.
+    // Retrying is safe: the notify-tag dedupe above (plus the Resend
+    // idempotency key) stops a repeat send.
+    return res.status(503).json({ ok: false, error: 'Processing error.' });
   }
 }

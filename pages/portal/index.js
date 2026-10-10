@@ -12,7 +12,7 @@ import Image from 'next/image';
 import dynamic from 'next/dynamic';
 import { sanitizeMessageHtml } from '../../lib/sanitizeHtml';
 import { isStaffMessage, isStaffReply, isPortalChatMessage, stripPortalTags, STAFF_DISPLAY_NAME } from '../../lib/messageOrigin';
-import { isValidJotformId } from '../../lib/jotform';
+import { isValidJotformId, withOrderToken } from '../../lib/jotform';
 import { isColorSelectionSupported } from '../../lib/colorRequirements';
 
 // Lazy-loaded — most customers never open Referral/Showcase in a given
@@ -2122,7 +2122,7 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
               title="Color Selection Form"
               allowtransparency="true"
               allow="geolocation; microphone; camera; fullscreen; payment"
-              src="https://form.jotform.com/${formId}"
+              src="${withOrderToken(`https://form.jotform.com/${formId}`, order?.formOrderToken)}"
               frameborder="0"
               class="jf-embed"
               style="min-width:100%;max-width:100%;height:539px;border:none;display:block;margin-bottom:16px;"
@@ -2147,7 +2147,7 @@ function ColorTab({ order, completions, markComplete, showToast, colorForms, onN
               {' '}Your selections will be reviewed by our team before manufacturing begins.
             </p>
             <a
-              href={`https://form.jotform.com/${id}`}
+              href={withOrderToken(`https://form.jotform.com/${id}`, order?.formOrderToken)}
               target="_blank"
               rel="noreferrer"
               className="btn btn-moss"
@@ -3209,16 +3209,56 @@ export function TaxExemptionCard({ order, showToast, onRefresh }) {
 
 // ── Tab: Messages ─────────────────────────────────────────────────────────────
 
+const MESSAGE_POLL_FAST_MS = 15000;
+const MESSAGE_POLL_SLOW_MS = 60000;
+const MESSAGE_POLL_IDLE_LIMIT = 4;
+
 function MessagesTab({ order, messages, onRefresh, showToast }) {
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
 
   // Staff reply in Monday (or in the Admin Messages tab) doesn't push to the
   // customer in real time — poll while this tab is open so a staff reply shows
-  // up without the customer needing to reload the whole page.
+  // up without the customer needing to reload the whole page. Each poll reads
+  // the order's whole update history from Monday, so (audit 2026-10-09) it
+  // only runs while the browser tab is visible, and backs off from 15s to 60s
+  // after MESSAGE_POLL_IDLE_LIMIT polls with nothing new. New activity, a
+  // send, or the browser tab coming back resets it to 15s. Leaving the
+  // Messages tab unmounts this component, which stops polling entirely.
+  const activity = messages.reduce((n, m) => n + 1 + (m.replies?.length || 0), 0);
+  const idlePolls = useRef(0);
+  const restartPolling = useRef(() => {});
+  useEffect(() => { idlePolls.current = 0; }, [activity]);
   useEffect(() => {
-    const interval = setInterval(() => { onRefresh(); }, 15000);
-    return () => clearInterval(interval);
+    let timer = null;
+    let stopped = false;
+    const schedule = () => {
+      clearTimeout(timer);
+      if (stopped) return;
+      timer = setTimeout(tick, idlePolls.current >= MESSAGE_POLL_IDLE_LIMIT ? MESSAGE_POLL_SLOW_MS : MESSAGE_POLL_FAST_MS);
+    };
+    async function tick() {
+      if (stopped) return;
+      if (document.visibilityState === 'visible') {
+        idlePolls.current += 1; // reset to 0 by the activity effect if this poll finds something new
+        try { await onRefresh(); } catch {}
+      }
+      schedule();
+    }
+    restartPolling.current = () => { idlePolls.current = 0; schedule(); };
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      idlePolls.current = 0;
+      onRefresh();
+      schedule();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    schedule();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [onRefresh]);
 
   async function send(e) {
@@ -3234,6 +3274,7 @@ function MessagesTab({ order, messages, onRefresh, showToast }) {
       if (!res.ok) throw new Error();
       setBody('');
       await onRefresh();
+      restartPolling.current();
       showToast('Message sent.');
     } catch { showToast('Failed to send. Please try again.'); }
     finally { setSending(false); }

@@ -9,7 +9,7 @@
  * duplicated here.
  */
 import { useState, useEffect } from 'react';
-import { isValidJotformId } from '../../lib/jotform';
+import { isValidJotformId, withOrderToken } from '../../lib/jotform';
 
 // Jotform query-param keys that prefill the Showcase form's Full Name,
 // Organization, and Email Address fields (confirmed against the live form —
@@ -24,7 +24,7 @@ function buildShowcaseFormUrl(formId, order) {
   if (orgName) params.set(SHOWCASE_PREFILL_KEYS.organization, orgName);
   if (order?.contactEmail) params.set(SHOWCASE_PREFILL_KEYS.email, order.contactEmail);
   const qs = params.toString();
-  return `https://form.jotform.com/${formId}${qs ? `?${qs}` : ''}`;
+  return withOrderToken(`https://form.jotform.com/${formId}${qs ? `?${qs}` : ''}`, order?.formOrderToken);
 }
 
 export default function ShowcaseTab({ order }) {

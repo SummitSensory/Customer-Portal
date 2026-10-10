@@ -17,7 +17,7 @@
 import { parse } from 'cookie';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
 import { getOrderById, getOrdersByEmail } from '../../../lib/monday';
-import { customerSafeOrder, orderBelongsToSession, rejectRevokedSession } from '../../../lib/apiAuth';
+import { customerOrderForPortal, orderBelongsToSession, rejectRevokedSession } from '../../../lib/apiAuth';
 
 export default async function handler(req, res) {
   // Auth: customer session cookie
@@ -46,7 +46,7 @@ export default async function handler(req, res) {
         const orders = await getOrdersByEmail(session.email);
         if (!orders.length) return res.status(404).json({ error: 'No orders found.' });
         return res.status(200).json({
-          orders: orders.map(customerSafeOrder),
+          orders: await Promise.all(orders.map(customerOrderForPortal)),
           currentOrderId: session.orderId || orders[0].id,
           impersonatedBy: session.impersonatedBy || null,
         });
@@ -61,7 +61,7 @@ export default async function handler(req, res) {
         if (!orderBelongsToSession(order, session)) return rejectRevokedSession(res);
         // impersonatedBy is only set on sessions minted by /api/admin/impersonate —
         // surfaced here so the portal UI can show its "viewing as staff" banner.
-        return res.status(200).json({ order: customerSafeOrder(order), impersonatedBy: session.impersonatedBy || null });
+        return res.status(200).json({ order: await customerOrderForPortal(order), impersonatedBy: session.impersonatedBy || null });
       }
 
       // Otherwise look up all orders for this email (repeat customer support)
@@ -71,9 +71,9 @@ export default async function handler(req, res) {
       // or color gates — see getAllOrders), so re-read the one order in full.
       if (orders.length === 1) {
         const order = (await getOrderById(orders[0].id)) || orders[0];
-        return res.status(200).json({ order: customerSafeOrder(order), impersonatedBy: session.impersonatedBy || null });
+        return res.status(200).json({ order: await customerOrderForPortal(order), impersonatedBy: session.impersonatedBy || null });
       }
-      return res.status(200).json({ orders: orders.map(customerSafeOrder), impersonatedBy: session.impersonatedBy || null }); // portal shows order picker
+      return res.status(200).json({ orders: await Promise.all(orders.map(customerOrderForPortal)), impersonatedBy: session.impersonatedBy || null }); // portal shows order picker
     } catch (err) {
       console.error('Order GET error:', err);
       return res.status(500).json({ error: 'Failed to load order. Please try again.' });

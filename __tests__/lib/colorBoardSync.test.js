@@ -132,9 +132,13 @@ const MFG = '6533700776';
  *   rows:       { [boardId]: [{ id, created_at }] }  — rows on each target board
  *   mfgForward: { [orderId]: { [mfgLinkColumnId]: [rowIds] } } — OTHER orders' forward links
  *   fail:       (body) => boolean                     — make a mutation fail
+ *   reflect:    [mfgLinkColumnId]  — two-way pairs: creating a row with its back-link
+ *               set also fills the order's forward link (as Accessories does live)
  */
-function fakeMonday({ mfgLinks = {}, backLinks = {}, rows = {}, mfgForward = {}, fail = () => false } = {}) {
+function fakeMonday({ mfgLinks = {}, backLinks = {}, rows = {}, mfgForward = {}, fail = () => false, reflect = [] } = {}) {
   const calls = [];
+  const liveForward = {}; // mfgLinkColumnId → row ids, as a live re-read sees them
+  for (const [col, items] of Object.entries(mfgLinks)) liveForward[col] = items.map((it) => it.id);
   vi.stubGlobal('fetch', vi.fn(async (_u, init) => {
     const body = JSON.parse(init.body);
     calls.push(body);
@@ -142,11 +146,21 @@ function fakeMonday({ mfgLinks = {}, backLinks = {}, rows = {}, mfgForward = {},
     const v = body.variables || {};
     if (q.includes('mutation')) {
       if (fail(body)) return { ok: true, status: 200, json: async () => ({ errors: [{ message: 'Monday rejected the write' }] }) };
-      if (q.includes('create_item')) return ok({ create_item: { id: '777' } });
+      if (q.includes('create_item')) {
+        const board = Object.values(BOARDS).find((bd) => bd.id === String(v.b));
+        if (board && reflect.includes(board.mfgLink)) liveForward[board.mfgLink] = [...(liveForward[board.mfgLink] || []), '777'];
+        return ok({ create_item: { id: '777' } });
+      }
+      if (String(v.b) === MFG) {
+        for (const [col, val] of Object.entries(JSON.parse(v.v))) liveForward[col] = val.item_ids.map(String);
+      }
       return ok({ change_multiple_column_values: { id: 'x' } });
     }
     if (q.includes('linked_items')) {
       return ok({ items: [{ column_values: Object.entries(mfgLinks).map(([id, linked_items]) => ({ id, linked_items })) }] });
+    }
+    if (q.includes('items(ids') && Object.values(BOARDS).some((bd) => bd.mfgLink === v.col?.[0])) {
+      return ok({ items: [{ column_values: [{ linked_item_ids: liveForward[v.col[0]] || [] }] }] });
     }
     if (q.includes('items(ids')) {
       return ok({ items: [{ column_values: [{ linked_item_ids: backLinks[v.i?.[0]] || [] }] }] });
@@ -244,6 +258,26 @@ describe('syncConfirmedColorsToBoards', () => {
     });
     const res = await syncConfirmedColorsToBoards(soarOrder, requiredColorInputs(soarOrder), soarSel);
     expect(res.boards.gb.created).toBe(true);
+  });
+
+  it("doesn't re-write a Manufacturing link Monday already filled from a two-way back-link (Firefly Autism, 2026-10-12)", async () => {
+    const mats = { id: '555', name: 'Firefly', productType: 'Therapy Mats & Pads', colorGates: { foundationMat: 'Included' } };
+    const sel = { foundation_mat: { foundation_mat: { brand: 'foundation', code: 'Black/Gray' } } };
+    const calls = fakeMonday({
+      reflect: [BOARDS.acc.mfgLink],
+      // Live, a second write of the same link is rejected.
+      fail: (b) => b.variables.b === MFG && b.variables.v.includes(BOARDS.acc.mfgLink),
+    });
+    const res = await syncConfirmedColorsToBoards(mats, requiredColorInputs(mats), sel);
+    expect(res.errors).toEqual([]);
+    expect(res.boards.acc).toEqual({ itemId: '777', created: true });
+    expect(writes(calls).some((c) => c.variables.b === MFG && c.variables.v.includes(BOARDS.acc.mfgLink))).toBe(false);
+  });
+
+  it('still reports a failed Manufacturing link write when the link really is missing', async () => {
+    fakeMonday({ fail: (b) => b.variables.b === MFG });
+    const res = await syncConfirmedColorsToBoards(soarOrder, requiredColorInputs(soarOrder), soarSel);
+    expect(res.errors.some((e) => e.startsWith('GB:'))).toBe(true);
   });
 
   it('a failure on one board is reported without stopping the others', async () => {

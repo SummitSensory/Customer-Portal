@@ -89,7 +89,7 @@ export default async function handler(req, res) {
     return res.status(429).json({ error: 'Too many incorrect attempts. Please request a new code.' });
   }
 
-  if (!codeMatchesHash(String(code).trim(), payload.codeHash)) {
+  if (!codeMatchesHash(String(code).trim(), payload.codeHash, payload.email)) {
     // Re-sign the cookie with the incremented attempt count so the limit
     // above is enforced across requests without needing server-side state.
     // Carries forward the same codeHash — never the code itself.

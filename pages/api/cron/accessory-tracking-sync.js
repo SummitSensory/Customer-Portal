@@ -18,7 +18,7 @@
 // returned a server-side internal error on retry. This polling job is the
 // reliable fallback — see Customer-Portal-Process-Flow.md EP-22/EP-23.
 //
-// vercel.json schedule: hourly ("0 * * * *"). Previously every 15 minutes,
+// vercel.json schedule: hourly ("20 * * * *"). Previously every 15 minutes,
 // but EP-22 (the real-time Monday->AfterShip webhook, confirmed LIVE
 // 2026-08-19 — see Customer-Portal-Process-Flow.md) now pushes new Carrier
 // Code/Freight Tracking ID entries to AfterShip within seconds, so this job
@@ -29,6 +29,10 @@
 // (EP-21) still updates status in real time once a shipment has been
 // onboarded at least once — this job only affects how quickly a brand-new
 // item gets its first onboarding.
+//
+// Runs at :20, not :00 (2026-10-18): at :00 it shared a server instance with
+// message-reply-safety-net (every :00/:30), and the two together kept timing
+// out Monday reads and, on 2026-10-16 13:01Z, AfterShip calls too.
 
 import { getAllAccessoryItems, updateAccessoryCarrierStatus, getAllOrders, getOrderById, resolveDeliveryContacts } from '../../../lib/monday';
 import { trackShipment, onboardShipment, buildTrackingTitle, buildCustomFields } from '../../../lib/aftership';

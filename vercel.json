@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/accessory-tracking-sync",
-      "schedule": "0 * * * *"
+      "schedule": "20 * * * *"
     },
     {
       "path": "/api/cron/color-catalog-sync",

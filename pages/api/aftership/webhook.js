@@ -203,7 +203,8 @@ export default async function handler(req, res) {
     if (cachedSkip) {
       return res.status(200).json({ ok: true, matched: true, board: 'freight', skipped: cachedSkip });
     }
-    const freshSkip = alreadySent(await readNotifyTagFresh(order.itemId, order.shipmentKey));
+    const freshLast = await readNotifyTagFresh(order.itemId, order.shipmentKey);
+    const freshSkip = alreadySent(freshLast);
     if (freshSkip) {
       return res.status(200).json({ ok: true, matched: true, board: 'freight', skipped: freshSkip });
     }
@@ -226,8 +227,11 @@ export default async function handler(req, res) {
         statusLabel,
         publicUrl(slug, trackingNumber),
         // Resend drops a repeat of the same key for 24h — covers two
-        // concurrent deliveries that both passed the re-read above.
-        { idempotencyKey: `freight/${order.itemId}/${order.shipmentKey}/${trackingNumber}/${statusLabel}` }
+        // concurrent deliveries that both passed the re-read above (they read
+        // the same last status, so they build the same key). The last status
+        // is part of the key so a status that comes BACK the same day (In
+        // Transit → Exception → In Transit) still sends (audit 2026-10-18).
+        { idempotencyKey: `freight/${order.itemId}/${order.shipmentKey}/${trackingNumber}/${statusLabel}/after-${freshLast || 'none'}` }
       );
     } catch (err) {
       console.error(`AfterShip webhook: failed to send freight update email for order ${order.itemId} (${order.shipmentKey} -> "${statusLabel}"):`, err.message);

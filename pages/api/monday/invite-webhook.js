@@ -51,6 +51,11 @@ import { sendPortalInvitation } from '../../../lib/email';
 import { secretsMatch } from '../../../lib/auth';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 
+// Explicit headroom (audit 2026-10-18): several Monday reads plus a send with
+// a 15s timeout. If the function were killed mid-run, its claim note would
+// never be released and Monday's retry would be treated as a duplicate.
+export const config = { maxDuration: 60 };
+
 const SENT_TAG = 'PORTAL: Invitation Sent';
 const CLAIM_TAG = 'PORTAL: Invitation Claim';
 const DUPLICATE_WINDOW_MS = 2 * 60 * 1000;

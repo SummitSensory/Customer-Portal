@@ -1,14 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockSetFreightNotifyPreference = vi.fn().mockResolvedValue(undefined);
+const mockGetOrderById = vi.fn();
 vi.mock('../../../lib/monday', () => ({
   setFreightNotifyPreference: (...args) => mockSetFreightNotifyPreference(...args),
+  getOrderById: (...args) => mockGetOrderById(...args),
 }));
 
 const mockVerifyCustomerSession = vi.fn();
 vi.mock('../../../lib/auth', () => ({
   verifyCustomerSession: (...args) => mockVerifyCustomerSession(...args),
   SESSION_COOKIE: 'summit_customer_session',
+  clearCookieOptions: () => ({ path: '/' }),
 }));
 
 const mockAllowRequest = vi.fn().mockReturnValue(true);
@@ -32,6 +35,7 @@ describe('POST /api/portal/freight-notify-preference', () => {
     mockSetFreightNotifyPreference.mockReset().mockResolvedValue(undefined);
     mockVerifyCustomerSession.mockReset();
     mockAllowRequest.mockReset().mockReturnValue(true);
+    mockGetOrderById.mockReset().mockImplementation(async (id) => ({ id, customerEmail: 'a@b.com' }));
   });
 
   it('rejects a non-POST method', async () => {
@@ -99,6 +103,17 @@ describe('POST /api/portal/freight-notify-preference', () => {
     expect(mockSetFreightNotifyPreference).not.toHaveBeenCalledWith('someone-elses-order-999', expect.anything());
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({ ok: true, enabled: true });
+  });
+
+  // Audit 2026-10-18: an old contact's session kept working after staff
+  // changed the order's email.
+  it('rejects a session whose order now belongs to a different email', async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'old@b.com', orderId: 'real-order-123' });
+    const res = makeRes();
+    res.setHeader = vi.fn();
+    await handler({ method: 'POST', headers: {}, body: { enabled: false } }, res);
+    expect(res.statusCode).toBe(401);
+    expect(mockSetFreightNotifyPreference).not.toHaveBeenCalled();
   });
 
   it('returns 500 without crashing when the Monday write fails', async () => {

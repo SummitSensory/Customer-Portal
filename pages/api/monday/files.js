@@ -9,6 +9,7 @@ import { authOptions } from '../auth/[...nextauth]';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
 import { getOrderFiles, addFileToOrder, getOrderById, STAFF_UPLOAD_HOST_ALLOWLIST } from '../../../lib/monday';
 import { notifyCustomerNewFile } from '../../../lib/email';
+import { loadSessionOrder } from '../../../lib/apiAuth';
 
 async function getIdentity(req, res) {
   const staffSession = await getServerSession(req, res, authOptions);
@@ -32,6 +33,9 @@ export default async function handler(req, res) {
     if (identity.role === 'customer' && orderId !== identity.orderId) {
       return res.status(403).json({ error: 'Forbidden.' });
     }
+    // Also reject a session whose order's email staff changed since login
+    // (audit 2026-10-18).
+    if (identity.role === 'customer' && !(await loadSessionOrder(identity, res, { logPrefix: 'files' }))) return;
 
     try {
       const files = await getOrderFiles(orderId);

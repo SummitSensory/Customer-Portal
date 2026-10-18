@@ -11,6 +11,7 @@ const mockVerifyCustomerSession = vi.fn();
 vi.mock('../../../lib/auth', () => ({
   verifyCustomerSession: (...a) => mockVerifyCustomerSession(...a),
   SESSION_COOKIE: 'summit_customer_session',
+  clearCookieOptions: () => ({ path: '/' }),
 }));
 
 const mockGetOrderMessages = vi.fn();
@@ -75,13 +76,33 @@ describe('/api/monday/messages', () => {
     expect(res.body.messages).toHaveLength(4);
   });
 
-  it('a posted customer message returns 201 even if the follow-up order read fails', async () => {
+  it('a posted customer message returns 201 even if the team notification fails', async () => {
     mockPostOrderMessage.mockResolvedValue({ id: '9', body: '[PORTAL][PORTAL:CUSTOMER]\nhello', created_at: 'now', creator: { name: 'Bryan', email: 'bryan@summitsensory.com' } });
-    mockGetOrderById.mockRejectedValue(new Error('Monday timeout'));
+    mockGetOrderById.mockResolvedValue({ id: 'o1', name: 'Acme', customerEmail: 'c@school.org' });
+    mockNotifyTeamNewMessage.mockRejectedValueOnce(new Error('Resend down'));
     const res = makeRes();
     await handler({ method: 'POST', query: {}, body: { orderId: 'o1', body: 'hello' }, headers: { cookie: 'summit_customer_session=x' } }, res);
     expect(res.statusCode).toBe(201);
     expect(res.body.message).toMatchObject({ id: '9', isStaff: false });
     expect(JSON.stringify(res.body)).not.toMatch(/bryan@/);
+  });
+
+  // Audit 2026-10-18: the order is now checked BEFORE posting, so a failed
+  // read fails cleanly with nothing posted (a retry can't duplicate).
+  it('does not post when the order read fails', async () => {
+    mockGetOrderById.mockRejectedValue(new Error('Monday timeout'));
+    const res = makeRes();
+    await handler({ method: 'POST', query: {}, body: { orderId: 'o1', body: 'hello' }, headers: { cookie: 'summit_customer_session=x' } }, res);
+    expect(res.statusCode).toBe(500);
+    expect(mockPostOrderMessage).not.toHaveBeenCalled();
+  });
+
+  it('rejects a post from a session whose order now belongs to a different email', async () => {
+    mockGetOrderById.mockResolvedValue({ id: 'o1', name: 'Acme', customerEmail: 'new@school.org' });
+    const res = makeRes();
+    res.setHeader = vi.fn();
+    await handler({ method: 'POST', query: {}, body: { orderId: 'o1', body: 'hello' }, headers: { cookie: 'summit_customer_session=x' } }, res);
+    expect(res.statusCode).toBe(401);
+    expect(mockPostOrderMessage).not.toHaveBeenCalled();
   });
 });

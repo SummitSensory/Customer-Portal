@@ -23,7 +23,9 @@ vi.mock('../../../lib/monday', () => ({
   postOrderMessage: (...a) => mockPostOrderMessage(...a),
   getOrderById: (...a) => mockGetOrderById(...a),
   setStatusLabel: (...a) => mockSetStatusLabel(...a),
+  getOrderCustomerEmail: (...a) => mockGetOrderCustomerEmail(...a),
 }));
+const mockGetOrderCustomerEmail = vi.fn();
 
 const mockNotifyTeamNewMessage = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../../lib/email', () => ({ notifyTeamNewMessage: (...a) => mockNotifyTeamNewMessage(...a) }));
@@ -56,6 +58,7 @@ describe('/api/monday/messages', () => {
     mockGetOrderMessages.mockReset().mockResolvedValue(HISTORY);
     mockPostOrderMessage.mockReset();
     mockGetOrderById.mockReset();
+    mockGetOrderCustomerEmail.mockReset().mockResolvedValue('c@school.org');
     mockNotifyTeamNewMessage.mockClear();
   });
 
@@ -67,6 +70,18 @@ describe('/api/monday/messages', () => {
     expect(JSON.stringify(res.body)).not.toMatch(/@summitsensory\.com|Internal:|Staff Viewing/);
     expect(res.body.messages[0]).toMatchObject({ isStaff: false, replies: [{ id: '1r', isStaff: true }] });
     expect(res.body.messages[1]).toMatchObject({ isStaff: true });
+  });
+
+  // Audit follow-up 2026-10-18: reading the thread is checked too, with the
+  // cheap email-only lookup since the Messages tab polls.
+  it('rejects reading from a session whose order now belongs to a different email', async () => {
+    mockGetOrderCustomerEmail.mockResolvedValue('new@school.org');
+    const res = makeRes();
+    res.setHeader = vi.fn();
+    await handler({ method: 'GET', query: { orderId: 'o1' }, headers: { cookie: 'summit_customer_session=x' } }, res);
+    expect(res.statusCode).toBe(401);
+    expect(mockGetOrderMessages).not.toHaveBeenCalled();
+    expect(mockGetOrderById).not.toHaveBeenCalled();
   });
 
   it('staff still get the full history', async () => {

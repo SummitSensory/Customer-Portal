@@ -734,6 +734,12 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   // their edits silently rejected.
   const [confirmedAt, setConfirmedAt] = useState(null);
   const [storedTotal, setStoredTotal] = useState(null);
+  // 'received' / 'not_applicable' when Portal: Color is ✅ / N/A without a
+  // portal confirmation (colors came in another way, or don't apply) — the
+  // server refuses saves then too. staffCollecting: required parts with no
+  // portal picker when there's nothing here to pick (audit follow-up 2026-10-18).
+  const [onFile, setOnFile] = useState(null);
+  const [staffCollecting, setStaffCollecting] = useState([]);
   const [view, setView] = useState('checklist'); // 'checklist' | { input } | 'summary'
   const [activePart, setActivePart] = useState(null);
   const [confirming, setConfirming] = useState(false);
@@ -771,6 +777,11 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
         setSelections(loaded);
         setConfirmedAt(data.confirmedAt || null);
         setStoredTotal(typeof data.totalUpcharge === 'number' ? data.totalUpcharge : null);
+        setOnFile(data.onFile || null);
+        setStaffCollecting(Array.isArray(data.staffCollecting) ? data.staffCollecting : []);
+        // The server may have just marked the step N/A (nothing to pick) —
+        // reflect it in the sidebar without waiting for a reload.
+        if (data.onFile) markComplete?.('color', true);
       })
       .catch(() => {
         if (cancelled) return;
@@ -987,13 +998,39 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   // what the CURRENT productType maps to — with empty requiredInputs,
   // findOrphanedSelections correctly treats every stored selection as an
   // orphan and still displays all of them, rather than showing nothing.
+  if (onFile && !confirmedAt) {
+    return (
+      <div className="card">
+        <div className="empty">
+          <div className="ei">{onFile === 'not_applicable' ? '✔️' : '✅'}</div>
+          <h3>{onFile === 'not_applicable' ? 'No color selections needed' : 'Your color selections are on file'}</h3>
+          <p>
+            {onFile === 'not_applicable'
+              ? 'There are no color choices to make for this order.'
+              : 'We already have your color and finish choices for this order.'}
+            {' '}Need to change something? Send us a message and our team will help.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (!requiredInputs.length && !confirmedAt) {
     return (
       <div className="card">
         <div className="empty">
           <div className="ei">🎨</div>
-          <h3>Color selection not yet available</h3>
-          <p>Your product type isn&apos;t configured for the online color picker yet — our team will reach out with next steps.</p>
+          {staffCollecting.length ? (
+            <>
+              <h3>Nothing to pick here</h3>
+              <p>Our team will reach out to collect your {staffCollecting.join(', ')} choice{staffCollecting.length > 1 ? 's' : ''} directly — there&apos;s nothing you need to do in the portal.</p>
+            </>
+          ) : (
+            <>
+              <h3>Color selection not yet available</h3>
+              <p>Your product type isn&apos;t configured for the online color picker yet — our team will reach out with next steps.</p>
+            </>
+          )}
         </div>
       </div>
     );

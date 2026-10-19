@@ -104,3 +104,17 @@ Bryan asked for a way for staff to change a customer's confirmed color selection
 - **Emails:** `notifyTeamColorsChanged` leads with the upcharge difference, and `notifyCustomerColorsChanged` lists the changes and the new upcharge but not the internal reason. A failed send raises an internal alert, and the change still saves.
 - **Audit trail:** a `[PORTAL: Color Selections Changed]` update on the order recording who, when (ET), the reason, each old → new pick, and the upcharge. **Not stored in the snapshot column:** it is Monday long text, capped at 2,000 characters, and real snapshots are already ~900. The admin Colors panel shows the history (`GET /api/admin/color-history`, parsed by `lib/colorSelectionChanges.js`), including the original confirmations.
 - Product types still on the Jotform iframe can't be changed this way, since there's no native picker for them.
+
+## 2026-10-19 — Prismatic invoicing moved to the CRM; portal QuickBooks code removed
+
+The portal-side QuickBooks invoicing above (PR #58) was merged but never switched on, and has been reverted. Looking at the CRM (SSG-CPQ-App) showed it already creates each order's QuickBooks invoice: one per project, "50% Upfront / 50% PIA". So by the time colors are confirmed the invoice is usually partly paid, and the portal's "unpaid invoice only" rule would almost never have applied. The CRM also knows exactly which invoice belongs to which order, and already handles the same problem for freight.
+
+Bryan chose the CRM approach (SSG-CPQ-App PR #202): a confirm-first "Bill to QuickBooks" on the order page.
+- If nothing has been paid, the upcharge is added to the order's invoice.
+- If a payment has been applied, it goes on a separate `P-…-CLR` invoice.
+- If the upcharge goes down, the CRM's row is lowered while the invoice is unpaid; otherwise staff credit it by hand.
+- A daily email to accounting lists anything not yet billed.
+
+The portal team emails now point there instead of saying "ADD $X TO INVOICE".
+
+The private Monday board created for the portal's QuickBooks token ("Portal System Settings (do not edit)", 18436103314) is now unused. It is empty, and can be deleted.

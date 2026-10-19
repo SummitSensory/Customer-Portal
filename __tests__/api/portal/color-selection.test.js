@@ -30,8 +30,12 @@ vi.mock('../../../lib/monitoring', () => ({
 }));
 
 const mockNotifyColorsConfirmed = vi.fn().mockResolvedValue(undefined);
+const mockNotifyTeamChanged = vi.fn().mockResolvedValue(undefined);
+const mockNotifyCustomerChanged = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../../lib/email', () => ({
   notifyTeamColorsConfirmed: (...args) => mockNotifyColorsConfirmed(...args),
+  notifyTeamColorsChanged: (...args) => mockNotifyTeamChanged(...args),
+  notifyCustomerColorsChanged: (...args) => mockNotifyCustomerChanged(...args),
 }));
 
 const mockSyncBoards = vi.fn().mockResolvedValue({ boards: {}, errors: [], skipped: [] });
@@ -729,5 +733,137 @@ describe('handler — colors on file outside the picker, nothing to pick, GB inv
     await handler({ method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } }, res);
     expect(res.statusCode).toBe(200);
     expect(mockReportCriticalFailure).not.toHaveBeenCalledWith('color-selection-gb-invoice-mismatch', expect.anything(), expect.anything());
+  });
+});
+
+// Bryan, 2026-10-19: staff change confirmed colors from the portal (View as
+// Customer), with both emails, the same snapshot / board rows, and an audit update.
+describe('handler — staff change of confirmed colors', () => {
+  const STAFF = { email: 'cust@example.com', orderId: 'o1', impersonatedBy: 'kyle@summitsensory.com' };
+  const CONFIRMED_AT = '2026-10-01T12:00:00.000Z';
+  const confirmedOrder = () => ({
+    id: 'o1', name: 'Acme Gym', productType: ADVENTURE_SERIES, customerEmail: 'cust@example.com', firstName: 'Pat',
+    colorSelectionSnapshot: { selections: fullValidSelections(), totalUpcharge: 0, confirmedAt: CONFIRMED_AT },
+    progress: { colors: '✅' },
+  });
+  const changed = () => {
+    const s = fullValidSelections();
+    s.structure_frame_paint.legs = { brand: 'prismatic', code: 'PRB-11039' };
+    return s;
+  };
+  const post = (body) => ({ method: 'POST', headers: {}, body: { orderId: 'o1', override: true, reason: 'Customer called to switch legs', ...body } });
+
+  beforeEach(() => {
+    for (const m of [mockWriteColorSelectionSnapshot, mockPostTaggedUpdate, mockNotifyTeamChanged, mockNotifyCustomerChanged, mockSyncBoards, mockReportCriticalFailure, mockMarkSectionCompleteSafe]) m.mockClear();
+    mockNotifyCustomerChanged.mockResolvedValue(undefined);
+    mockVerifyCustomerSession.mockResolvedValue(STAFF);
+    mockOrderReflectingWrites(confirmedOrder());
+    process.env.VERCEL_ENV = 'production';
+  });
+
+  it('GET offers the change only to a staff session', async () => {
+    let res = makeRes();
+    await handler({ method: 'GET', headers: {}, query: {} }, res);
+    expect(res.body.canOverride).toBe(true);
+
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'cust@example.com', orderId: 'o1' });
+    res = makeRes();
+    await handler({ method: 'GET', headers: {}, query: {} }, res);
+    expect(res.body.canOverride).toBe(false);
+  });
+
+  it("refuses a customer's own session — the confirmed lock still holds", async () => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'cust@example.com', orderId: 'o1' });
+    const res = makeRes();
+    await handler(post({ selections: changed() }), res);
+    expect(res.statusCode).toBe(403);
+    expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('writes the new picks over the old, keeps the original confirmation, and records who changed it', async () => {
+    const res = makeRes();
+    await handler(post({ selections: changed() }), res);
+    expect(res.statusCode).toBe(200);
+    const [, snap] = mockWriteColorSelectionSnapshot.mock.calls[0];
+    expect(snap.selections.structure_frame_paint.legs).toEqual({ brand: 'prismatic', code: 'PRB-11039' });
+    expect(snap.confirmedAt).toBe(CONFIRMED_AT);
+    expect(snap.modifiedBy).toBe('kyle@summitsensory.com');
+    expect(snap.totalUpcharge).toBe(500);
+    expect(res.body.changes).toHaveLength(1);
+    expect(res.body.changes[0].part).toBe('legs');
+  });
+
+  it('posts an audit-trail update with the reason, the old → new color, and the upcharge change', async () => {
+    await handler(post({ selections: changed() }), makeRes());
+    const call = mockPostTaggedUpdate.mock.calls.find((c) => c[1] === 'PORTAL: Color Selections Changed');
+    expect(call).toBeTruthy();
+    expect(call[2]).toContain('kyle@summitsensory.com');
+    expect(call[2]).toContain('Reason: Customer called to switch legs');
+    expect(call[2]).toMatch(/Legs: .*T009-BG01.* → .*PRB-11039/);
+    expect(call[2]).toContain('$0 → $500 (+$500)');
+  });
+
+  it('emails the team and the customer, and updates the same color board rows', async () => {
+    await handler(post({ selections: changed() }), makeRes());
+    expect(mockNotifyTeamChanged).toHaveBeenCalledWith(expect.objectContaining({
+      orderName: 'Acme Gym', staffEmail: 'kyle@summitsensory.com', previousTotal: 0, newTotal: 500,
+    }));
+    expect(mockNotifyCustomerChanged).toHaveBeenCalledWith(expect.objectContaining({
+      email: 'cust@example.com', customerName: 'Pat', newTotal: 500, previousTotal: 0,
+    }));
+    expect(mockSyncBoards).toHaveBeenCalledWith(expect.objectContaining({ id: 'o1' }), expect.any(Array), expect.objectContaining({
+      structure_frame_paint: expect.objectContaining({ legs: { brand: 'prismatic', code: 'PRB-11039' } }),
+    }));
+  });
+
+  it('a failed customer email alerts staff but the change still saves', async () => {
+    mockNotifyCustomerChanged.mockRejectedValueOnce(new Error('Resend down'));
+    const res = makeRes();
+    await handler(post({ selections: changed() }), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.customerEmailed).toBe(false);
+    expect(mockReportCriticalFailure).toHaveBeenCalledWith('color-selection-override-customer-email', expect.any(String), expect.anything());
+  });
+
+  it('requires a reason', async () => {
+    const res = makeRes();
+    await handler(post({ selections: changed(), reason: ' ' }), res);
+    expect(res.statusCode).toBe(400);
+    expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('refuses a "change" that changes nothing', async () => {
+    const res = makeRes();
+    await handler(post({ selections: fullValidSelections() }), res);
+    expect(res.statusCode).toBe(400);
+    expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
+    expect(mockNotifyCustomerChanged).not.toHaveBeenCalled();
+  });
+
+  it('requires a complete, valid set — same as a confirm', async () => {
+    const s = changed();
+    delete s.adventure_mat;
+    const res = makeRes();
+    await handler(post({ selections: s }), res);
+    expect(res.statusCode).toBe(400);
+    expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('is not used for an order still being picked — that goes through the normal confirm', async () => {
+    mockOrderReflectingWrites({ ...confirmedOrder(), colorSelectionSnapshot: null, progress: { colors: '🚫' } });
+    const res = makeRes();
+    await handler(post({ selections: changed() }), res);
+    expect(res.statusCode).toBe(409);
+  });
+
+  it('works on colors on file from Jotform (no portal picks): everything counts as new, no earlier total', async () => {
+    mockOrderReflectingWrites({ ...confirmedOrder(), colorSelectionSnapshot: null, progress: { colors: '✅' } });
+    const res = makeRes();
+    await handler(post({ selections: changed() }), res);
+    expect(res.statusCode).toBe(200);
+    expect(mockNotifyTeamChanged).toHaveBeenCalledWith(expect.objectContaining({ previousTotal: null, newTotal: 500 }));
+    const [, snap] = mockWriteColorSelectionSnapshot.mock.calls[0];
+    expect(snap.confirmedAt).toBe(snap.modifiedAt);
+    expect(res.body.changes.every((c) => c.from === null)).toBe(true);
   });
 });

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import ColorSelectionTab from '../../../components/portal/ColorSelectionTab';
 
 // Audit follow-up 2026-10-18: an order whose colors came in through the
@@ -32,6 +32,30 @@ describe('ColorSelectionTab — colors on file outside the portal', () => {
     stubGet({ ...base, requiredInputs: [], onFile: 'not_applicable' });
     render(<ColorSelectionTab order={{ id: 'o1' }} completions={{}} markComplete={() => {}} showToast={() => {}} />);
     expect(await screen.findByText('No color selections needed')).toBeTruthy();
+  });
+
+  it('offers staff (View as Customer) a change button on colors on file; never the customer', async () => {
+    stubGet({ ...base, requiredInputs: inputs, onFile: 'received', canOverride: true });
+    render(<ColorSelectionTab order={{ id: 'o1' }} completions={{}} markComplete={() => {}} showToast={() => {}} />);
+    fireEvent.click(await screen.findByText('✏️ Change colors (staff)'));
+    expect(screen.getByText('Staff change.')).toBeTruthy();
+    expect(screen.getByText('Structure & Frame Paint')).toBeTruthy();
+    cleanup();
+
+    stubGet({ ...base, requiredInputs: inputs, onFile: 'received', canOverride: false });
+    render(<ColorSelectionTab order={{ id: 'o1' }} completions={{}} markComplete={() => {}} showToast={() => {}} />);
+    await screen.findByText('Your color selections are on file');
+    expect(screen.queryByText('✏️ Change colors (staff)')).toBeNull();
+  });
+
+  it('staff can open a confirmed order for a change and cancel back to the locked view', async () => {
+    const confirmed = { structure_frame_paint: { legs: { brand: 'cardinal', code: 'T009-BG01' } } };
+    stubGet({ ...base, requiredInputs: inputs, selections: confirmed, confirmedAt: '2026-10-01T12:00:00.000Z', totalUpcharge: 0, onFile: null, canOverride: true });
+    render(<ColorSelectionTab order={{ id: 'o1' }} completions={{}} markComplete={() => {}} showToast={() => {}} />);
+    fireEvent.click(await screen.findByText('✏️ Change colors (staff)'));
+    expect(screen.queryByText(/these selections are locked/)).toBeNull();
+    fireEvent.click(screen.getByText('Cancel change'));
+    expect(screen.getByText(/these selections are locked/)).toBeTruthy();
   });
 
   it('tells the customer staff will collect a part the portal has no picker for', async () => {

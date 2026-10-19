@@ -1129,7 +1129,51 @@ function ColorSelectionDetailPanel({ order }) {
       <div style={{ display: 'flex', gap: '16px 28px', flexWrap: 'wrap', marginTop: 4 }}>
         <DeliveryField label="Total Upcharge" value={typeof s.totalUpcharge === 'number' ? `$${s.totalUpcharge.toLocaleString()}` : undefined} />
         <DeliveryField label="Confirmed" value={s.confirmedAt ? new Date(s.confirmedAt).toLocaleString() : 'Not yet confirmed'} />
+        {s.modifiedAt && (
+          <DeliveryField label="Last changed by staff" value={`${new Date(s.modifiedAt).toLocaleString()}${s.modifiedBy ? ` — ${s.modifiedBy}` : ''}`} />
+        )}
       </div>
+
+      <ColorHistory orderId={order.id} />
+    </div>
+  );
+}
+
+// The order's color audit trail (GET /api/admin/color-history): every
+// confirmation and staff change, newest first. To change colors, staff use
+// 👁️ View as Customer → Color tab → "Change colors (staff)".
+function ColorHistory({ orderId }) {
+  const [state, setState] = useState({ loading: true, error: null, history: [] });
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/admin/color-history?orderId=${encodeURIComponent(orderId)}`)
+      .then(async (r) => {
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || 'Failed to load the color change history.');
+        if (!cancelled) setState({ loading: false, error: null, history: data.history || [] });
+      })
+      .catch((err) => { if (!cancelled) setState({ loading: false, error: err.message, history: [] }); });
+    return () => { cancelled = true; };
+  }, [orderId]);
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div style={{ fontSize: 11, color: 'var(--mut)', textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: 6 }}>
+        Color change history
+      </div>
+      {state.loading && <div style={{ fontSize: 13, color: 'var(--mut)' }}>Loading…</div>}
+      {state.error && <div style={{ fontSize: 13, color: 'var(--rose)' }}>{state.error}</div>}
+      {!state.loading && !state.error && !state.history.length && (
+        <div style={{ fontSize: 13, color: 'var(--mut)' }}>No color confirmations or changes recorded on this order yet.</div>
+      )}
+      {state.history.map((entry) => (
+        <div key={entry.id} style={{ padding: '8px 0', borderTop: '1px solid var(--line)', fontSize: 13 }}>
+          <div style={{ fontWeight: 600 }}>
+            {entry.kind === 'changed' ? '✏️ Changed by staff' : '✅ Confirmed'} — {new Date(entry.at).toLocaleString()}
+          </div>
+          {entry.lines.map((line, i) => <div key={i} style={{ color: 'var(--mut)' }}>{line}</div>)}
+        </div>
+      ))}
     </div>
   );
 }

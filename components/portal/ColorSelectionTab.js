@@ -17,6 +17,7 @@ import {
 } from '../../lib/colorCatalog';
 import { COLOR_INPUT, PART_LABELS } from '../../lib/colorRequirements';
 import { createSaveQueue } from '../../lib/saveQueue';
+import { diffSelections, changeLine, upchargeChangeText } from '../../lib/colorSelectionChanges';
 
 const DEFAULT_API_BASE = '/api/portal/color-selection';
 
@@ -630,6 +631,68 @@ function Summary({ requiredInputs, selections, onConfirm, onBack, confirming }) 
   );
 }
 
+// ── Staff change: review what's different, give a reason, save ──
+// Replaces Summary while staff are changing confirmed / on-file colors
+// (Bryan, 2026-10-19). Nothing is saved until this is submitted — the
+// confirmed snapshot stays as it was while staff pick.
+function OverrideSummary({ requiredInputs, original, selections, previousTotal, reason, onReasonChange, onSave, onBack, saving }) {
+  const changes = diffSelections(requiredInputs, original, selections);
+  const total = computeLineItemPricing(requiredInputs, selections).reduce((sum, l) => sum + l.amount, 0);
+  return (
+    <>
+      <button type="button" className="lk" style={{ marginBottom: 14 }} onClick={onBack}>← Back</button>
+      <h3 style={{ fontSize: 17, marginBottom: 14 }}>Review the color change</h3>
+      {changes.length ? (
+        <div className="card" style={{ marginBottom: 16 }}>
+          {changes.map((c) => (
+            <div className="cs-summary-row" key={`${c.input}-${c.part}`} style={{ display: 'block' }}>{changeLine(c)}</div>
+          ))}
+          <div className="cs-summary-total">
+            <span>Color upcharge</span>
+            <span>{upchargeChangeText(previousTotal, total)}</span>
+          </div>
+        </div>
+      ) : (
+        <div className="alert info" style={{ marginBottom: 16 }}>
+          <span>ℹ️</span><span>Nothing has changed yet — go back and pick a different color for at least one part.</span>
+        </div>
+      )}
+      <label htmlFor="cs-override-reason" style={{ display: 'block', fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
+        Reason for the change (internal — goes in the audit trail and the team email)
+      </label>
+      <textarea
+        id="cs-override-reason"
+        value={reason}
+        maxLength={500}
+        rows={3}
+        onChange={(e) => onReasonChange(e.target.value)}
+        placeholder="e.g. Customer called 10/19 to switch the legs to Navy"
+        style={{ width: '100%', marginBottom: 12 }}
+      />
+      <div className="alert info" style={{ marginBottom: 12 }}>
+        <span>📧</span>
+        <span>Saving updates the order and its color board rows, and emails the customer and our team what changed.</span>
+      </div>
+      <button
+        type="button"
+        className="btn btn-moss"
+        disabled={saving || !changes.length || reason.trim().length < 3}
+        onClick={onSave}
+      >
+        {saving ? 'Saving…' : 'Save change & notify customer'}
+      </button>
+    </>
+  );
+}
+
+function StaffOverrideButton({ onClick }) {
+  return (
+    <div style={{ marginTop: 16 }}>
+      <button type="button" className="btn btn-ghost btn-sm" onClick={onClick}>✏️ Change colors (staff)</button>
+    </div>
+  );
+}
+
 // ── Running total, visible the whole time selections are being made ──
 // Direct customer feedback (2026-09-02): the running total only showed up
 // on the final Review screen — customers need to see the additional cost
@@ -655,7 +718,7 @@ function RunningTotal({ total }) {
 // independently enforces the same rule (pages/api/portal/color-selection.js
 // rejects any further write once confirmedAt is set), so this view can't
 // drift into showing an editable UI the backend would just reject anyway.
-function ConfirmedView({ requiredInputs, selections, confirmedAt, storedTotal }) {
+function ConfirmedView({ requiredInputs, selections, confirmedAt, storedTotal, modifiedAt }) {
   const lines = computeLineItemPricing(requiredInputs, selections);
   // The total actually priced at confirmation (stored in the snapshot) wins
   // over a re-price from today's inputs, which drift if staff change a gate
@@ -674,7 +737,11 @@ function ConfirmedView({ requiredInputs, selections, confirmedAt, storedTotal })
     <>
       <div className="alert success" style={{ marginBottom: 16 }}>
         <span>✅</span>
-        <span>Confirmed on {new Date(confirmedAt).toLocaleDateString()} — these selections are locked and can&apos;t be changed here. Contact us if you need help.</span>
+        <span>
+          Confirmed on {new Date(confirmedAt).toLocaleDateString()}
+          {modifiedAt ? `, updated by our team on ${new Date(modifiedAt).toLocaleDateString()}` : ''}
+          {' '}— these selections are locked and can&apos;t be changed here. Contact us if you need help.
+        </span>
       </div>
       <div className="card">
         <div className="cs-summary-header">
@@ -757,6 +824,17 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   // checklist until every input is complete, so declining doesn't just
   // silently drop them back with no acknowledgement that anything's unresolved.
   const [showIncompleteNotice, setShowIncompleteNotice] = useState(false);
+  // Staff change (View as Customer only — the server says so via
+  // canOverride and enforces it on save). While `overriding`, picks stay
+  // local; overrideOriginal holds the confirmed picks to diff against and
+  // restore on cancel.
+  const [canOverride, setCanOverride] = useState(false);
+  const [modifiedAt, setModifiedAt] = useState(null);
+  const [overriding, setOverriding] = useState(false);
+  const overridingRef = useRef(false);
+  const [overrideOriginal, setOverrideOriginal] = useState(null);
+  const [overrideReason, setOverrideReason] = useState('');
+  const [savingOverride, setSavingOverride] = useState(false);
 
   useEffect(() => {
     // Deliberately depends only on order?.id, not showToast: showToast is a
@@ -779,6 +857,8 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
         setStoredTotal(typeof data.totalUpcharge === 'number' ? data.totalUpcharge : null);
         setOnFile(data.onFile || null);
         setStaffCollecting(Array.isArray(data.staffCollecting) ? data.staffCollecting : []);
+        setCanOverride(!!data.canOverride);
+        setModifiedAt(data.modifiedAt || null);
         // The server may have just marked the step N/A (nothing to pick) —
         // reflect it in the sidebar without waiting for a reload.
         if (data.onFile) markComplete?.('color', true);
@@ -865,6 +945,9 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     };
     latestSelectionsRef.current = next;
     setSelections(next);
+    // A staff change saves once, from OverrideSummary — autosaving would be
+    // refused (the order is locked) and must not touch the confirmed snapshot.
+    if (overridingRef.current) return;
     try {
       await queueSave(false);
     } catch (err) {
@@ -970,6 +1053,60 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     }
   }
 
+  function startOverride() {
+    // Colors on file from outside the portal have no portal picks to start
+    // from (the server diffs against nothing for them, too).
+    const original = confirmedAt ? latestSelectionsRef.current : {};
+    setOverrideOriginal(original);
+    latestSelectionsRef.current = original;
+    setSelections(original);
+    overridingRef.current = true;
+    setOverriding(true);
+    setOverrideReason('');
+    setView('checklist');
+    setActivePart(null);
+  }
+
+  function cancelOverride() {
+    latestSelectionsRef.current = overrideOriginal;
+    setSelections(overrideOriginal);
+    overridingRef.current = false;
+    setOverriding(false);
+    setOverrideOriginal(null);
+    setView('checklist');
+    setActivePart(null);
+  }
+
+  async function handleOverrideSave() {
+    setSavingOverride(true);
+    try {
+      const result = await saveSelection(apiBase, {
+        orderId: orderIdRef.current,
+        selections: latestSelectionsRef.current,
+        override: true,
+        reason: overrideReason,
+      });
+      latestSelectionsRef.current = result.selections;
+      setSelections(result.selections);
+      setConfirmedAt(result.confirmedAt);
+      setModifiedAt(result.modifiedAt);
+      setStoredTotal(result.totalUpcharge);
+      setOnFile(null);
+      overridingRef.current = false;
+      setOverriding(false);
+      setOverrideOriginal(null);
+      setView('checklist');
+      markComplete?.('color', !result.checklistSyncPending);
+      showToast(result.customerEmailed
+        ? 'Colors changed — the customer and team were emailed.'
+        : "Colors changed — the team was emailed, but the customer email didn't send (staff were alerted).");
+    } catch (err) {
+      showToast(err.message || 'Error saving. Please try again.');
+    } finally {
+      setSavingOverride(false);
+    }
+  }
+
   if (loading) {
     return <div className="card"><div className="empty"><div className="spin" style={{ margin: '0 auto' }} /></div></div>;
   }
@@ -998,7 +1135,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
   // what the CURRENT productType maps to — with empty requiredInputs,
   // findOrphanedSelections correctly treats every stored selection as an
   // orphan and still displays all of them, rather than showing nothing.
-  if (onFile && !confirmedAt) {
+  if (onFile && !confirmedAt && !overriding) {
     return (
       <div className="card">
         <div className="empty">
@@ -1010,6 +1147,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
               : 'We already have your color and finish choices for this order.'}
             {' '}Need to change something? Send us a message and our team will help.
           </p>
+          {canOverride && <StaffOverrideButton onClick={startOverride} />}
         </div>
       </div>
     );
@@ -1036,9 +1174,31 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
     );
   }
 
+  // Confirmed and not being changed by staff right now.
+  const locked = !!confirmedAt && !overriding;
+
   let body;
-  if (confirmedAt) {
-    body = <ConfirmedView requiredInputs={requiredInputs} selections={selections} confirmedAt={confirmedAt} storedTotal={storedTotal} />;
+  if (locked) {
+    body = (
+      <>
+        <ConfirmedView requiredInputs={requiredInputs} selections={selections} confirmedAt={confirmedAt} storedTotal={storedTotal} modifiedAt={modifiedAt} />
+        {canOverride && <StaffOverrideButton onClick={startOverride} />}
+      </>
+    );
+  } else if (view === 'summary' && overriding) {
+    body = (
+      <OverrideSummary
+        requiredInputs={requiredInputs}
+        original={overrideOriginal}
+        selections={selections}
+        previousTotal={confirmedAt ? storedTotal : null}
+        reason={overrideReason}
+        onReasonChange={setOverrideReason}
+        onSave={handleOverrideSave}
+        onBack={() => setView('checklist')}
+        saving={savingOverride}
+      />
+    );
   } else if (view === 'summary') {
     body = (
       <Summary
@@ -1115,7 +1275,16 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
           breakdown, so the compact badge is redundant there — every other
           screen (checklist, an input's part list, an individual color
           picker) gets it. */}
-      {!confirmedAt && view !== 'summary' && <RunningTotal total={runningTotal} />}
+      {overriding && (
+        <div className="alert warn" style={{ marginBottom: 16 }}>
+          <span>✏️</span>
+          <span>
+            <b>Staff change.</b> Nothing is saved until you review and save — the customer&apos;s current colors stay as they are until then.{' '}
+            <button type="button" className="lk" onClick={cancelOverride} disabled={savingOverride}>Cancel change</button>
+          </span>
+        </div>
+      )}
+      {!locked && view !== 'summary' && <RunningTotal total={runningTotal} />}
       {body}
       {pendingNextInput && (
         <NextFormPrompt
@@ -1125,7 +1294,7 @@ export default function ColorSelectionTab({ order, completions, markComplete, sh
           onDecline={declineContinueToNextInput}
         />
       )}
-      {(confirmedAt || view === 'checklist') && (
+      {(locked || view === 'checklist') && (
         <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
           <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back</button>
         </div>

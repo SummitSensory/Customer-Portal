@@ -104,3 +104,20 @@ Bryan asked for a way for staff to change a customer's confirmed color selection
 - **Emails:** `notifyTeamColorsChanged` leads with the upcharge difference, and `notifyCustomerColorsChanged` lists the changes and the new upcharge but not the internal reason. A failed send raises an internal alert, and the change still saves.
 - **Audit trail:** a `[PORTAL: Color Selections Changed]` update on the order recording who, when (ET), the reason, each old → new pick, and the upcharge. **Not stored in the snapshot column:** it is Monday long text, capped at 2,000 characters, and real snapshots are already ~900. The admin Colors panel shows the history (`GET /api/admin/color-history`, parsed by `lib/colorSelectionChanges.js`), including the original confirmations.
 - Product types still on the Jotform iframe can't be changed this way, since there's no native picker for them.
+
+## 2026-10-19 — Prismatic upcharges added to QuickBooks invoices automatically (off until configured)
+
+Bryan chose to have the portal add the Prismatic upcharge to the customer's QuickBooks invoice instead of relying on someone reading the "ADD $X TO INVOICE" email. Before this, nothing tracked that step: Bloom Pediatric Therapy's $500 (confirmed 9/25) still shows Deal "Charge Added to QB" = Unknown. His rules:
+- The line goes only on the order's **one completely unpaid** invoice. If there's none, more than one, or it's partly paid, the portal doesn't touch QuickBooks, alerts staff once, and retries daily (`/api/cron/prismatic-invoicing`, 15:00 UTC).
+- If a staff color change lowers or raises the upcharge, the portal's own line is adjusted or removed while the invoice is still unpaid. A paid invoice → staff alert to credit by hand.
+- **Only colors confirmed on or after `QBO_INVOICING_START`.** Earlier Prismatic orders are listed under Admin → Settings → QuickBooks for a manual check, and are never charged automatically.
+
+How it works (`lib/prismaticInvoicing.js`, `lib/quickbooks.js`):
+- **Finding the invoice:** Monday has no QuickBooks ids, so the customer is found by the order's email, falling back to an exact display name = order name, and there must be exactly one match.
+- **Recognising the portal's line:** its description includes `[portal order <id>]`. QuickBooks itself is the record of what was added. A Prismatic line without that marker (added by hand) stops the run for review.
+- **No double charge:** updates are sparse with the invoice's SyncToken, so a concurrent run gets "stale object", re-reads, and finds the line already there.
+- **Records:** `[PORTAL: Prismatic Invoiced]` updates on the order (`amount: $X`), which the cron uses to skip orders already in sync.
+- **The connection:** OAuth tokens are stored AES-256-GCM-encrypted (key `QBO_TOKEN_KEY`, Vercel only) on board **18436103314** "Portal System Settings (do not edit)", item 13328467484, text column `text_mm89em72`. It's a text column, not long text, because of the 2,000-character cap.
+- **Emails:** the team emails say "adding to QuickBooks automatically — don't add it by hand" only when this is on for that order.
+
+To turn on: create an Intuit app (Accounting scope, redirect `https://portal.summitsensory.com/api/admin/quickbooks/callback`), then set `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`, `QBO_TOKEN_KEY` and connect in Admin → Settings → QuickBooks. After that, set `QBO_PRISMATIC_ITEM_ID` (and optionally `QBO_PRISMATIC_TAX_CODE`), `QBO_INVOICING_START` and `QBO_INVOICING=on`. **Not yet verified against real QuickBooks data**: invoice layout, whether `PrimaryEmailAddr` is queryable, how tax applies to the new line, and how BillerGenie reacts to an edited invoice.

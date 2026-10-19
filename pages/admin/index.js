@@ -48,6 +48,19 @@ export default function AdminPortal() {
     setTimeout(() => setToast(''), 3000);
   }
 
+  // Back from connecting QuickBooks (/api/admin/quickbooks/callback):
+  // open Settings → QuickBooks and say how it went.
+  const [settingsTab, setSettingsTab] = useState(undefined);
+  useEffect(() => {
+    const outcome = router.query?.quickbooks;
+    if (!outcome) return;
+    setActiveTab('settings');
+    setSettingsTab('quickbooks');
+    showToast(outcome === 'connected' ? 'QuickBooks connected.' : `QuickBooks: ${outcome}`);
+    router.replace('/admin', undefined, { shallow: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.query?.quickbooks]);
+
   // A "View as Customer" session lives in the customer cookie for 2 hours
   // and NextAuth's signOut() never touched it — on a shared machine anyone
   // could keep acting as that customer after staff signed out. Clear it
@@ -165,7 +178,7 @@ export default function AdminPortal() {
               <AdminMessagesTab orders={orders} showToast={showToast} />
             )}
             {activeTab === 'settings' && (
-              <SettingsTab showToast={showToast} />
+              <SettingsTab key={settingsTab || 'settings'} showToast={showToast} initialTab={settingsTab} />
             )}
           </main>
         </div>

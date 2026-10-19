@@ -17,10 +17,6 @@
       "schedule": "*/30 * * * *"
     },
     {
-      "path": "/api/cron/prismatic-invoicing",
-      "schedule": "0 15 * * *"
-    },
-    {
       "path": "/api/cron/invite-safety-net",
       "schedule": "0 */6 * * *"
     }

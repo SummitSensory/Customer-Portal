@@ -750,17 +750,17 @@ async function saveSetup(tab, data, orderId) {
 // Only http(s) links from Monday are rendered as clickable links/embeds —
 // React does not block a `javascript:` href, and these values are typed by
 // staff (or anyone with Monday edit access) into order columns.
-function safeHref(url) {
+export function safeHref(url) {
   const u = typeof url === 'string' ? url.trim() : '';
-  return /^https?:///i.test(u) ? u : undefined;
+  return /^https?:\/\//i.test(u) ? u : undefined;
 }
 
 // Contact values compared the way a person would: staff re-typing the same
 // phone number with different punctuation is still the same number.
-function normalizeContact(c) {
+export function normalizeContact(c) {
   return {
-    name: String(c?.name || '').trim().replace(/s+/g, ' ').toLowerCase(),
-    phone: String(c?.phone || '').replace(/D/g, ''),
+    name: String(c?.name || '').trim().replace(/\s+/g, ' ').toLowerCase(),
+    phone: String(c?.phone || '').replace(/\D/g, ''),
     email: String(c?.email || '').trim().toLowerCase(),
   };
 }

@@ -93,3 +93,14 @@ Bryan supplied the real options for the "Foundation System-Mat Color" gate (`col
 - Photos: originals are in `lib/data/Foundation-Mat-Swatches/`, served copies in `public/color-catalog/foundation/`. `red-blue.jpg` is a crop of the all-colors stack photo, since no Red/Blue close-up was provided. `black-gray.jpg` is the gray-face close-up. `hex` values are pixel-averaged fallbacks only.
 - No Jotform form covers Foundation, and no productType switched from Jotform to native, so this can't orphan any existing input (see the all-or-nothing Color tab note).
 - Ball Pit Balls is now the only `buildable: false` gate left.
+
+## 2026-10-19 — Staff can change confirmed colors (override, emails, audit trail)
+
+Bryan asked for a way for staff to change a customer's confirmed color selections from the portal, with an email to the team and the customer, the new picks written onto the same rows as the old ones, and an audit trail of every change.
+
+- **Where:** Admin → 👁️ View as Customer → Color tab → **✏️ Change colors (staff)**. The button is shown on the confirmed view and on the "on file" card (Jotform-era colors) for native-picker product types. It only shows in a staff session (`canOverride` on GET is `!!session.impersonatedBy`), and the server enforces it: `POST { override: true, selections, reason }` from a customer session returns 403. The customer lock is unchanged.
+- **Flow:** the picker opens pre-filled with the current picks. Nothing autosaves. The review screen shows each old → new change and the upcharge before and after, and requires a reason. Saving validates the full set the same way a confirm does and refuses a no-op.
+- **Same rows:** the snapshot column is overwritten with the new picks. It keeps the original `confirmedAt` and gains `modifiedAt`/`modifiedBy`. The GB / R / Accessories rows are rewritten by the same `syncConfirmedColorsToBoards` (found by the order's links, so it's the row the confirm wrote), followed by the GB Prismatic invoice check. Both are in `fillColorBoards()` in `pages/api/portal/color-selection.js`, shared with the confirm path.
+- **Emails:** `notifyTeamColorsChanged` leads with the upcharge difference, and `notifyCustomerColorsChanged` lists the changes and the new upcharge but not the internal reason. A failed send raises an internal alert, and the change still saves.
+- **Audit trail:** a `[PORTAL: Color Selections Changed]` update on the order recording who, when (ET), the reason, each old → new pick, and the upcharge. **Not stored in the snapshot column:** it is Monday long text, capped at 2,000 characters, and real snapshots are already ~900. The admin Colors panel shows the history (`GET /api/admin/color-history`, parsed by `lib/colorSelectionChanges.js`), including the original confirmations.
+- Product types still on the Jotform iframe can't be changed this way, since there's no native picker for them.

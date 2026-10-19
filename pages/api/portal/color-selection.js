@@ -17,9 +17,10 @@ import { rejectOrderMismatch, staffActorNote } from '../../../lib/portalRequest'
 import { validatePresentSelections, validateColorSelectionData, computeTotalUpcharge, sanitizeSelections } from '../../../lib/colorSelectionValidation';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { requireCustomerSession, loadSessionOrder, enforceRateLimit } from '../../../lib/apiAuth';
-import { notifyTeamColorsConfirmed } from '../../../lib/email';
+import { notifyTeamColorsConfirmed, notifyTeamColorsChanged, notifyCustomerColorsChanged } from '../../../lib/email';
 import { syncConfirmedColorsToBoards, readGbPrismaticInvoice } from '../../../lib/colorBoardSync';
 import { computeLineItemPricing } from '../../../lib/colorCatalog';
+import { diffSelections, overrideAuditText, upchargeChangeText, COLOR_CHANGED_TAG } from '../../../lib/colorSelectionChanges';
 
 // A confirm now also writes the GB / R / Accessories rows (several Monday
 // calls); give it room so a slow Monday response can't time the confirm out.
@@ -120,6 +121,188 @@ function colorsOnFile(order) {
   return null;
 }
 
+/**
+ * Fill the staff color boards (lib/colorBoardSync.js) so nobody re-types the
+ * picks — on a confirm, and again on a staff change, which lands on the same
+ * GB / R / Accessories rows the confirm wrote (found through the order's own
+ * links). Bounded, so a slow Monday can't time the request out; anything that
+ * didn't land (or may have landed) is alerted. `what` finishes the alert's
+ * "Order X ..." sentence. Only on production unless deliberately switched on:
+ * Preview deployments share the production Monday account, and a test confirm
+ * there would create real GB/R rows — and R's "Received" automation starts a
+ * real Production (R) item and emails its subscribers.
+ */
+async function fillColorBoards(order, cleanSelections, what) {
+  if (!boardSyncEnabled()) return null;
+  let boardSync;
+  try {
+    boardSync = await withDeadline(
+      syncConfirmedColorsToBoards(order, requiredColorInputs(order) || [], cleanSelections),
+      BOARD_SYNC_DEADLINE_MS,
+    );
+  } catch (err) {
+    boardSync = { boards: {}, errors: [err.message], skipped: [], notes: [] };
+  }
+  // GB bills Prismatic from its own formula, which counts every paint
+  // column on the row — including parts a reused row still has from an
+  // earlier submission that aren't on this order now. Compare it with
+  // what the customer was shown and flag a difference for staff rather
+  // than silently over- or under-invoicing (audit follow-up 2026-10-18).
+  // Only Prismatic: GB's formula doesn't include anything else.
+  const gbRow = boardSync.boards?.gb?.itemId;
+  if (gbRow) {
+    const prismaticShown = computeLineItemPricing(requiredColorInputs(order) || [], cleanSelections)
+      .filter(line => line.selection?.brand === 'prismatic')
+      .reduce((sum, line) => sum + line.amount, 0);
+    try {
+      const gbAmount = await readGbPrismaticInvoice(gbRow);
+      if (gbAmount !== null && gbAmount !== prismaticShown) {
+        await reportCriticalFailure('color-selection-gb-invoice-mismatch',
+          `Order ${order.id} ("${order.name}") ${what} with a Prismatic upcharge of $${prismaticShown}, but its GB row (${gbRow}) "Prismatic Upcharage" now shows $${gbAmount}. GB counts Prismatic on every paint column of the row, so a part left over from an earlier submission (not on this order now) is the likely cause — check the GB row before invoicing.`,
+          { orderId: order.id, gbRow, prismaticShown, gbAmount });
+      }
+    } catch (err) {
+      console.warn('color-selection: GB invoice check could not read the GB row:', err.message);
+    }
+  }
+
+  if (boardSync.errors.length || boardSync.notes?.length || boardSync.skipped?.length) {
+    await reportCriticalFailure(
+      boardSync.errors.length ? 'color-selection-board-sync' : 'color-selection-board-sync-notes',
+      `Order ${order.id} ("${order.name}") ${what}. ${boardSync.errors.length ? `Writing them to the staff color boards did not finish cleanly (a row may or may not have been written — check before adding one by hand): ${boardSync.errors.join('; ')}. ` : ''}${[...(boardSync.notes || []), ...(boardSync.skipped || [])].join('; ')}. The picks are in the order's "Portal: Color Selection Answers (JSON)" column and the admin portal.`,
+      { orderId: order.id, errors: boardSync.errors, notes: boardSync.notes, skipped: boardSync.skipped, boards: boardSync.boards });
+  }
+  return boardSync;
+}
+
+/**
+ * POST { override: true, selections, reason } — staff change an order's
+ * confirmed (or on-file) colors from the portal. Bryan, 2026-10-19: customers
+ * can't change colors after confirming, so staff need a way to, with the team
+ * and the customer emailed, the new picks written over the old ones (the same
+ * order snapshot and the same GB / R / Accessories rows), and an audit trail.
+ *
+ * Only a "View as Customer" session (session.impersonatedBy, minted by
+ * /api/admin/impersonate for a signed-in staff member) may do this — a
+ * customer's own session still gets the confirmed lock. The full new set is
+ * validated the same as a confirm; the snapshot keeps its original
+ * confirmedAt and gains modifiedAt/modifiedBy. The audit trail is a
+ * "PORTAL: Color Selections Changed" update on the order (see
+ * lib/colorSelectionChanges.js for why not the snapshot column).
+ */
+async function handleStaffOverride(req, res, session, order) {
+  const staffEmail = session.impersonatedBy;
+  if (!staffEmail) {
+    return res.status(403).json({ error: 'Only Summit Sensory Gym staff can change confirmed color selections. Contact us if you need a change.' });
+  }
+
+  const { selections } = req.body || {};
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 500) : '';
+  if (reason.length < 3) return res.status(400).json({ error: 'Add a short reason for the change — it goes in the audit trail.' });
+  if (!selections || typeof selections !== 'object') return res.status(400).json({ error: 'selections required.' });
+
+  const inputs = requiredColorInputs(order);
+  if (!inputs?.length) return res.status(400).json({ error: 'This order has no portal color choices to change.' });
+  const validationError = validatePresentSelections(order, selections) || validateColorSelectionData(order, selections);
+  if (validationError) return res.status(400).json({ error: validationError });
+
+  const cleanSelections = sanitizeSelections(order, selections);
+  const newTotal = computeTotalUpcharge(order, cleanSelections);
+
+  return withOrderLock(order.id, async () => {
+    let fresh;
+    try {
+      fresh = await getOrderById(order.id);
+    } catch (err) {
+      console.error('color-selection override: re-read before save failed:', err.message);
+      return res.status(500).json({ error: 'Error saving. Please try again.' });
+    }
+    const prev = fresh?.colorSelectionSnapshot;
+    const wasConfirmed = !!prev?.confirmedAt;
+    if (!wasConfirmed && !colorsOnFile(fresh)) {
+      return res.status(409).json({ error: "These colors haven't been confirmed yet — make the picks in the picker and confirm them as usual." });
+    }
+
+    // Colors on file from outside the portal (Jotform) have no portal picks
+    // or total to compare against: every part shows as newly picked.
+    const before = wasConfirmed ? (prev.selections || {}) : {};
+    const previousTotal = wasConfirmed && typeof prev.totalUpcharge === 'number' ? prev.totalUpcharge : null;
+    const changes = diffSelections(inputs, before, cleanSelections);
+    if (!changes.length) return res.status(400).json({ error: 'Nothing was changed — pick a different color for at least one part.' });
+
+    const now = new Date();
+    const snapshot = {
+      selections: cleanSelections,
+      totalUpcharge: newTotal,
+      confirmedAt: prev?.confirmedAt || now.toISOString(),
+      modifiedAt: now.toISOString(),
+      modifiedBy: staffEmail,
+    };
+    try {
+      await writeColorSelectionSnapshot(order.id, snapshot);
+    } catch (err) {
+      console.error('color-selection override: snapshot write failed:', err.message);
+      return res.status(500).json({ error: 'Error saving. Please try again.' });
+    }
+
+    const upchargeText = upchargeChangeText(previousTotal, newTotal);
+    const auditText = overrideAuditText({ staffEmail, reason, changes, previousTotal, newTotal, at: now });
+    let auditUpdatePending = false;
+    try {
+      await postTaggedUpdate(order.id, COLOR_CHANGED_TAG, auditText);
+    } catch (err) {
+      auditUpdatePending = true;
+      // The alert carries the full entry so the change is still on record.
+      await reportCriticalFailure('color-selection-override-audit',
+        `Order ${order.id} ("${order.name}"): staff changed its colors, but the audit-trail update to Monday failed. Add it to the order by hand:\n${auditText}`,
+        { orderId: order.id, error: err.message });
+    }
+
+    // N/A on file → ✅ now that there are real picks; already ✅ is a no-op.
+    const synced = await markSectionCompleteSafe(order.id, 'portalColors');
+
+    // The emails come before the board fill, as on a confirm: the upcharge
+    // change is the billing signal, and a slow board write must not hold it up.
+    const customerEmail = fresh?.customerEmail || order.customerEmail;
+    const [teamResult, customerResult] = await Promise.allSettled([
+      notifyTeamColorsChanged({
+        orderName: order.name, customerEmail, staffEmail, reason, changes, previousTotal, newTotal, upchargeText,
+      }),
+      customerEmail
+        ? notifyCustomerColorsChanged({
+          email: customerEmail,
+          customerName: fresh?.firstName || fresh?.pocName?.split(' ')[0] || '',
+          orderName: order.name, changes, newTotal, previousTotal,
+        })
+        : Promise.reject(new Error('the order has no customer email on file')),
+    ]);
+    if (teamResult.status === 'rejected') {
+      await reportCriticalFailure('color-selection-override-team-email',
+        `Order ${order.id} ("${order.name}"): ${staffEmail} changed its colors (upcharge ${upchargeText}), but the team email failed — check the invoice.`,
+        { orderId: order.id, error: teamResult.reason?.message });
+    }
+    if (customerResult.status === 'rejected') {
+      await reportCriticalFailure('color-selection-override-customer-email',
+        `Order ${order.id} ("${order.name}"): ${staffEmail} changed its colors, but the email telling the customer failed (${customerResult.reason?.message}) — let them know directly.`,
+        { orderId: order.id, error: customerResult.reason?.message });
+    }
+
+    await fillColorBoards(order, cleanSelections, `had its colors changed by staff ${staffEmail}`);
+
+    return res.status(200).json({
+      ok: true,
+      selections: cleanSelections,
+      totalUpcharge: newTotal,
+      confirmedAt: snapshot.confirmedAt,
+      modifiedAt: snapshot.modifiedAt,
+      changes,
+      customerEmailed: customerResult.status === 'fulfilled',
+      checklistSyncPending: !synced,
+      auditUpdatePending,
+    });
+  });
+}
+
 // Re-exported for anything still importing these two from this file's own
 // module (kept for the existing test suite's import paths) — the real
 // implementations now live in lib/colorSelectionValidation.js, which has no
@@ -177,6 +360,10 @@ export default async function handler(req, res) {
       // rather than re-pricing from today's inputs, which drift if staff
       // change a gate after the customer confirmed.
       totalUpcharge: order.colorSelectionSnapshot?.totalUpcharge ?? null,
+      modifiedAt: order.colorSelectionSnapshot?.modifiedAt || null,
+      // Staff in "View as Customer" may change confirmed / on-file colors
+      // (handleStaffOverride); the customer's own session never can.
+      canOverride: !!session.impersonatedBy && !!inputs?.length,
     });
   }
 
@@ -195,6 +382,10 @@ export default async function handler(req, res) {
   // is safe here — still a real backstop against a runaway client loop,
   // just sized for how this specific endpoint is actually used.
   if (!enforceRateLimit(res, `color-selection:${session.email}`, { maxRequests: 100, windowMs: 60_000 })) return;
+
+  // A staff change goes around the confirmed / on-file locks below — only
+  // for a staff session, checked inside.
+  if (req.body?.override) return handleStaffOverride(req, res, session, order);
 
   // Locked the moment confirmedAt is set — matches what the customer was
   // told before they confirmed ("This Cannot Be Undone"). The picker UI
@@ -396,53 +587,7 @@ export default async function handler(req, res) {
 
       const synced = await markSectionCompleteSafe(order.id, 'portalColors');
 
-      // Then fill the staff color boards (lib/colorBoardSync.js) so nobody
-      // re-types these. Bounded, so a slow Monday can't time the confirm out;
-      // anything that didn't land (or may have landed) is alerted. Only on
-      // production unless deliberately switched on: Preview deployments share
-      // the production Monday account, and a test confirm there would create
-      // real GB/R rows — and R's "Received" automation starts a real
-      // Production (R) item and emails its subscribers.
-      if (boardSyncEnabled()) {
-        let boardSync;
-        try {
-          boardSync = await withDeadline(
-            syncConfirmedColorsToBoards(order, requiredColorInputs(order) || [], cleanSelections),
-            BOARD_SYNC_DEADLINE_MS,
-          );
-        } catch (err) {
-          boardSync = { boards: {}, errors: [err.message], skipped: [], notes: [] };
-        }
-        // GB bills Prismatic from its own formula, which counts every paint
-        // column on the row — including parts a reused row still has from an
-        // earlier submission that aren't on this order now. Compare it with
-        // what the customer was shown and flag a difference for staff rather
-        // than silently over- or under-invoicing (audit follow-up 2026-10-18).
-        // Only Prismatic: GB's formula doesn't include anything else.
-        const gbRow = boardSync.boards?.gb?.itemId;
-        if (gbRow) {
-          const prismaticShown = computeLineItemPricing(requiredColorInputs(order) || [], cleanSelections)
-            .filter(line => line.selection?.brand === 'prismatic')
-            .reduce((sum, line) => sum + line.amount, 0);
-          try {
-            const gbAmount = await readGbPrismaticInvoice(gbRow);
-            if (gbAmount !== null && gbAmount !== prismaticShown) {
-              await reportCriticalFailure('color-selection-gb-invoice-mismatch',
-                `Order ${order.id} ("${order.name}") confirmed colors with a Prismatic upcharge of $${prismaticShown}, but its GB row (${gbRow}) "Prismatic Upcharage" now shows $${gbAmount}. GB counts Prismatic on every paint column of the row, so a part left over from an earlier submission (not on this order now) is the likely cause — check the GB row before invoicing.`,
-                { orderId: order.id, gbRow, prismaticShown, gbAmount });
-            }
-          } catch (err) {
-            console.warn('color-selection: GB invoice check could not read the GB row:', err.message);
-          }
-        }
-
-        if (boardSync.errors.length || boardSync.notes?.length || boardSync.skipped?.length) {
-          await reportCriticalFailure(
-            boardSync.errors.length ? 'color-selection-board-sync' : 'color-selection-board-sync-notes',
-            `Order ${order.id} ("${order.name}") confirmed colors. ${boardSync.errors.length ? `Writing them to the staff color boards did not finish cleanly (a row may or may not have been written — check before adding one by hand): ${boardSync.errors.join('; ')}. ` : ''}${[...(boardSync.notes || []), ...(boardSync.skipped || [])].join('; ')}. The picks are in the order's "Portal: Color Selection Answers (JSON)" column and the admin portal.`,
-            { orderId: order.id, errors: boardSync.errors, notes: boardSync.notes, skipped: boardSync.skipped, boards: boardSync.boards });
-        }
-      }
+      await fillColorBoards(order, cleanSelections, 'confirmed colors');
 
       return res.status(200).json({ ok: true, totalUpcharge, checklistSyncPending: !synced, auditUpdatePending });
     }

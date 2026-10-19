@@ -7,8 +7,8 @@ import { parse } from 'cookie';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { getOrderMessages, postOrderMessage, setStatusLabel } from '../../../lib/monday';
-import { loadSessionOrder } from '../../../lib/apiAuth';
+import { getOrderMessages, postOrderMessage, setStatusLabel, getOrderCustomerEmail } from '../../../lib/monday';
+import { loadSessionOrder, orderBelongsToSession, rejectRevokedSession } from '../../../lib/apiAuth';
 import { notifyTeamNewMessage } from '../../../lib/email';
 import { notifyPendingStaffReplies } from '../../../lib/replyNotify';
 import { allowRequest } from '../../../lib/rateLimit';
@@ -61,6 +61,15 @@ export default async function handler(req, res) {
 
   if (req.method === 'GET') {
     try {
+      // Reading is polled, so the ownership check uses the email column only
+      // (cached a minute) rather than a full order read — still enough to
+      // stop an old contact reading the thread after staff changed the
+      // order's email (audit follow-up 2026-10-18).
+      if (identity.role === 'customer' && !identity.impersonatedBy) {
+        const customerEmail = await getOrderCustomerEmail(orderId);
+        if (customerEmail === null) return res.status(404).json({ error: 'Order not found.' });
+        if (!orderBelongsToSession({ customerEmail }, identity)) return rejectRevokedSession(res);
+      }
       const messages = await getOrderMessages(orderId);
       // Customers get only portal chat, never internal updates or staff
       // emails — see customerVisibleMessages in lib/messageOrigin.js.
@@ -86,8 +95,9 @@ export default async function handler(req, res) {
 
     // A customer session is a 7-day JWT bound to the order at login; if staff
     // changed the order's email since, the old contact must not post as the
-    // customer (audit 2026-10-18). Checked on send only — the GET is polled,
-    // and a full order read per poll would cost more than it protects.
+    // customer (audit 2026-10-18). The full order is loaded here (the GET
+    // above uses the cheaper email-only check) because the team
+    // notification below needs the order's name anyway.
     let customerOrder = null;
     if (identity.role === 'customer') {
       customerOrder = await loadSessionOrder(identity, res, { logPrefix: 'messages' });

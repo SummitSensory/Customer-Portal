@@ -11,14 +11,15 @@
  * phase — see claude-project-docs's Color Selection Implementation Plan, §11.
  */
 
-import { getOrderById, postTaggedUpdate, markSectionCompleteSafe, writeColorSelectionSnapshot } from '../../../lib/monday';
+import { getOrderById, postTaggedUpdate, markSectionCompleteSafe, writeColorSelectionSnapshot, setStatusLabel, PORTAL_DONE_LABEL } from '../../../lib/monday';
 import { requiredColorInputs, unbuiltRequiredColorGates } from '../../../lib/colorRequirements';
 import { rejectOrderMismatch, staffActorNote } from '../../../lib/portalRequest';
 import { validatePresentSelections, validateColorSelectionData, computeTotalUpcharge, sanitizeSelections } from '../../../lib/colorSelectionValidation';
 import { reportCriticalFailure } from '../../../lib/monitoring';
 import { requireCustomerSession, loadSessionOrder, enforceRateLimit } from '../../../lib/apiAuth';
 import { notifyTeamColorsConfirmed } from '../../../lib/email';
-import { syncConfirmedColorsToBoards } from '../../../lib/colorBoardSync';
+import { syncConfirmedColorsToBoards, readGbPrismaticInvoice } from '../../../lib/colorBoardSync';
+import { computeLineItemPricing } from '../../../lib/colorCatalog';
 
 // A confirm now also writes the GB / R / Accessories rows (several Monday
 // calls); give it room so a slow Monday response can't time the confirm out.
@@ -99,6 +100,26 @@ function withOrderLock(orderId, fn) {
   return turn;
 }
 
+/**
+ * Colors that are already handled outside the portal picker: Portal: Color is
+ * ✅ (received — e.g. through the Jotform form before the native picker) or
+ * N/A (doesn't apply), with no confirmed portal snapshot. Returns 'received'
+ * / 'not_applicable', or null when the picker is open.
+ *
+ * Audit follow-up 2026-10-18: on 2026-10-18, 170 of the 183 orders on picker
+ * product types were ✅/N/A with no snapshot (129 already shipped). Those
+ * customers saw "Done" in the sidebar but an editable picker in the tab, and
+ * confirming again would rewrite GB/R and email staff a second upcharge.
+ * Staff reopen an order for the picker by setting Portal: Color to 🚫.
+ */
+function colorsOnFile(order) {
+  if (order?.colorSelectionSnapshot?.confirmedAt) return null;
+  const status = order?.progress?.colors;
+  if (status === PORTAL_DONE_LABEL) return 'received';
+  if (status === 'N/A') return 'not_applicable';
+  return null;
+}
+
 // Re-exported for anything still importing these two from this file's own
 // module (kept for the existing test suite's import paths) — the real
 // implementations now live in lib/colorSelectionValidation.js, which has no
@@ -123,11 +144,35 @@ export default async function handler(req, res) {
 
   if (req.method === 'GET') {
     const inputs = requiredColorInputs(order);
+    const confirmedAt = order.colorSelectionSnapshot?.confirmedAt || null;
+    let onFile = colorsOnFile(order);
+
+    // Nothing for the customer to pick (frame type N/A and every gate NOT
+    // Included): mark the step N/A so the tab, the admin checklist and the
+    // reminders cron all treat it as done — before this the tab said "not yet
+    // available" forever and reminders kept asking for it (audit follow-up
+    // 2026-10-18). Only when nothing at all is required: a gate with no
+    // portal picker yet (Ball Pit Balls) still needs staff to collect it.
+    const staffCollecting = inputs && !inputs.length ? unbuiltRequiredColorGates(order).map(g => g.label) : [];
+    if (inputs && !inputs.length && !confirmedAt && !onFile && !staffCollecting.length) {
+      try {
+        await setStatusLabel(order.id, 'portalColors', 'N/A');
+        onFile = 'not_applicable';
+        await postTaggedUpdate(order.id, 'PORTAL: Color Selections',
+          'No color choices are needed for this order (no frame and no color-gated products Included), so the portal marked Color as N/A.'
+        ).catch((err) => console.error('color-selection: N/A audit update failed:', err.message));
+      } catch (err) {
+        console.error('color-selection: marking Color N/A failed:', err.message);
+      }
+    }
+
     return res.status(200).json({
       supported: !!inputs,
       requiredInputs: inputs || [],
       selections: order.colorSelectionSnapshot?.selections || {},
-      confirmedAt: order.colorSelectionSnapshot?.confirmedAt || null,
+      confirmedAt,
+      onFile,
+      staffCollecting,
       // What was actually priced at confirmation — ConfirmedView shows this
       // rather than re-pricing from today's inputs, which drift if staff
       // change a gate after the customer confirmed.
@@ -162,6 +207,16 @@ export default async function handler(req, res) {
     return res.status(409).json({
       error: 'Color selections were already confirmed and cannot be changed. Contact us if you need to make a correction.',
       confirmedAt: order.colorSelectionSnapshot.confirmedAt,
+    });
+  }
+
+  // Colors already on file from outside the portal (see colorsOnFile) are
+  // locked the same way — a re-confirm here would rewrite the GB/R rows the
+  // earlier form filled and send staff a second upcharge.
+  if (colorsOnFile(order)) {
+    return res.status(409).json({
+      error: 'Your color selections are already on file. Contact us if you need to make a change.',
+      onFile: colorsOnFile(order),
     });
   }
 
@@ -358,6 +413,29 @@ export default async function handler(req, res) {
         } catch (err) {
           boardSync = { boards: {}, errors: [err.message], skipped: [], notes: [] };
         }
+        // GB bills Prismatic from its own formula, which counts every paint
+        // column on the row — including parts a reused row still has from an
+        // earlier submission that aren't on this order now. Compare it with
+        // what the customer was shown and flag a difference for staff rather
+        // than silently over- or under-invoicing (audit follow-up 2026-10-18).
+        // Only Prismatic: GB's formula doesn't include anything else.
+        const gbRow = boardSync.boards?.gb?.itemId;
+        if (gbRow) {
+          const prismaticShown = computeLineItemPricing(requiredColorInputs(order) || [], cleanSelections)
+            .filter(line => line.selection?.brand === 'prismatic')
+            .reduce((sum, line) => sum + line.amount, 0);
+          try {
+            const gbAmount = await readGbPrismaticInvoice(gbRow);
+            if (gbAmount !== null && gbAmount !== prismaticShown) {
+              await reportCriticalFailure('color-selection-gb-invoice-mismatch',
+                `Order ${order.id} ("${order.name}") confirmed colors with a Prismatic upcharge of $${prismaticShown}, but its GB row (${gbRow}) "Prismatic Upcharage" now shows $${gbAmount}. GB counts Prismatic on every paint column of the row, so a part left over from an earlier submission (not on this order now) is the likely cause — check the GB row before invoicing.`,
+                { orderId: order.id, gbRow, prismaticShown, gbAmount });
+            }
+          } catch (err) {
+            console.warn('color-selection: GB invoice check could not read the GB row:', err.message);
+          }
+        }
+
         if (boardSync.errors.length || boardSync.notes?.length || boardSync.skipped?.length) {
           await reportCriticalFailure(
             boardSync.errors.length ? 'color-selection-board-sync' : 'color-selection-board-sync-notes',

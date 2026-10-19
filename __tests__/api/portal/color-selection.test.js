@@ -9,7 +9,10 @@ vi.mock('../../../lib/monday', () => ({
   postTaggedUpdate: (...args) => mockPostTaggedUpdate(...args),
   markSectionCompleteSafe: (...args) => mockMarkSectionCompleteSafe(...args),
   writeColorSelectionSnapshot: (...args) => mockWriteColorSelectionSnapshot(...args),
+  setStatusLabel: (...args) => mockSetStatusLabel(...args),
+  PORTAL_DONE_LABEL: '✅',
 }));
+const mockSetStatusLabel = vi.fn().mockResolvedValue(undefined);
 
 const mockVerifyCustomerSession = vi.fn();
 vi.mock('../../../lib/auth', () => ({
@@ -34,7 +37,9 @@ vi.mock('../../../lib/email', () => ({
 const mockSyncBoards = vi.fn().mockResolvedValue({ boards: {}, errors: [], skipped: [] });
 vi.mock('../../../lib/colorBoardSync', () => ({
   syncConfirmedColorsToBoards: (...args) => mockSyncBoards(...args),
+  readGbPrismaticInvoice: (...args) => mockReadGbInvoice(...args),
 }));
+const mockReadGbInvoice = vi.fn().mockResolvedValue(null);
 
 const handlerModule = await import('../../../pages/api/portal/color-selection.js');
 const { default: handler, validateColorSelectionData, computeTotalUpcharge } = handlerModule;
@@ -645,5 +650,84 @@ describe('handler — auth and customer isolation', () => {
     // the order was confirmed — the 409'd request must not have persisted
     // anything of its own after the confirm's write landed.
     expect(mockWriteColorSelectionSnapshot).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Audit follow-up 2026-10-18.
+describe('handler — colors on file outside the picker, nothing to pick, GB invoice check', () => {
+  const NONE_INCLUDED = Object.fromEntries([
+    'adventureMat', 'climbingWallColor', 'climbingWallMat', 'wallPaddingMat', 'slideColor', 'soarMat', 'flexMat',
+    'palisadesMat', 'ballPitMat', 'ballPitBalls', 'climbSlideMat', 'softSteps2', 'softSteps3', 'foundationMat',
+  ].map((k) => [k, 'NOT Included']));
+
+  beforeEach(() => {
+    mockVerifyCustomerSession.mockResolvedValue({ email: 'a@b.com', orderId: 'o1' });
+    mockSetStatusLabel.mockClear();
+    mockWriteColorSelectionSnapshot.mockClear();
+    mockReportCriticalFailure.mockClear();
+  });
+
+  it('GET reports colors received outside the portal (✅ with no confirmed snapshot)', async () => {
+    mockGetOrderById.mockResolvedValue({ id: 'o1', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null, progress: { colors: '✅' } });
+    const res = makeRes();
+    await handler({ method: 'GET', headers: {}, query: {} }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.onFile).toBe('received');
+  });
+
+  it('POST is refused for colors already on file — no snapshot write, no re-confirm', async () => {
+    mockGetOrderById.mockResolvedValue({ id: 'o1', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null, progress: { colors: 'N/A' } });
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } }, res);
+    expect(res.statusCode).toBe(409);
+    expect(res.body.onFile).toBe('not_applicable');
+    expect(mockWriteColorSelectionSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('a 🚫 order (staff reopened) still gets the editable picker', async () => {
+    mockGetOrderById.mockResolvedValue({ id: 'o1', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null, progress: { colors: '🚫' } });
+    const res = makeRes();
+    await handler({ method: 'GET', headers: {}, query: {} }, res);
+    expect(res.body.onFile).toBeNull();
+    expect(res.body.requiredInputs.length).toBeGreaterThan(0);
+  });
+
+  it('marks Color N/A when the order has nothing to pick', async () => {
+    mockGetOrderById.mockResolvedValue({ id: 'o1', productType: ADVENTURE_SERIES, colorFrameType: 'N/A', colorGates: NONE_INCLUDED, colorSelectionSnapshot: null, progress: { colors: '🚫' } });
+    const res = makeRes();
+    await handler({ method: 'GET', headers: {}, query: {} }, res);
+    expect(res.body.requiredInputs).toEqual([]);
+    expect(mockSetStatusLabel).toHaveBeenCalledWith('o1', 'portalColors', 'N/A');
+    expect(res.body.onFile).toBe('not_applicable');
+  });
+
+  it('does not mark N/A when a required part has no portal picker (staff collect it)', async () => {
+    mockGetOrderById.mockResolvedValue({ id: 'o1', productType: ADVENTURE_SERIES, colorFrameType: 'N/A', colorGates: { ...NONE_INCLUDED, ballPitBalls: 'Included' }, colorSelectionSnapshot: null, progress: { colors: '🚫' } });
+    const res = makeRes();
+    await handler({ method: 'GET', headers: {}, query: {} }, res);
+    expect(mockSetStatusLabel).not.toHaveBeenCalled();
+    expect(res.body.staffCollecting).toEqual(['Ball Pit Ball Colors']);
+  });
+
+  it("alerts staff when GB's Prismatic invoice formula disagrees with what the customer was shown", async () => {
+    process.env.VERCEL_ENV = 'production';
+    mockOrderReflectingWrites({ id: 'o1', name: 'Acme Gym', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockSyncBoards.mockResolvedValueOnce({ boards: { gb: { itemId: '55', created: false } }, errors: [], skipped: [], notes: [] });
+    mockReadGbInvoice.mockResolvedValueOnce(800);
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockReportCriticalFailure).toHaveBeenCalledWith('color-selection-gb-invoice-mismatch', expect.stringContaining('$800'), expect.objectContaining({ gbRow: '55', gbAmount: 800 }));
+  });
+
+  it('stays quiet when GB agrees', async () => {
+    process.env.VERCEL_ENV = 'production';
+    mockOrderReflectingWrites({ id: 'o1', name: 'Acme Gym', productType: ADVENTURE_SERIES, colorSelectionSnapshot: null });
+    mockSyncBoards.mockResolvedValueOnce({ boards: { gb: { itemId: '55', created: false } }, errors: [], skipped: [], notes: [] });
+    mockReadGbInvoice.mockResolvedValueOnce(computeTotalUpcharge({ productType: ADVENTURE_SERIES }, fullValidSelections()));
+    const res = makeRes();
+    await handler({ method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockReportCriticalFailure).not.toHaveBeenCalledWith('color-selection-gb-invoice-mismatch', expect.anything(), expect.anything());
   });
 });

@@ -272,7 +272,7 @@ describe('handler — auth and customer isolation', () => {
     await handler({ method: 'POST', headers: {}, body: { orderId: 'real-order-123', selections: fullValidSelections(), confirm: true } }, res);
 
     expect(mockPostTaggedUpdate).toHaveBeenCalledWith('real-order-123', 'PORTAL: Color Selections', expect.stringContaining('entered by staff staff@summitsensory.com'));
-    expect(mockNotifyColorsConfirmed).toHaveBeenCalledWith('Order', expect.stringContaining('staff@summitsensory.com'), expect.anything(), null, { autoInvoice: false });
+    expect(mockNotifyColorsConfirmed).toHaveBeenCalledWith('Order', expect.stringContaining('staff@summitsensory.com'), expect.anything());
   });
 
   it('rejects a fabricated catalog code on an ordinary AUTOSAVE (confirm:false) — never prices or persists it (regression, found in code review 2026-09-01)', async () => {
@@ -391,9 +391,7 @@ describe('handler — auth and customer isolation', () => {
     await handler({ method: 'POST', headers: {}, body: { selections: fullValidSelections(), confirm: true } }, res);
 
     expect(res.statusCode).toBe(200);
-    // autoInvoice false: automatic QuickBooks invoicing is off in tests, so
-    // the email still tells staff to add the upcharge themselves.
-    expect(mockNotifyColorsConfirmed).toHaveBeenCalledWith('Acme Gym', 'a@b.com', res.body.totalUpcharge, null, { autoInvoice: false });
+    expect(mockNotifyColorsConfirmed).toHaveBeenCalledWith('Acme Gym', 'a@b.com', res.body.totalUpcharge);
   });
 
   it('fills the staff color boards on confirm, with the order checklist and the cleaned selections', async () => {

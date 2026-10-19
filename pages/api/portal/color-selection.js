@@ -21,8 +21,6 @@ import { notifyTeamColorsConfirmed, notifyTeamColorsChanged, notifyCustomerColor
 import { syncConfirmedColorsToBoards, readGbPrismaticInvoice } from '../../../lib/colorBoardSync';
 import { computeLineItemPricing } from '../../../lib/colorCatalog';
 import { diffSelections, overrideAuditText, upchargeChangeText, COLOR_CHANGED_TAG } from '../../../lib/colorSelectionChanges';
-import { invoicingReady, isEligible, runForOrder } from '../../../lib/prismaticInvoicing';
-import { waitUntil } from '@vercel/functions';
 
 // A confirm now also writes the GB / R / Accessories rows (several Monday
 // calls); give it room so a slow Monday response can't time the confirm out.
@@ -121,21 +119,6 @@ function colorsOnFile(order) {
   if (status === PORTAL_DONE_LABEL) return 'received';
   if (status === 'N/A') return 'not_applicable';
   return null;
-}
-
-/**
- * Put the order's Prismatic upcharge on its QuickBooks invoice
- * (lib/prismaticInvoicing.js) after the response is sent, so the customer
- * never waits on QuickBooks. Anything it can't do now is alerted and retried
- * by the daily cron (/api/cron/prismatic-invoicing). No-op while automatic
- * invoicing is off.
- */
-function invoicePrismaticInBackground(order) {
-  if (!invoicingReady()) return;
-  const run = runForOrder(order.id).catch((err) => reportCriticalFailure('prismatic-invoicing',
-    `Order ${order.id} ("${order.name}"): couldn't update its QuickBooks invoice with the Prismatic upcharge just now (${err.message}). The daily run will try again.`,
-    { orderId: order.id }).catch(console.error));
-  try { waitUntil(run); } catch { /* outside a request — the promise still runs */ }
 }
 
 /**
@@ -284,7 +267,6 @@ async function handleStaffOverride(req, res, session, order) {
     const [teamResult, customerResult] = await Promise.allSettled([
       notifyTeamColorsChanged({
         orderName: order.name, customerEmail, staffEmail, reason, changes, previousTotal, newTotal, upchargeText,
-        autoInvoice: invoicingReady() && isEligible({ colorSelectionSnapshot: snapshot }),
       }),
       customerEmail
         ? notifyCustomerColorsChanged({
@@ -306,8 +288,6 @@ async function handleStaffOverride(req, res, session, order) {
     }
 
     await fillColorBoards(order, cleanSelections, `had its colors changed by staff ${staffEmail}`);
-    // Raised, lowered or removed: the invoice follows the new total.
-    invoicePrismaticInBackground(order);
 
     return res.status(200).json({
       ok: true,
@@ -596,7 +576,7 @@ export default async function handler(req, res) {
       // FIRST — they are the billing signal and the customer-visible state, so
       // nothing slower (the board fill below) can ever keep them from landing.
       // Never fails the confirm; a failed email with money attached is escalated.
-      await notifyTeamColorsConfirmed(order.name, `${session.email}${staffActorNote(session)}`, totalUpcharge, null, { autoInvoice: invoicingReady() }).catch(async (err) => {
+      await notifyTeamColorsConfirmed(order.name, `${session.email}${staffActorNote(session)}`, totalUpcharge).catch(async (err) => {
         console.error('color-selection: confirm email failed:', err.message);
         if (totalUpcharge > 0) {
           await reportCriticalFailure('color-selection-confirm-email',
@@ -608,7 +588,6 @@ export default async function handler(req, res) {
       const synced = await markSectionCompleteSafe(order.id, 'portalColors');
 
       await fillColorBoards(order, cleanSelections, 'confirmed colors');
-      if (totalUpcharge > 0) invoicePrismaticInBackground(order);
 
       return res.status(200).json({ ok: true, totalUpcharge, checklistSyncPending: !synced, auditUpdatePending });
     }

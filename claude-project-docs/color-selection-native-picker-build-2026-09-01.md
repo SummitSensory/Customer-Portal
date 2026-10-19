@@ -107,7 +107,7 @@ Bryan asked for a way for staff to change a customer's confirmed color selection
 
 ## 2026-10-19 — Prismatic invoicing moved to the CRM; portal QuickBooks code removed
 
-The portal-side QuickBooks invoicing above (PR #58) was merged but never switched on, and has been reverted. Looking at the CRM (SSG-CPQ-App) showed it already creates each order's QuickBooks invoice: one per project, "50% Upfront / 50% PIA". So by the time colors are confirmed the invoice is usually partly paid, and the portal's "unpaid invoice only" rule would almost never have applied. The CRM also knows exactly which invoice belongs to which order, and already handles the same problem for freight.
+The portal-side QuickBooks invoicing added in PR #58 (automatic, portal talks to QuickBooks directly) was merged but never switched on, and has been reverted. Looking at the CRM (SSG-CPQ-App) showed it already creates each order's QuickBooks invoice: one per project, "50% Upfront / 50% PIA". So by the time colors are confirmed the invoice is usually partly paid, and the portal's "unpaid invoice only" rule would almost never have applied. The CRM also knows exactly which invoice belongs to which order, and already handles the same problem for freight.
 
 Bryan chose the CRM approach (SSG-CPQ-App PR #202): a confirm-first "Bill to QuickBooks" on the order page.
 - If nothing has been paid, the upcharge is added to the order's invoice.

@@ -7,7 +7,7 @@ import { parse } from 'cookie';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { getOrderById } from '../../../lib/monday';
+import { loadSessionOrder } from '../../../lib/apiAuth';
 import { trackShipment } from '../../../lib/fedex';
 
 export default async function handler(req, res) {
@@ -23,9 +23,12 @@ export default async function handler(req, res) {
     const customerSession = await verifyCustomerSession(cookies[SESSION_COOKIE]);
     if (!customerSession) return res.status(401).json({ error: 'Not authenticated.' });
 
-    // Verify the tracking number belongs to their order
-    const order = await getOrderById(customerSession.orderId);
-    if (order?.trackingNumber !== number) {
+    // Verify the tracking number belongs to their order. loadSessionOrder
+    // also handles a missing orderId and a Monday failure (previously an
+    // unhandled 500) and rejects a revoked session (audit 2026-10-18).
+    const order = await loadSessionOrder(customerSession, res, { logPrefix: 'fedex track' });
+    if (!order) return;
+    if (order.trackingNumber !== number) {
       return res.status(403).json({ error: 'Forbidden.' });
     }
   }

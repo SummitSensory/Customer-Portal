@@ -60,7 +60,7 @@ describe('POST /api/aftership/webhook — audit 2026-10-09', () => {
     const res = makeRes();
     await handler(makeReq(EVENT), res);
     expect(mockNotify).toHaveBeenCalledTimes(1);
-    expect(mockNotify.mock.calls[0][6]).toEqual({ idempotencyKey: 'freight/7/frame/PRO1/Delivered' });
+    expect(mockNotify.mock.calls[0][6]).toEqual({ idempotencyKey: 'freight/7/frame/PRO1/Delivered/after-Out for Delivery' });
     expect(mockUpdateTag).toHaveBeenCalledWith('7', 'frame', 'Delivered');
   });
 

@@ -61,14 +61,19 @@ export default function AdminPortal() {
     signOut({ callbackUrl: '/' });
   }
 
+  // A failed load used to leave the list empty with no message, so a Monday
+  // timeout looked like "0 open orders / No orders" (audit 2026-10-18).
+  const [ordersError, setOrdersError] = useState('');
   const loadOrders = useCallback(async () => {
     try {
       const res = await fetch('/api/monday/orders');
-      if (!res.ok) return;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setOrders(data.orders || []);
+      setOrdersError('');
     } catch (err) {
       console.error(err);
+      setOrdersError("Couldn't load orders from Monday.com — what's shown may be missing or out of date.");
     } finally {
       setLoading(false);
     }
@@ -138,6 +143,12 @@ export default function AdminPortal() {
           </nav>
 
           <main className="main">
+            {ordersError && (
+              <div role="alert" style={{ margin: '0 0 16px', padding: '12px 16px', borderRadius: 8, background: '#fdecea', color: '#8a1c12', display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>{ordersError}</span>
+                <button className="btn btn-ghost btn-sm" onClick={loadOrders}>Retry</button>
+              </div>
+            )}
             {activeTab === 'dashboard' && (
               <DashboardTab orders={orders} needsAttention={needsAttention} readyToShip={readyToShip} onNav={setActiveTab} />
             )}
@@ -394,9 +405,10 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   ];
 
   function startEdit(order) {
+    const original = { status: order.status, trackingNumber: order.trackingNumber || '' };
     setEditing(prev => ({
       ...prev,
-      [order.id]: { status: order.status, trackingNumber: order.trackingNumber || '' },
+      [order.id]: { ...original, original },
     }));
   }
 
@@ -484,8 +496,20 @@ function OrdersTab({ orders, onRefresh, showToast }) {
   }
 
   async function saveOrder(orderId) {
-    const changes = editing[orderId];
-    if (!changes) return;
+    const edit = editing[orderId];
+    if (!edit) return;
+    // Only send fields staff actually changed (audit 2026-10-18): the list's
+    // trackingNumber is blank when the real value lives in the GB mirror
+    // (getAllOrders skips mirrors), so sending the seeded '' on a status-only
+    // edit overwrote/attempted to clear the tracking number.
+    const changes = {};
+    for (const field of ['status', 'trackingNumber']) {
+      if (edit[field] !== edit.original?.[field]) changes[field] = edit[field];
+    }
+    if (!Object.keys(changes).length) {
+      setEditing(prev => { const n = { ...prev }; delete n[orderId]; return n; });
+      return;
+    }
     setSaving(orderId);
     try {
       const res = await fetch(`/api/monday/orders?id=${orderId}`, {
@@ -1125,8 +1149,11 @@ function CustomersTab({ orders }) {
             {orders.map(order => (
               <tr key={order.id}>
                 <td>
-                  <div style={{ fontWeight: 600 }}>{order.contactName || '—'}</div>
-                  <div style={{ fontSize: 12, color: 'var(--mut)' }}>{order.customerEmail}</div>
+                  {/* contactName is a mirror column, which the bulk order list
+                      doesn't load — lead with the email when it's blank
+                      instead of showing "—" on every row (audit 2026-10-18). */}
+                  <div style={{ fontWeight: 600 }}>{order.contactName || order.customerEmail || '—'}</div>
+                  {order.contactName && <div style={{ fontSize: 12, color: 'var(--mut)' }}>{order.customerEmail}</div>}
                 </td>
                 <td style={{ fontSize: 13 }}>{order.name}</td>
                 <td style={{ fontSize: 13, color: 'var(--mut)' }}>{order.productType || '—'}</td>

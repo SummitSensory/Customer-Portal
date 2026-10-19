@@ -1381,7 +1381,7 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
   const [ackRead, setAckRead] = useState(saved?.ackRead || false);
   const [ackName, setAckName] = useState(saved?.ackName || '');
   const [saving, setSaving] = useState(false);
-  const [showRestrictionNote, setShowRestrictionNote] = useState(false);
+  const [showRestrictionNote, setShowRestrictionNote] = useState(null); // labels of the restricted fields just changed
   const [errors, setErrors] = useState({});
   // Edit mode: start in read-only if data is already populated
   const [editingPoc, setEditingPoc] = useState(!(saved?.pocName || order.pocName || order.phone));
@@ -1610,7 +1610,10 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
       // re-seeded the form from the pre-save snapshot, and a resubmit wrote
       // the OLD address back onto the order (audit 2026-10-09).
       await onOrderRefresh?.();
-      if (changedRestricted.length > 0) setShowRestrictionNote(true);
+      // Keep the list itself: recomputing it at render time compared against
+      // the order just refreshed above (which already has the new values),
+      // so it always came out empty (audit 2026-10-18).
+      if (changedRestricted.length > 0) setShowRestrictionNote(changedRestricted);
       else {
         showToast(deliveryResult.checklistSyncPending
           ? "Saved — confirming with our system now. This may take a moment to show as complete."
@@ -1639,7 +1642,7 @@ export function DeliveryTab({ order, completions, markComplete, showToast, onNex
           <p style={{ color: 'var(--mut)', maxWidth: 420, margin: '0 auto 20px', fontSize: 14 }}>
             Some of your delivery changes require confirmation from our team before taking effect. We'll review and reach out within 1 business day.
           </p>
-          <p style={{ color: 'var(--mut)', fontSize: 13 }}>Changes pending confirmation: {getChangedRestricted().join(', ')}</p>
+          <p style={{ color: 'var(--mut)', fontSize: 13 }}>Changes pending confirmation: {showRestrictionNote.join(', ')}</p>
           <button className="btn btn-moss" style={{ marginTop: 20 }} onClick={onNext}>Continue to Color Selections →</button>
         </div>
       </div>

@@ -90,7 +90,10 @@ export default async function handler(req, res) {
         if (order.customerEmail && isCustomerFacingStatus(status)) {
           try {
             const result = await sendCustomerNotificationOnce(id, 'Status', status, () =>
-              notifyCustomerStatusChange(order.customerEmail, order.contactName, order.name, status)
+              notifyCustomerStatusChange(order.customerEmail, order.contactName, order.name, status,
+                // Same key as status-balance-webhook.js, which emails this same
+                // write — Resend drops whichever send comes second.
+                { idempotencyKey: `status/${id}/${status}` })
             );
             if (result?.markFailed) {
               warnings.push(`Status saved and the customer WAS emailed about "${status}", but the "already notified" marker didn't save — staff have been alerted. Don't re-send.`);

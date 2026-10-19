@@ -31,6 +31,7 @@ export default function ShowcaseTab({ order }) {
   const [formSubmitted, setFormSubmitted] = useState(false);
   const [emailSending, setEmailSending] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+  const [emailError, setEmailError] = useState('');
   const rawFormId = order?.showcaseFormId;
   const trimmedFormId = typeof rawFormId === 'string' ? rawFormId.trim() : '';
   const formId = isValidJotformId(trimmedFormId) ? trimmedFormId : '';
@@ -73,12 +74,16 @@ export default function ShowcaseTab({ order }) {
 
   async function emailMeLink() {
     setEmailSending(true);
+    setEmailError('');
     try {
       const res = await fetch('/api/portal/email-upload-link', { method: 'POST' });
-      if (!res.ok) throw new Error();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '');
       setEmailSent(true);
-    } catch {
+    } catch (err) {
+      // Used to fail silently — the button just reset (audit 2026-10-18).
       setEmailSent(false);
+      setEmailError(err.message || "Couldn't send the email. Please try again.");
     } finally {
       setEmailSending(false);
     }
@@ -110,6 +115,7 @@ export default function ShowcaseTab({ order }) {
         <div>
           <h3 style={{ margin: '0 0 4px', fontSize: 15 }}>Uploading from your phone?</h3>
           <p style={{ margin: 0, fontSize: 13, color: 'var(--mut)' }}>Email yourself this upload link so you can snap and upload photos right from your camera roll.</p>
+          {emailError && <p role="alert" style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--rose)' }}>{emailError}</p>}
         </div>
         <button type="button" className="btn btn-ghost btn-sm" onClick={emailMeLink} disabled={emailSending || emailSent || !formId}>
           {emailSent ? '✅ Sent!' : emailSending ? 'Sending…' : 'Email Me This Link'}

@@ -11,7 +11,8 @@ import { parse } from 'cookie';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { getOrderById, resolveDeliveryContacts } from '../../../lib/monday';
+import { resolveDeliveryContacts } from '../../../lib/monday';
+import { loadSessionOrder } from '../../../lib/apiAuth';
 import { trackShipment, buildTrackingTitle, buildCustomFields } from '../../../lib/aftership';
 
 export default async function handler(req, res) {
@@ -34,17 +35,11 @@ export default async function handler(req, res) {
     const cookies = parse(req.headers.cookie || '');
     const customerSession = await verifyCustomerSession(cookies[SESSION_COOKIE]);
     if (!customerSession) return res.status(401).json({ error: 'Not authenticated.' });
-    if (!customerSession.orderId) return res.status(400).json({ error: 'No order selected.' });
-
-    // Previously outside any try: a Monday failure here crashed the route
-    // with a raw 500 instead of a clean error.
-    try {
-      order = await getOrderById(customerSession.orderId);
-    } catch (err) {
-      console.error('AfterShip track endpoint: order load failed:', err.message);
-      return res.status(500).json({ error: 'Failed to fetch tracking info.' });
-    }
-    if (!order) return res.status(404).json({ error: 'Order not found.' });
+    // Handles a missing orderId, a Monday failure (clean 500), a missing
+    // order, and a session whose order's email staff changed since login
+    // (audit 2026-10-18).
+    order = await loadSessionOrder(customerSession, res, { logPrefix: 'AfterShip track endpoint' });
+    if (!order) return;
 
     const matsNumbers = order?.matTracking && order.matTracking !== 'N/A'
       ? order.matTracking.split(',').map(t => t.trim())

@@ -573,11 +573,24 @@ export default async function handler(req, res) {
           return res.status(400).json({ error: 'Please upload your tax exemption certificate.' });
         }
 
+        // Audit 2026-10-18: any file name/type (or an empty or garbled body,
+        // which Buffer.from silently decodes to nothing) used to be accepted
+        // and still flipped the status to "Yes". Match the portal's file
+        // picker (.pdf, .jpg, .jpeg, .png) and require real content.
+        const safeName = String(fileName).replace(/[\\/\0]/g, '_').slice(0, 200);
+        const ext = (safeName.match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+        const TAX_CERT_TYPES = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' };
+        if (typeof fileBase64 !== 'string' || !TAX_CERT_TYPES[ext]) {
+          return res.status(400).json({ error: 'Please upload your certificate as a PDF, JPG or PNG file.' });
+        }
         const buffer = Buffer.from(fileBase64, 'base64');
-        await uploadFileToColumn(order.id, COLS.taxExemptCertFile, buffer, fileName, mimeType);
+        if (!buffer.length) {
+          return res.status(400).json({ error: 'That file appears to be empty. Please choose the certificate file again.' });
+        }
+        await uploadFileToColumn(order.id, COLS.taxExemptCertFile, buffer, safeName, TAX_CERT_TYPES[ext]);
         await setStatusLabel(order.id, 'taxExemptStatus', TAX_EXEMPT_YES_LABEL);
         await postTagged('PORTAL: Tax Exemption Certificate Uploaded',
-          `Customer uploaded a tax exemption certificate (${fileName}) on ${new Date().toLocaleDateString()}.`
+          `Customer uploaded a tax exemption certificate (${safeName}) on ${new Date().toLocaleDateString()}.`
         );
         await notifyTeamFormCompleted(order.name, actorEmail, 'Tax Exemption Certificate').catch(console.error);
 

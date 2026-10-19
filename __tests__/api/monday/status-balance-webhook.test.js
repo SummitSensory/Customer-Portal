@@ -46,11 +46,11 @@ describe('POST /api/monday/status-balance-webhook', () => {
     expect(mockReport).toHaveBeenCalledWith('monday/status-balance-webhook', expect.stringContaining('[PORTAL: Status Notified - Shipped]'), expect.anything());
   });
 
-  it("passes a Resend idempotency key derived from Monday's triggerUuid", async () => {
+  it('passes a Resend idempotency key shared with the Admin Portal path (order + status)', async () => {
     mockSendOnce.mockImplementation(async (id, kind, value, sendFn) => { await sendFn(); return { sent: true }; });
     const res = makeRes();
     await handler(req(), res);
-    expect(mockNotify).toHaveBeenCalledWith('a@b.org', 'Pat', 'Acme', 'Shipped', { idempotencyKey: 'status/9/trig-1' });
+    expect(mockNotify).toHaveBeenCalledWith('a@b.org', 'Pat', 'Acme', 'Shipped', { idempotencyKey: 'status/9/Shipped' });
   });
 
   it('still answers 500 when the send itself fails (nothing went out, so a retry is safe)', async () => {

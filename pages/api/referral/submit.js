@@ -10,7 +10,8 @@
 
 import { parse } from 'cookie';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { getOrderById, createReferralItem, findRecentReferral } from '../../../lib/monday';
+import { createReferralItem, findRecentReferral } from '../../../lib/monday';
+import { loadSessionOrder } from '../../../lib/apiAuth';
 import { notifyTeamNewReferral } from '../../../lib/email';
 import { allowRequest } from '../../../lib/rateLimit';
 
@@ -74,14 +75,10 @@ export default async function handler(req, res) {
   inFlightReferralKeys.add(lockKey);
 
   try {
-    let order;
-    try {
-      order = await getOrderById(session.orderId);
-      if (!order) return res.status(404).json({ error: 'Order not found.' });
-    } catch (err) {
-      console.error('Referral: failed to load order:', err);
-      return res.status(500).json({ error: 'Failed to load order.' });
-    }
+    // Also rejects a session whose order's email staff changed since login,
+    // and one with no order selected (audit 2026-10-18).
+    const order = await loadSessionOrder(session, res, { logPrefix: 'Referral' });
+    if (!order) return;
 
     // PORTAL-013: catch a near-simultaneous duplicate submission (double-click,
     // client retry) before creating a second Referrals board row for the same

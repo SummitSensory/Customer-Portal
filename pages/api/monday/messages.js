@@ -7,7 +7,8 @@ import { parse } from 'cookie';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { getOrderMessages, postOrderMessage, getOrderById, setStatusLabel } from '../../../lib/monday';
+import { getOrderMessages, postOrderMessage, setStatusLabel } from '../../../lib/monday';
+import { loadSessionOrder } from '../../../lib/apiAuth';
 import { notifyTeamNewMessage } from '../../../lib/email';
 import { notifyPendingStaffReplies } from '../../../lib/replyNotify';
 import { allowRequest } from '../../../lib/rateLimit';
@@ -83,6 +84,16 @@ export default async function handler(req, res) {
     const { body } = req.body || {};
     if (!body?.trim()) return res.status(400).json({ error: 'Message body required.' });
 
+    // A customer session is a 7-day JWT bound to the order at login; if staff
+    // changed the order's email since, the old contact must not post as the
+    // customer (audit 2026-10-18). Checked on send only — the GET is polled,
+    // and a full order read per poll would cost more than it protects.
+    let customerOrder = null;
+    if (identity.role === 'customer') {
+      customerOrder = await loadSessionOrder(identity, res, { logPrefix: 'messages' });
+      if (!customerOrder) return;
+    }
+
     try {
       // Tag all portal messages so they can be isolated from internal Monday.com
       // updates, AND stamp the true sender (customer vs. staff) directly into the
@@ -102,9 +113,8 @@ export default async function handler(req, res) {
       // 2026-10-09: getOrderById here had no catch of its own).
       if (identity.role === 'customer') {
         try {
-          const order = await getOrderById(orderId);
           await notifyTeamNewMessage(
-            order?.name || identity.orderName || orderId,
+            customerOrder?.name || identity.orderName || orderId,
             identity.email,
             body.trim().slice(0, 100)
           );

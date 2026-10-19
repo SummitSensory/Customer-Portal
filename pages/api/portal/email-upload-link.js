@@ -7,9 +7,8 @@
 
 import { parse } from 'cookie';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
-import { getOrderById } from '../../../lib/monday';
 import { sendUploadLinkEmail } from '../../../lib/email';
-import { enforceRateLimit } from '../../../lib/apiAuth';
+import { enforceRateLimit, loadSessionOrder } from '../../../lib/apiAuth';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -24,14 +23,11 @@ export default async function handler(req, res) {
   // session could loop this to trigger unlimited outbound Resend sends.
   if (!enforceRateLimit(res, `email-upload-link:${session.email}`, { maxRequests: 5, windowMs: 60_000 })) return;
 
-  let order;
-  try {
-    order = await getOrderById(session.orderId);
-    if (!order) return res.status(404).json({ error: 'Order not found.' });
-  } catch (err) {
-    console.error('email-upload-link: failed to load order:', err);
-    return res.status(500).json({ error: 'Failed to load order.' });
-  }
+  // loadSessionOrder also rejects a session whose order's email was changed
+  // by staff since login (audit 2026-10-18) — otherwise the old contact got
+  // a link prefilled with the new contact's name and email.
+  const order = await loadSessionOrder(session, res, { logPrefix: 'email-upload-link' });
+  if (!order) return;
 
   if (!order.showcaseFormId) {
     return res.status(400).json({ error: 'Upload form is not set up yet. Please contact us directly.' });

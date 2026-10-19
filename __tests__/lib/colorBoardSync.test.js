@@ -251,6 +251,19 @@ describe('syncConfirmedColorsToBoards', () => {
     expect(calls.some((c) => c.query.includes('create_item'))).toBe(false);
   });
 
+  // Audit 2026-10-18: the back-link path didn't check forward links from
+  // other Manufacturing orders, unlike the forward-link path.
+  it('does not reuse a back-linked row that another order links forward to', async () => {
+    fakeMonday({
+      backLinks: { 1: ['555'] },
+      rows: { [BOARDS.gb.id]: [{ id: '1', created_at: '2026-01-01T00:00:00Z' }] },
+      mfgForward: { 444: { [BOARDS.gb.mfgLink]: ['1'] } },
+    });
+    const res = await syncConfirmedColorsToBoards(soarOrder, requiredColorInputs(soarOrder), soarSel);
+    expect(res.boards.gb.created).toBe(true);
+    expect(res.notes.join(' ')).toMatch(/also linked from other order\(s\) 444/);
+  });
+
   it('ignores back-linked rows that are shared with another order', async () => {
     fakeMonday({
       backLinks: { 1: ['555', '444'] },

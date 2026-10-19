@@ -9,7 +9,7 @@
 import { parse } from 'cookie';
 import { verifyCustomerSession, SESSION_COOKIE } from '../../../lib/auth';
 import { setFreightNotifyPreference } from '../../../lib/monday';
-import { enforceRateLimit } from '../../../lib/apiAuth';
+import { enforceRateLimit, loadSessionOrder } from '../../../lib/apiAuth';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -33,8 +33,14 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'enabled (boolean) required.' });
   }
 
+  // Confirms the session still owns the order (staff may have changed its
+  // email since login) and that an order is selected at all (audit
+  // 2026-10-18) before writing.
+  const order = await loadSessionOrder(session, res, { logPrefix: 'freight-notify-preference' });
+  if (!order) return;
+
   try {
-    await setFreightNotifyPreference(session.orderId, enabled);
+    await setFreightNotifyPreference(order.id, enabled);
     return res.status(200).json({ ok: true, enabled });
   } catch (err) {
     console.error('freight-notify-preference: failed to update:', err);

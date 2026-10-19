@@ -88,10 +88,15 @@ export default async function handler(req, res) {
       // Once the email has gone out, never answer 500: Monday would redeliver
       // and — with the "[PORTAL: Status Notified]" marker missing — the
       // customer would get the same email again on every retry (audit
-      // 2026-10-09). The Resend idempotency key, keyed on Monday's own
-      // triggerUuid (stable across its retries), is the second guard.
+      // 2026-10-09). The Resend idempotency key is the second guard. It's
+      // keyed on order + status, the same key orders.js uses (audit
+      // 2026-10-18): a status set in the Admin Portal is emailed by orders.js
+      // AND by this webhook for the same column write, and with different
+      // keys both could pass the marker check and send. The marker already
+      // blocks re-emailing a status forever, so a 24h dedupe on this key
+      // can't drop a legitimate email.
       let emailed = false;
-      const triggerKey = event.triggerUuid ? `status/${itemId}/${event.triggerUuid}` : null;
+      const triggerKey = `status/${itemId}/${status}`;
       let result;
       try {
         result = await sendCustomerNotificationOnce(itemId, 'Status', status, async () => {

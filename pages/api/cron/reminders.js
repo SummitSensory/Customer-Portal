@@ -254,7 +254,24 @@ export default async function handler(req, res) {
         } catch (firstErr) {
           if (!isSendTimeout(firstErr)) throw firstErr;
           console.warn(`Reminder send to ${first.customerEmail} timed out — retrying with the same idempotency key`);
-          sent = await sendOnce();
+          try {
+            sent = await sendOnce();
+          } catch (retryErr) {
+            // Resend refuses the key while the timed-out first request is
+            // still in flight. Give it a moment, then ask again; if it's
+            // STILL in flight, that request owns the send — record it as
+            // sent (id unknown) rather than leave no marker and send the
+            // same reminder again next run (audit 2026-10-18).
+            if (!retryErr?.idempotencyConflict) throw retryErr;
+            await new Promise(r => setTimeout(r, 5000));
+            try {
+              sent = await sendOnce();
+            } catch (lastErr) {
+              if (!lastErr?.idempotencyConflict) throw lastErr;
+              console.warn(`Reminder send to ${first.customerEmail} still in flight under its idempotency key — recording it as sent`);
+              sent = null;
+            }
+          }
         }
       } catch (sendErr) {
         console.error(`Reminder send failed for ${first.customerEmail} (orders ${group.map(d => d.order.id).join(', ')}):`, sendErr);

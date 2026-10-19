@@ -8,7 +8,7 @@
  * be part of every admin page load. Self-contained: no dependency on
  * anything else in the admin page module.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 // STAFF_EMAIL_DOMAIN (lib/auth.js's real access-control check) may be a
 // single domain or a comma-separated list — format for display either way.
@@ -17,12 +17,13 @@ function staffDomainDisplay() {
   return raw.split(',').map(d => d.trim()).filter(Boolean).join(' or ');
 }
 
-export default function SettingsTab({ showToast }) {
-  const [tab, setTab] = useState('monday');
+export default function SettingsTab({ showToast, initialTab }) {
+  const [tab, setTab] = useState(initialTab || 'monday');
   const SETTING_TABS = [
     { id: 'monday',  label: 'Monday.com' },
     { id: 'jotform', label: 'Jotform' },
     { id: 'fedex',   label: 'FedEx' },
+    { id: 'quickbooks', label: 'QuickBooks' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'auth',    label: 'Authentication' },
     { id: 'branding', label: 'Branding' },
@@ -41,6 +42,7 @@ export default function SettingsTab({ showToast }) {
       {tab === 'monday' && <MondaySettings showToast={showToast} />}
       {tab === 'jotform' && <JotformSettings showToast={showToast} />}
       {tab === 'fedex' && <FedexSettings showToast={showToast} />}
+      {tab === 'quickbooks' && <QuickBooksSettings showToast={showToast} />}
       {tab === 'notifications' && <NotificationSettings />}
       {tab === 'auth' && <AuthSettings />}
       {tab === 'branding' && <BrandingSettings />}
@@ -161,6 +163,121 @@ function FedexSettings() {
         <span>Sign up for FedEx Track API at <a href="https://developer.fedex.com" target="_blank" rel="noreferrer" style={{ color: 'var(--sky)' }}>developer.fedex.com</a> using your FedEx account.</span>
       </div>
     </div>
+  );
+}
+
+// Automatic Prismatic invoicing (lib/prismaticInvoicing.js): connect
+// QuickBooks, see whether it's switched on, and the Prismatic orders
+// confirmed before go-live that staff need to check by hand.
+function QuickBooksSettings({ showToast }) {
+  const [status, setStatus] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    setError(null);
+    fetch('/api/admin/quickbooks/status')
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || 'Failed to load QuickBooks status.');
+        setStatus(d);
+      })
+      .catch((err) => setError(err.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function disconnectQb() {
+    if (!window.confirm('Disconnect QuickBooks? Prismatic upcharges will stop being added to invoices until it is reconnected.')) return;
+    setBusy(true);
+    try {
+      const r = await fetch('/api/admin/quickbooks/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'disconnect' }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'Disconnecting failed.');
+      showToast('QuickBooks disconnected.');
+      load();
+    } catch (err) {
+      showToast(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (error) return <div className="card"><div className="alert warn"><span>⚠️</span><span>{error}</span></div></div>;
+  if (!status) return <div className="card"><div className="empty"><div className="spin" style={{ margin: '0 auto' }} /></div></div>;
+
+  const { connection, invoicing, olderOrders, redirectUri } = status;
+  return (
+    <>
+      <div className="card">
+        <div className="ch"><h3>QuickBooks Online</h3></div>
+        {!connection.configured ? (
+          <div className="alert warn" style={{ marginBottom: 16 }}>
+            <span>⚙️</span>
+            <span>
+              Not set up. Create an app at developer.intuit.com (Accounting scope), add <code>{redirectUri}</code> as its redirect URI,
+              then set <code>QBO_CLIENT_ID</code>, <code>QBO_CLIENT_SECRET</code> and <code>QBO_TOKEN_KEY</code> (any long random text) in Vercel and redeploy.
+            </span>
+          </div>
+        ) : connection.connected ? (
+          <div className="alert success" style={{ marginBottom: 16 }}>
+            <span>✅</span>
+            <span>
+              Connected to <strong>{connection.companyName || `company ${connection.realmId}`}</strong>
+              {connection.connectedBy ? ` by ${connection.connectedBy}` : ''}
+              {connection.connectedAt ? ` on ${new Date(connection.connectedAt).toLocaleDateString()}` : ''}.
+            </span>
+          </div>
+        ) : (
+          <div className="alert warn" style={{ marginBottom: 16 }}>
+            <span>🔌</span>
+            <span>Not connected.{connection.error ? ` ${connection.error}` : ''}</span>
+          </div>
+        )}
+        {connection.configured && (
+          <div style={{ display: 'flex', gap: 10 }}>
+            {/* A full page load, not client-side routing: it ends at Intuit's sign-in. */}
+            <button className="btn btn-moss btn-sm" onClick={() => { window.location.href = '/api/admin/quickbooks/connect'; }}>
+              {connection.connected ? 'Reconnect' : 'Connect QuickBooks'}
+            </button>
+            {connection.connected && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={disconnectQb}>Disconnect</button>}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="ch"><h3>Automatic Prismatic invoicing</h3></div>
+        <p style={{ fontSize: 13.5, color: 'var(--mut)', marginBottom: 12 }}>
+          When a customer confirms (or staff change) colors with a Prismatic upcharge, the portal adds it to that order&apos;s one completely unpaid
+          QuickBooks invoice — never a paid or partly-paid one. If it can&apos;t, staff get an alert and it retries daily.
+        </p>
+        <div className={`alert ${invoicing.ready ? 'success' : 'warn'}`} style={{ marginBottom: 12 }}>
+          <span>{invoicing.ready ? '✅' : '⏸️'}</span>
+          <span>
+            {invoicing.ready
+              ? <>On for colors confirmed from <strong>{new Date(invoicing.start).toLocaleDateString()}</strong>, using QuickBooks item <code>{invoicing.itemId}</code>.</>
+              : <>Off. Needs <code>QBO_INVOICING=on</code>, <code>QBO_PRISMATIC_ITEM_ID</code> (the QuickBooks product/service for the line) and <code>QBO_INVOICING_START</code> (go-live date) in Vercel, plus a connection above.</>}
+          </span>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="ch"><h3>Check by hand: Prismatic orders confirmed before go-live</h3></div>
+        {olderOrders.length ? (
+          <table>
+            <thead><tr><th>Order</th><th>Upcharge</th><th>Confirmed</th></tr></thead>
+            <tbody>
+              {olderOrders.map((o) => (
+                <tr key={o.id}>
+                  <td>{o.name}</td>
+                  <td>${o.amount.toLocaleString()}</td>
+                  <td>{new Date(o.confirmedAt).toLocaleDateString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : <p style={{ fontSize: 13.5, color: 'var(--mut)' }}>None.</p>}
+      </div>
+    </>
   );
 }
 
